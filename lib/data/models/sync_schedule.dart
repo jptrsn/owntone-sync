@@ -96,7 +96,7 @@ class SyncSchedule {
     // This matches our 15-minute WorkManager check interval
     final isInWindow =
         now.isAfter(scheduledTime) &&
-        now.isBefore(scheduledTime.add(const Duration(minutes: 15)));
+        now.isBefore(scheduledTime.add(const Duration(hours: 1)));
 
     if (!isInWindow) return false;
 
@@ -114,7 +114,7 @@ class SyncSchedule {
       // If last successful sync was for today's scheduled time, don't sync again
       if (syncState.lastSyncTime!.isAfter(lastSyncScheduledTime) &&
           syncState.lastSyncTime!.isBefore(
-            lastSyncScheduledTime.add(const Duration(minutes: 15)),
+            lastSyncScheduledTime.add(const Duration(hours: 1)),
           )) {
         return false;
       }
