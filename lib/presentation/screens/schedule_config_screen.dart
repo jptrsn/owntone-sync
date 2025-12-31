@@ -46,7 +46,8 @@ class _ScheduleConfigScreenState extends State<ScheduleConfigScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Sync Schedule'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
       ),
       body: ListView(
         children: [

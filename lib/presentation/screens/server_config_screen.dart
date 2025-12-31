@@ -26,7 +26,8 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Server Configuration'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
       ),
       body: Padding(
         padding: const EdgeInsets.all(24.0),

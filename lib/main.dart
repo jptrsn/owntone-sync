@@ -1,13 +1,13 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:owntone_sync/data/models/sync_state.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
 import 'data/models/sync_history.dart';
 import 'data/models/sync_schedule.dart';
+import 'data/models/sync_state.dart';
 import 'data/repositories/file_system_repository.dart';
 import 'data/repositories/local_database_repository.dart';
 import 'data/repositories/owntone_api_repository.dart';
@@ -63,7 +63,6 @@ void callbackDispatcher() {
           '[Background] Not time to sync. Current: ${now.hour}:${now.minute}, Scheduled: ${schedule.hour}:${schedule.minute}',
         );
 
-        // Log skipped sync if conditions weren't met
         if (syncState.isRunning) {
           print('[Background] Sync already in progress');
         } else {
@@ -78,6 +77,9 @@ void callbackDispatcher() {
           await dbRepo.insertSyncHistory(record);
         }
 
+        if (syncState.lastSyncTime != null) {
+          print('[Background] Last sync: ${syncState.lastSyncTime}');
+        }
         return Future.value(true);
       }
 
@@ -131,7 +133,6 @@ void callbackDispatcher() {
           print(
             '[Background] Sync completed successfully. Downloaded: ${result.tracksDownloaded}, Deleted: ${result.tracksDeleted}',
           );
-          // TODO: Save to sync history database
           return Future.value(true);
         } else {
           print('[Background] Sync failed: ${result.error}');
@@ -176,9 +177,52 @@ class MyApp extends StatelessWidget {
       child: MaterialApp(
         title: 'OwnTone Sync',
         theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
           useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF37474F),
+            brightness: Brightness.light,
+            primary: const Color(0xFF37474F),
+            secondary: const Color(0xFFF4511E),
+            surface: Colors.white,
+            onSurface: const Color(0xFF37474F),
+          ),
+          appBarTheme: const AppBarTheme(centerTitle: false, elevation: 0),
+          cardTheme: CardThemeData(
+            elevation: 2,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          chipTheme: ChipThemeData(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
         ),
+        darkTheme: ThemeData(
+          useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF37474F),
+            brightness: Brightness.dark,
+            primary: const Color(0xFFB0BEC5),
+            secondary: const Color(0xFFFF7043),
+            surface: const Color(0xFF121212),
+            onSurface: const Color(0xFFE0E0E0),
+          ),
+          appBarTheme: const AppBarTheme(centerTitle: false, elevation: 0),
+          cardTheme: CardThemeData(
+            elevation: 2,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          chipTheme: ChipThemeData(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
+        themeMode: ThemeMode.system, // Respects system preference
         home: const MainNavigationScreen(),
       ),
     );
