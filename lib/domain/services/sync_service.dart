@@ -55,6 +55,9 @@ class SyncService {
   // User settings
   bool deleteOrphanedFiles = false;
 
+  // Cancellation flag
+  bool _cancelRequested = false;
+
   SyncService({
     required OwnToneApiRepository apiRepo,
     required LocalDatabaseRepository dbRepo,
@@ -64,14 +67,44 @@ class SyncService {
        _fileRepo = fileRepo;
 
   /// Main sync operation
+  /// Main sync operation
   Future<SyncResult> syncPlaylists(List<int> playlistIds) async {
     try {
       int playlistsSynced = 0;
       int tracksDownloaded = 0;
       int tracksDeleted = 0;
+      _cancelRequested = false;
+
+      // First, fetch all playlists to calculate total tracks
+      final allPlaylistTracks = <int, List<Track>>{};
+      int totalTracksToSync = 0;
+
+      for (final playlistId in playlistIds) {
+        final playlist = await _fetchPlaylistWithRecovery(playlistId);
+        if (playlist != null) {
+          final tracksResponse = await _apiRepo.getPlaylistTracks(
+            playlist.id,
+            limit: 10000,
+          );
+          allPlaylistTracks[playlistId] = tracksResponse.items;
+          totalTracksToSync += tracksResponse.items.length;
+        }
+      }
+
+      int totalTracksProcessed = 0;
 
       // Sync each playlist
       for (int i = 0; i < playlistIds.length; i++) {
+        if (_cancelRequested) {
+          _cancelRequested = false; // Reset for next sync
+          return SyncResult(
+            success: false,
+            error: 'Sync cancelled by user',
+            playlistsSynced: playlistsSynced,
+            tracksDownloaded: tracksDownloaded,
+          );
+        }
+
         final playlistId = playlistIds[i];
 
         // Fetch playlist from server
@@ -86,14 +119,21 @@ class SyncService {
             currentPlaylist: playlist.name,
             totalPlaylists: playlistIds.length,
             currentPlaylistIndex: i,
-            totalTracks: 0,
-            downloadedTracks: 0,
+            totalTracks: totalTracksToSync,
+            downloadedTracks: totalTracksProcessed,
           ),
         );
 
         // Sync this playlist
-        final stats = await _syncPlaylist(playlist, i, playlistIds.length);
+        final stats = await _syncPlaylist(
+          playlist,
+          i,
+          playlistIds.length,
+          totalTracksToSync,
+          totalTracksProcessed,
+        );
         tracksDownloaded += stats['downloaded'] as int;
+        totalTracksProcessed += allPlaylistTracks[playlistId]!.length;
         playlistsSynced++;
       }
 
@@ -178,11 +218,18 @@ class SyncService {
     }
   }
 
+  /// Request cancellation of current sync
+  void cancelSync() {
+    _cancelRequested = true;
+  }
+
   /// Sync a single playlist
   Future<Map<String, int>> _syncPlaylist(
     Playlist playlist,
     int playlistIndex,
     int totalPlaylists,
+    int totalTracks,
+    int tracksProcessedSoFar,
   ) async {
     int downloaded = 0;
 
@@ -220,6 +267,9 @@ class SyncService {
 
     // Download new tracks
     for (int i = 0; i < tracksToDownload.length; i++) {
+      if (_cancelRequested) {
+        break; // Stop downloading, let sync complete cleanup
+      }
       final track = tracksToDownload[i];
 
       onProgress?.call(
@@ -227,8 +277,8 @@ class SyncService {
           currentPlaylist: playlist.name,
           totalPlaylists: totalPlaylists,
           currentPlaylistIndex: playlistIndex,
-          totalTracks: tracksToDownload.length,
-          downloadedTracks: i,
+          totalTracks: totalTracks,
+          downloadedTracks: tracksProcessedSoFar + i,
           currentTrackTitle: track.title,
           downloadProgress: 0.0,
         ),
@@ -241,8 +291,8 @@ class SyncService {
             currentPlaylist: playlist.name,
             totalPlaylists: totalPlaylists,
             currentPlaylistIndex: playlistIndex,
-            totalTracks: tracksToDownload.length,
-            downloadedTracks: i,
+            totalTracks: totalTracks,
+            downloadedTracks: tracksProcessedSoFar + i,
             currentTrackTitle: track.title,
             downloadProgress: progress,
           ),

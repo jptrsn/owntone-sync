@@ -265,9 +265,28 @@ class HomeScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Syncing: ${progress.currentPlaylist}',
-            style: const TextStyle(fontWeight: FontWeight.bold),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Syncing: ${progress.currentPlaylist}',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              Consumer<SyncProvider>(
+                builder: (context, provider, child) {
+                  return TextButton.icon(
+                    onPressed: provider.isCancelling
+                        ? null
+                        : () => provider.cancelSync(),
+                    icon: const Icon(Icons.cancel, size: 16),
+                    label: Text(
+                      provider.isCancelling ? 'Cancelling...' : 'Cancel',
+                    ),
+                    style: TextButton.styleFrom(foregroundColor: Colors.red),
+                  );
+                },
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           if (progress.currentTrackTitle != null)

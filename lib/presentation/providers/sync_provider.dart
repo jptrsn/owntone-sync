@@ -25,6 +25,7 @@ class SyncProvider extends ChangeNotifier {
   SyncProgress? _syncProgress;
   String? _lastError;
   bool _isOnline = true;
+  bool _isCancelling = false;
 
   // Getters
   String get serverUrl => _serverUrl;
@@ -37,6 +38,7 @@ class SyncProvider extends ChangeNotifier {
   String? get lastError => _lastError;
   bool get isConfigured => _isConfigured;
   bool get isOnline => _isOnline;
+  bool get isCancelling => _isCancelling;
 
   SyncProvider() {
     _initialize();
@@ -131,6 +133,15 @@ class SyncProvider extends ChangeNotifier {
     }
   }
 
+  /// Cancel ongoing sync
+  void cancelSync() {
+    if (_syncService != null && _isSyncing && !_isCancelling) {
+      _isCancelling = true;
+      _syncService!.cancelSync();
+      notifyListeners();
+    }
+  }
+
   /// Load playlists from local cache
   Future<void> _loadPlaylistsFromCache() async {
     if (_dbRepo == null) return;
@@ -211,6 +222,7 @@ class SyncProvider extends ChangeNotifier {
 
     try {
       _isSyncing = true;
+      _isCancelling = false;
       _lastError = null;
       _syncProgress = null;
       notifyListeners();
@@ -222,12 +234,16 @@ class SyncProvider extends ChangeNotifier {
       if (result.success) {
         _lastError = null;
       } else {
-        _lastError = result.error;
+        // Don't show cancellation as an error
+        if (result.error != 'Sync cancelled by user') {
+          _lastError = result.error;
+        }
       }
     } catch (e) {
       _lastError = 'Sync failed: $e';
     } finally {
       _isSyncing = false;
+      _isCancelling = false;
       _syncProgress = null;
       notifyListeners();
     }
