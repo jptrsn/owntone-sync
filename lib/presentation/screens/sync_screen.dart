@@ -3,53 +3,29 @@ import 'package:provider/provider.dart';
 import '../providers/sync_provider.dart';
 import '../../domain/services/sync_service.dart';
 import 'server_config_screen.dart';
+import 'schedule_config_screen.dart';
 
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+class SyncScreen extends StatelessWidget {
+  const SyncScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('OwnTone Sync'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        actions: [
-          Consumer<SyncProvider>(
-            builder: (context, provider, child) {
-              if (provider.isConfigured) {
-                return IconButton(
-                  icon: const Icon(Icons.settings),
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const ServerConfigScreen(),
-                      ),
-                    );
-                  },
-                );
-              }
-              return const SizedBox.shrink();
-            },
-          ),
-        ],
-      ),
-      body: Consumer<SyncProvider>(
-        builder: (context, provider, child) {
-          if (!provider.hasStoragePermission) {
-            return _buildPermissionRequest(context, provider);
-          }
+    return Consumer<SyncProvider>(
+      builder: (context, provider, child) {
+        if (!provider.hasStoragePermission) {
+          return _buildPermissionRequest(context, provider);
+        }
 
-          if (!provider.isConfigured) {
-            return _buildNotConfigured(context);
-          }
+        if (!provider.isConfigured) {
+          return _buildNotConfigured(context);
+        }
 
-          if (provider.availablePlaylists.isEmpty) {
-            return _buildInitialSetup(context, provider);
-          }
+        if (provider.availablePlaylists.isEmpty) {
+          return _buildInitialSetup(context, provider);
+        }
 
-          return _buildPlaylistSelection(context, provider);
-        },
-      ),
+        return _buildPlaylistSelection(context, provider);
+      },
     );
   }
 
@@ -185,11 +161,11 @@ class HomeScreen extends StatelessWidget {
             width: double.infinity,
             color: Colors.orange.shade100,
             padding: const EdgeInsets.all(12),
-            child: Row(
+            child: const Row(
               children: [
-                const Icon(Icons.cloud_off, size: 16, color: Colors.orange),
-                const SizedBox(width: 8),
-                const Text(
+                Icon(Icons.cloud_off, size: 16, color: Colors.orange),
+                SizedBox(width: 8),
+                Text(
                   'Offline - showing cached playlists',
                   style: TextStyle(color: Colors.orange),
                 ),
@@ -198,13 +174,52 @@ class HomeScreen extends StatelessWidget {
           ),
         if (provider.isSyncing && provider.syncProgress != null)
           _buildSyncProgress(provider.syncProgress!),
-        CheckboxListTile(
-          title: const Text('Delete orphaned files'),
-          subtitle: const Text('Remove files not in any synced playlist'),
-          value: provider.deleteOrphanedFiles,
-          onChanged: provider.isSyncing
-              ? null
-              : (value) => provider.setDeleteOrphanedFiles(value ?? false),
+
+        // Sync options section
+        Card(
+          margin: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'Sync Options',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+              CheckboxListTile(
+                title: const Text('Delete orphaned files'),
+                subtitle: const Text('Remove files not in any synced playlist'),
+                value: provider.deleteOrphanedFiles,
+                onChanged: provider.isSyncing
+                    ? null
+                    : (value) =>
+                          provider.setDeleteOrphanedFiles(value ?? false),
+              ),
+              ListTile(
+                leading: const Icon(Icons.schedule),
+                title: const Text('Sync Schedule'),
+                subtitle: Text(provider.syncSchedule.getScheduleDescription()),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const ScheduleConfigScreen(),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16),
+          child: Text(
+            'Playlists',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
         ),
         const Divider(),
         Expanded(

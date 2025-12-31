@@ -6,6 +6,10 @@ import '../../data/repositories/file_system_repository.dart';
 import '../../domain/services/sync_service.dart';
 import '../../domain/services/permissions_service.dart';
 import '../../data/models/playlist.dart';
+import 'dart:convert';
+import '../../data/models/sync_schedule.dart';
+import 'package:workmanager/workmanager.dart';
+import '../../data/models/sync_state.dart';
 
 class SyncProvider extends ChangeNotifier {
   final PermissionsService _permissionsService = PermissionsService();
@@ -26,6 +30,7 @@ class SyncProvider extends ChangeNotifier {
   String? _lastError;
   bool _isOnline = true;
   bool _isCancelling = false;
+  SyncSchedule _syncSchedule = SyncSchedule();
 
   // Getters
   String get serverUrl => _serverUrl;
@@ -39,6 +44,7 @@ class SyncProvider extends ChangeNotifier {
   bool get isConfigured => _isConfigured;
   bool get isOnline => _isOnline;
   bool get isCancelling => _isCancelling;
+  SyncSchedule get syncSchedule => _syncSchedule;
 
   SyncProvider() {
     _initialize();
@@ -55,11 +61,17 @@ class SyncProvider extends ChangeNotifier {
       await setServerUrl(savedUrl);
     }
 
+    // Load delete orphaned files setting
+    _deleteOrphanedFiles = prefs.getBool('delete_orphaned_files') ?? false;
+
     // Check permissions on startup
     _hasStoragePermission = await _permissionsService.hasStoragePermission();
 
     // Load saved playlists
     await _loadSavedPlaylists();
+
+    // Load sync schedule
+    await _loadSyncSchedule();
 
     // Load cached playlist metadata
     await _loadPlaylistsFromCache();
@@ -142,6 +154,58 @@ class SyncProvider extends ChangeNotifier {
     }
   }
 
+  /// Load sync schedule from preferences
+  Future<void> _loadSyncSchedule() async {
+    final prefs = await SharedPreferences.getInstance();
+    final scheduleJson = prefs.getString('sync_schedule');
+    if (scheduleJson != null) {
+      _syncSchedule = SyncSchedule.fromJson(json.decode(scheduleJson));
+    }
+  }
+
+  /// Update sync schedule
+  Future<void> updateSyncSchedule(SyncSchedule schedule) async {
+    _syncSchedule = schedule;
+
+    // Save to preferences
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('sync_schedule', json.encode(schedule.toJson()));
+
+    // Update workmanager
+    await _configureBackgroundSync();
+
+    notifyListeners();
+  }
+
+  /// Configure background sync with workmanager
+  Future<void> _configureBackgroundSync() async {
+    await Workmanager().cancelAll();
+
+    if (_syncSchedule.enabled && _selectedPlaylistIds.isNotEmpty) {
+      // Save selected playlists so background task can access them
+      await _saveSelectedPlaylists();
+
+      // Run every hour to check if we should sync
+      await Workmanager().registerPeriodicTask(
+        'sync-task',
+        'syncPlaylists',
+        frequency: const Duration(hours: 1),
+        constraints: Constraints(
+          networkType: _syncSchedule.requiresWifi
+              ? NetworkType.unmetered
+              : NetworkType.connected,
+          requiresCharging: _syncSchedule.requiresCharging,
+        ),
+      );
+
+      print(
+        '[Config] Background sync registered. Schedule: ${_syncSchedule.getScheduleDescription()}',
+      );
+    } else {
+      print('[Config] Background sync disabled');
+    }
+  }
+
   /// Load playlists from local cache
   Future<void> _loadPlaylistsFromCache() async {
     if (_dbRepo == null) return;
@@ -182,21 +246,28 @@ class SyncProvider extends ChangeNotifier {
   }
 
   /// Toggle playlist selection
-  void togglePlaylistSelection(int playlistId) {
+  Future<void> togglePlaylistSelection(int playlistId) async {
     if (_selectedPlaylistIds.contains(playlistId)) {
       _selectedPlaylistIds.remove(playlistId);
     } else {
       _selectedPlaylistIds.add(playlistId);
     }
+
+    await _saveSelectedPlaylists();
     notifyListeners();
   }
 
   /// Toggle delete orphaned files setting
-  void setDeleteOrphanedFiles(bool value) {
+  Future<void> setDeleteOrphanedFiles(bool value) async {
     _deleteOrphanedFiles = value;
     if (_syncService != null) {
       _syncService!.deleteOrphanedFiles = value;
     }
+
+    // Save to preferences
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('delete_orphaned_files', value);
+
     notifyListeners();
   }
 
@@ -227,8 +298,27 @@ class SyncProvider extends ChangeNotifier {
       _syncProgress = null;
       notifyListeners();
 
+      // Mark sync as running
+      final prefs = await SharedPreferences.getInstance();
+      final runningSyncState = SyncState(isRunning: true);
+      await prefs.setString(
+        'sync_state',
+        json.encode(runningSyncState.toJson()),
+      );
+
       final result = await _syncService!.syncPlaylists(
         _selectedPlaylistIds.toList(),
+      );
+
+      // Update sync state
+      final completedSyncState = SyncState(
+        isRunning: false,
+        lastSyncTime: DateTime.now(),
+        lastSyncSuccess: result.success,
+      );
+      await prefs.setString(
+        'sync_state',
+        json.encode(completedSyncState.toJson()),
       );
 
       if (result.success) {
@@ -241,6 +331,14 @@ class SyncProvider extends ChangeNotifier {
       }
     } catch (e) {
       _lastError = 'Sync failed: $e';
+
+      // Mark sync as not running on error
+      final prefs = await SharedPreferences.getInstance();
+      final errorSyncState = SyncState(
+        isRunning: false,
+        lastSyncSuccess: false,
+      );
+      await prefs.setString('sync_state', json.encode(errorSyncState.toJson()));
     } finally {
       _isSyncing = false;
       _isCancelling = false;

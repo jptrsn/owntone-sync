@@ -1,0 +1,70 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/sync_provider.dart';
+import 'sync_screen.dart';
+import 'browse_screen.dart';
+import 'history_screen.dart';
+import 'server_config_screen.dart';
+
+class MainNavigationScreen extends StatefulWidget {
+  const MainNavigationScreen({super.key});
+
+  @override
+  State<MainNavigationScreen> createState() => _MainNavigationScreenState();
+}
+
+class _MainNavigationScreenState extends State<MainNavigationScreen> {
+  int _currentIndex = 0;
+
+  final List<Widget> _screens = const [
+    SyncScreen(),
+    BrowseScreen(),
+    HistoryScreen(),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('OwnTone Sync'),
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        actions: [
+          Consumer<SyncProvider>(
+            builder: (context, provider, child) {
+              if (provider.isConfigured) {
+                return IconButton(
+                  icon: const Icon(Icons.settings),
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const ServerConfigScreen(),
+                      ),
+                    );
+                  },
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+        ],
+      ),
+      body: _screens[_currentIndex],
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: (index) {
+          setState(() {
+            _currentIndex = index;
+          });
+        },
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.sync), label: 'Sync'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.library_music),
+            label: 'Browse',
+          ),
+          BottomNavigationBarItem(icon: Icon(Icons.history), label: 'History'),
+        ],
+      ),
+    );
+  }
+}
