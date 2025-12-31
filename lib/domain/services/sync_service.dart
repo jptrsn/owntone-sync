@@ -1,11 +1,14 @@
 import 'dart:io';
-import 'package:dio/dio.dart';
-import '../../data/models/playlist.dart';
-import '../../data/models/track.dart';
-import '../../data/repositories/owntone_api_repository.dart';
-import '../../data/repositories/local_database_repository.dart';
-import '../../data/repositories/file_system_repository.dart';
+
 import 'package:audiotags/audiotags.dart';
+import 'package:dio/dio.dart';
+
+import '../../data/models/playlist.dart';
+import '../../data/models/sync_history.dart';
+import '../../data/models/track.dart';
+import '../../data/repositories/file_system_repository.dart';
+import '../../data/repositories/local_database_repository.dart';
+import '../../data/repositories/owntone_api_repository.dart';
 
 class SyncProgress {
   final String currentPlaylist;
@@ -68,13 +71,20 @@ class SyncService {
        _fileRepo = fileRepo;
 
   /// Main sync operation
-  /// Main sync operation
-  Future<SyncResult> syncPlaylists(List<int> playlistIds) async {
+  Future<SyncResult> syncPlaylists(
+    List<int> playlistIds, {
+    String triggerType = 'manual',
+  }) async {
+    final startTime = DateTime.now();
+
     try {
       int playlistsSynced = 0;
       int tracksDownloaded = 0;
       int tracksDeleted = 0;
       _cancelRequested = false;
+
+      // Track playlist details for history
+      final playlistDetails = <Map<String, dynamic>>[];
 
       // First, fetch all playlists to calculate total tracks
       final allPlaylistTracks = <int, List<Track>>{};
@@ -98,6 +108,19 @@ class SyncService {
       for (int i = 0; i < playlistIds.length; i++) {
         if (_cancelRequested) {
           _cancelRequested = false; // Reset for next sync
+
+          // Log cancelled sync
+          await _logSyncHistory(
+            status: 'cancelled',
+            playlistsSynced: playlistsSynced,
+            tracksDownloaded: tracksDownloaded,
+            tracksDeleted: tracksDeleted,
+            errorMessage: 'Sync cancelled by user',
+            durationMs: DateTime.now().difference(startTime).inMilliseconds,
+            triggerType: triggerType,
+            playlistDetails: playlistDetails,
+          );
+
           return SyncResult(
             success: false,
             error: 'Sync cancelled by user',
@@ -133,9 +156,18 @@ class SyncService {
           totalTracksToSync,
           totalTracksProcessed,
         );
-        tracksDownloaded += stats['downloaded'] as int;
+
+        final downloaded = stats['downloaded'] as int;
+        tracksDownloaded += downloaded;
         totalTracksProcessed += allPlaylistTracks[playlistId]!.length;
         playlistsSynced++;
+
+        // Track playlist details for history
+        playlistDetails.add({
+          'playlist_id': playlist.id,
+          'playlist_name': playlist.name,
+          'tracks_in_playlist': allPlaylistTracks[playlistId]!.length,
+        });
       }
 
       // Remove playlists that are no longer selected
@@ -157,6 +189,17 @@ class SyncService {
         tracksDeleted = await _deleteOrphanedTracks();
       }
 
+      // Log successful sync
+      await _logSyncHistory(
+        status: 'success',
+        playlistsSynced: playlistsSynced,
+        tracksDownloaded: tracksDownloaded,
+        tracksDeleted: tracksDeleted,
+        durationMs: DateTime.now().difference(startTime).inMilliseconds,
+        triggerType: triggerType,
+        playlistDetails: playlistDetails,
+      );
+
       return SyncResult(
         success: true,
         playlistsSynced: playlistsSynced,
@@ -164,8 +207,57 @@ class SyncService {
         tracksDeleted: tracksDeleted,
       );
     } catch (e) {
+      // Log failed sync
+      await _logSyncHistory(
+        status: 'failed',
+        errorMessage: e.toString(),
+        durationMs: DateTime.now().difference(startTime).inMilliseconds,
+        triggerType: triggerType,
+        playlistDetails: [],
+      );
+
       return SyncResult(success: false, error: e.toString());
     }
+  }
+
+  /// Log sync history to database
+  Future<void> _logSyncHistory({
+    required String status,
+    int playlistsSynced = 0,
+    int tracksDownloaded = 0,
+    int tracksDeleted = 0,
+    String? errorMessage,
+    required int durationMs,
+    required String triggerType,
+    required List<Map<String, dynamic>> playlistDetails,
+  }) async {
+    final record = SyncHistoryRecord(
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+      status: status,
+      playlistsSynced: playlistsSynced,
+      tracksDownloaded: tracksDownloaded,
+      tracksDeleted: tracksDeleted,
+      errorMessage: errorMessage,
+      durationMs: durationMs,
+      triggerType: triggerType,
+    );
+
+    final syncId = await _dbRepo.insertSyncHistory(record);
+
+    // Insert playlist details
+    for (final detail in playlistDetails) {
+      await _dbRepo.insertSyncHistoryPlaylist(
+        SyncHistoryPlaylist(
+          syncId: syncId,
+          playlistId: detail['playlist_id'],
+          playlistName: detail['playlist_name'],
+          tracksInPlaylist: detail['tracks_in_playlist'],
+        ),
+      );
+    }
+
+    // Clean up old history
+    await _dbRepo.cleanOldSyncHistory();
   }
 
   /// Fetch playlist with ID change recovery
@@ -401,9 +493,9 @@ class SyncService {
       // First, try to extract embedded artwork from the audio file
       try {
         final tag = await AudioTags.read(finalPath);
-        if (tag?.pictures != null && tag!.pictures!.isNotEmpty) {
+        if (tag?.pictures != null && tag!.pictures.isNotEmpty) {
           // Has embedded artwork, save it to cache
-          final picture = tag.pictures!.first;
+          final picture = tag.pictures.first;
           artworkPath = await _fileRepo.getArtworkPath(track.albumId);
 
           // Only write if it doesn't already exist (multiple tracks share album art)

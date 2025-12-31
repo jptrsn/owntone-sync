@@ -90,7 +90,37 @@ class DatabaseHelper {
       )
     ''');
 
-    // Create indexes for better query performance
+    // Table for sync history
+    await db.execute('''
+      CREATE TABLE sync_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        playlists_synced INTEGER NOT NULL DEFAULT 0,
+        tracks_downloaded INTEGER NOT NULL DEFAULT 0,
+        tracks_deleted INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT,
+        duration_ms INTEGER,
+        trigger_type TEXT NOT NULL
+      )
+    ''');
+
+    // Table for sync history details (which playlists were in each sync)
+    await db.execute('''
+      CREATE TABLE sync_history_playlists (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sync_id INTEGER NOT NULL,
+        playlist_id INTEGER NOT NULL,
+        playlist_name TEXT NOT NULL,
+        tracks_in_playlist INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (sync_id) REFERENCES sync_history (id) ON DELETE CASCADE
+      )
+    ''');
+
+    await db.execute(
+      'CREATE INDEX idx_sync_history_timestamp ON sync_history(timestamp DESC)',
+    );
+
     await db.execute(
       'CREATE INDEX idx_playlist_tracks_playlist ON playlist_tracks(playlist_id)',
     );

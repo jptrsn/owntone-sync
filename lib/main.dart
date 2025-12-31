@@ -1,16 +1,19 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:owntone_sync/data/models/sync_state.dart';
 import 'package:provider/provider.dart';
-import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
+import 'package:workmanager/workmanager.dart';
+
+import 'data/models/sync_history.dart';
+import 'data/models/sync_schedule.dart';
+import 'data/repositories/file_system_repository.dart';
+import 'data/repositories/local_database_repository.dart';
+import 'data/repositories/owntone_api_repository.dart';
+import 'domain/services/sync_service.dart';
 import 'presentation/providers/sync_provider.dart';
 import 'presentation/screens/main_navigation_screen.dart';
-import 'data/models/sync_schedule.dart';
-import 'data/repositories/owntone_api_repository.dart';
-import 'data/repositories/local_database_repository.dart';
-import 'data/repositories/file_system_repository.dart';
-import 'domain/services/sync_service.dart';
 
 @pragma('vm:entry-point')
 void callbackDispatcher() {
@@ -59,12 +62,22 @@ void callbackDispatcher() {
         print(
           '[Background] Not time to sync. Current: ${now.hour}:${now.minute}, Scheduled: ${schedule.hour}:${schedule.minute}',
         );
+
+        // Log skipped sync if conditions weren't met
         if (syncState.isRunning) {
           print('[Background] Sync already in progress');
+        } else {
+          // Log that sync was skipped
+          final dbRepo = LocalDatabaseRepository();
+          final record = SyncHistoryRecord(
+            timestamp: DateTime.now().millisecondsSinceEpoch,
+            status: 'skipped',
+            errorMessage: 'Conditions not met',
+            triggerType: 'scheduled',
+          );
+          await dbRepo.insertSyncHistory(record);
         }
-        if (syncState.lastSyncTime != null) {
-          print('[Background] Last sync: ${syncState.lastSyncTime}');
-        }
+
         return Future.value(true);
       }
 
@@ -98,7 +111,10 @@ void callbackDispatcher() {
         syncService.deleteOrphanedFiles = deleteOrphanedFiles;
 
         // Run the sync
-        final result = await syncService.syncPlaylists(selectedPlaylistIds);
+        final result = await syncService.syncPlaylists(
+          selectedPlaylistIds,
+          triggerType: 'scheduled',
+        );
 
         // Update sync state
         final completedSyncState = SyncState(

@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 import '../database/database_helper.dart';
 import '../models/playlist.dart';
+import '../models/sync_history.dart';
 
 class SyncedPlaylist {
   final int id;
@@ -519,5 +520,90 @@ class LocalDatabaseRepository {
       tracks[track.id] = track;
     }
     return tracks;
+  }
+
+  // Sync history operations
+  Future<int> insertSyncHistory(SyncHistoryRecord record) async {
+    final db = await _dbHelper.database;
+    return await db.insert('sync_history', record.toMap());
+  }
+
+  Future<void> insertSyncHistoryPlaylist(SyncHistoryPlaylist playlist) async {
+    final db = await _dbHelper.database;
+    await db.insert('sync_history_playlists', playlist.toMap());
+  }
+
+  Future<List<SyncHistoryRecord>> getSyncHistory({int limit = 100}) async {
+    final db = await _dbHelper.database;
+
+    // Get records from last 30 days or last 100, whichever is smaller
+    final thirtyDaysAgo = DateTime.now()
+        .subtract(const Duration(days: 30))
+        .millisecondsSinceEpoch;
+
+    final results = await db.query(
+      'sync_history',
+      where: 'timestamp > ?',
+      whereArgs: [thirtyDaysAgo],
+      orderBy: 'timestamp DESC',
+      limit: limit,
+    );
+
+    final records = <SyncHistoryRecord>[];
+    for (final map in results) {
+      final record = SyncHistoryRecord.fromMap(map);
+
+      // Load playlists for this sync
+      final playlistResults = await db.query(
+        'sync_history_playlists',
+        where: 'sync_id = ?',
+        whereArgs: [record.id],
+      );
+
+      final playlists = playlistResults
+          .map((m) => SyncHistoryPlaylist.fromMap(m))
+          .toList();
+
+      records.add(
+        SyncHistoryRecord(
+          id: record.id,
+          timestamp: record.timestamp,
+          status: record.status,
+          playlistsSynced: record.playlistsSynced,
+          tracksDownloaded: record.tracksDownloaded,
+          tracksDeleted: record.tracksDeleted,
+          errorMessage: record.errorMessage,
+          durationMs: record.durationMs,
+          triggerType: record.triggerType,
+          playlists: playlists,
+        ),
+      );
+    }
+
+    return records;
+  }
+
+  Future<void> cleanOldSyncHistory() async {
+    final db = await _dbHelper.database;
+
+    // Delete records older than 30 days
+    final thirtyDaysAgo = DateTime.now()
+        .subtract(const Duration(days: 30))
+        .millisecondsSinceEpoch;
+    await db.delete(
+      'sync_history',
+      where: 'timestamp < ?',
+      whereArgs: [thirtyDaysAgo],
+    );
+
+    // Keep only last 100 records
+    await db.rawDelete('''
+      DELETE FROM sync_history
+      WHERE id NOT IN (
+        SELECT id FROM sync_history
+        ORDER BY timestamp DESC
+        LIMIT 100
+      )
+    ''');
   }
 }
