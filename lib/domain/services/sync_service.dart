@@ -97,6 +97,20 @@ class SyncService {
         playlistsSynced++;
       }
 
+      // Remove playlists that are no longer selected
+      final allLocalPlaylists = await _dbRepo.getAllPlaylists();
+      final selectedIds = playlistIds.toSet();
+      for (final localPlaylist in allLocalPlaylists) {
+        if (!selectedIds.contains(localPlaylist.id)) {
+          // Playlist no longer selected, remove it and its relationships
+          await _dbRepo.clearPlaylistTracks(localPlaylist.id);
+          await _dbRepo.deletePlaylist(localPlaylist.id);
+
+          // Delete playlist file
+          await _fileRepo.deletePlaylistFile(localPlaylist.name);
+        }
+      }
+
       // Post-sync cleanup
       if (deleteOrphanedFiles) {
         tracksDeleted = await _deleteOrphanedTracks();
@@ -238,14 +252,22 @@ class SyncService {
       downloaded++;
     }
 
-    // Find tracks to remove from playlist (local but not on server)
-    final serverTrackIds = serverTracks.map((t) => t.id).toSet();
-    final tracksToRemove = localTracks
-        .where((t) => !serverTrackIds.contains(t.id))
-        .toList();
+    // Rebuild playlist-track relationships from server state
+    // First, clear all existing relationships for this playlist
+    await _dbRepo.clearPlaylistTracks(playlist.id);
 
-    for (final track in tracksToRemove) {
-      await _dbRepo.removeTrackFromPlaylist(playlist.id, track.id);
+    // Build set of track IDs we downloaded this session
+    final downloadedTrackIds = tracksToDownload.map((t) => t.id).toSet();
+
+    // Build set of track IDs that were already local
+    final existingLocalTrackIds = localTracks.map((t) => t.id).toSet();
+
+    // Then add all tracks from server that are now in our database
+    for (final track in serverTracks) {
+      if (downloadedTrackIds.contains(track.id) ||
+          existingLocalTrackIds.contains(track.id)) {
+        await _dbRepo.addTrackToPlaylist(playlist.id, track.id);
+      }
     }
 
     // Update playlist in database
