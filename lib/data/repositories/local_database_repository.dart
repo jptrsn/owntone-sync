@@ -48,6 +48,13 @@ class SyncedTrack {
   final String serverPath;
   final int downloadTimestamp;
   final int fileSize;
+  final String genre;
+  final int lengthMs;
+  final int trackNumber;
+  final int discNumber;
+  final int year;
+  final String artworkUrl;
+  final String? artworkPath;
 
   SyncedTrack({
     required this.id,
@@ -59,6 +66,13 @@ class SyncedTrack {
     required this.serverPath,
     required this.downloadTimestamp,
     required this.fileSize,
+    this.genre = '',
+    this.lengthMs = 0,
+    this.trackNumber = 0,
+    this.discNumber = 0,
+    this.year = 0,
+    this.artworkUrl = '',
+    this.artworkPath,
   });
 
   Map<String, dynamic> toMap() {
@@ -72,20 +86,34 @@ class SyncedTrack {
       'server_path': serverPath,
       'download_timestamp': downloadTimestamp,
       'file_size': fileSize,
+      'genre': genre,
+      'length_ms': lengthMs,
+      'track_number': trackNumber,
+      'disc_number': discNumber,
+      'year': year,
+      'artwork_url': artworkUrl,
+      'artwork_path': artworkPath,
     };
   }
 
   factory SyncedTrack.fromMap(Map<String, dynamic> map) {
     return SyncedTrack(
-      id: map['id'],
-      title: map['title'],
-      artist: map['artist'],
-      album: map['album'],
-      albumArtist: map['album_artist'],
-      localPath: map['local_path'],
-      serverPath: map['server_path'],
-      downloadTimestamp: map['download_timestamp'],
-      fileSize: map['file_size'],
+      id: map['id'] as int,
+      title: map['title'] as String,
+      artist: map['artist'] as String,
+      album: map['album'] as String,
+      albumArtist: map['album_artist'] as String,
+      localPath: map['local_path'] as String,
+      serverPath: map['server_path'] as String,
+      downloadTimestamp: map['download_timestamp'] as int,
+      fileSize: map['file_size'] as int,
+      genre: map['genre'] as String? ?? '',
+      lengthMs: map['length_ms'] as int? ?? 0,
+      trackNumber: map['track_number'] as int? ?? 0,
+      discNumber: map['disc_number'] as int? ?? 0,
+      year: map['year'] as int? ?? 0,
+      artworkUrl: map['artwork_url'] as String? ?? '',
+      artworkPath: map['artwork_path'] as String?,
     );
   }
 }
@@ -198,6 +226,16 @@ class LocalDatabaseRepository {
 
   Future<List<SyncedTrack>> getTracksForPlaylist(int playlistId) async {
     final db = await _dbHelper.database;
+    // Debug: Check playlist_tracks relationships
+    final relationships = await db.query(
+      'playlist_tracks',
+      where: 'playlist_id = ?',
+      whereArgs: [playlistId],
+    );
+    print(
+      'Found ${relationships.length} relationships for playlist $playlistId',
+    );
+
     final results = await db.rawQuery(
       '''
       SELECT st.* FROM synced_tracks st
@@ -206,7 +244,7 @@ class LocalDatabaseRepository {
     ''',
       [playlistId],
     );
-
+    print('Query returned ${results.length} tracks for playlist $playlistId');
     return results.map((map) => SyncedTrack.fromMap(map)).toList();
   }
 
@@ -311,5 +349,175 @@ class LocalDatabaseRepository {
   Future<void> clearPlaylistCache() async {
     final db = await _dbHelper.database;
     await db.delete('playlist_cache');
+  }
+
+  /// Get all unique artists
+  Future<List<String>> getAllArtists({String sortBy = 'artist'}) async {
+    final db = await _dbHelper.database; // Changed this line
+    final result = await db.query(
+      'synced_tracks',
+      columns: ['DISTINCT artist'],
+      orderBy: sortBy == 'artist' ? 'artist ASC' : 'artist DESC',
+    );
+    return result.map((row) => row['artist'] as String).toList();
+  }
+
+  /// Get all unique albums with artist info
+  Future<List<Map<String, dynamic>>> getAllAlbums({
+    String sortBy = 'album',
+  }) async {
+    final db = await _dbHelper.database; // Changed this line
+
+    String orderByClause;
+    switch (sortBy) {
+      case 'artist':
+        orderByClause = 'album_artist ASC, album ASC';
+        break;
+      case 'year':
+        orderByClause = 'year DESC, album ASC';
+        break;
+      default:
+        orderByClause = 'album ASC';
+    }
+
+    final result = await db.rawQuery('''
+      SELECT DISTINCT album, album_artist, year, artwork_path
+      FROM synced_tracks
+      ORDER BY $orderByClause
+    ''');
+
+    return result;
+  }
+
+  /// Get tracks by artist
+  Future<List<SyncedTrack>> getTracksByArtist(
+    String artist, {
+    String sortBy = 'album',
+  }) async {
+    final db = await _dbHelper.database; // Changed this line
+
+    String orderByClause;
+    switch (sortBy) {
+      case 'title':
+        orderByClause = 'title ASC';
+        break;
+      case 'album':
+        orderByClause = 'album ASC, disc_number ASC, track_number ASC';
+        break;
+      case 'year':
+        orderByClause = 'year DESC, album ASC, track_number ASC';
+        break;
+      default:
+        orderByClause = 'album ASC, disc_number ASC, track_number ASC';
+    }
+
+    final result = await db.query(
+      'synced_tracks',
+      where: 'artist = ? OR album_artist = ?',
+      whereArgs: [artist, artist],
+      orderBy: orderByClause,
+    );
+
+    return result.map((map) => SyncedTrack.fromMap(map)).toList();
+  }
+
+  /// Get tracks by album
+  Future<List<SyncedTrack>> getTracksByAlbum(
+    String album, {
+    String sortBy = 'track',
+  }) async {
+    final db = await _dbHelper.database; // Changed this line
+
+    String orderByClause;
+    switch (sortBy) {
+      case 'title':
+        orderByClause = 'title ASC';
+        break;
+      case 'track':
+        orderByClause = 'disc_number ASC, track_number ASC';
+        break;
+      default:
+        orderByClause = 'disc_number ASC, track_number ASC';
+    }
+
+    final result = await db.query(
+      'synced_tracks',
+      where: 'album = ?',
+      whereArgs: [album],
+      orderBy: orderByClause,
+    );
+
+    return result.map((map) => SyncedTrack.fromMap(map)).toList();
+  }
+
+  /// Get all tracks
+  Future<List<SyncedTrack>> getAllTracks({String sortBy = 'title'}) async {
+    final db = await _dbHelper.database; // Changed this line
+
+    String orderByClause;
+    switch (sortBy) {
+      case 'title':
+        orderByClause = 'title ASC';
+        break;
+      case 'artist':
+        orderByClause = 'artist ASC, album ASC, track_number ASC';
+        break;
+      case 'album':
+        orderByClause = 'album ASC, track_number ASC';
+        break;
+      case 'year':
+        orderByClause = 'year DESC';
+        break;
+      case 'dateAdded':
+        orderByClause = 'download_timestamp DESC';
+        break;
+      default:
+        orderByClause = 'title ASC';
+    }
+
+    final result = await db.query('synced_tracks', orderBy: orderByClause);
+
+    return result.map((map) => SyncedTrack.fromMap(map)).toList();
+  }
+
+  /// Get synced playlists with track counts
+  Future<List<Map<String, dynamic>>> getAllPlaylistsWithCounts() async {
+    final db = await _dbHelper.database; // Changed this line
+
+    final result = await db.rawQuery('''
+      SELECT
+        p.id,
+        p.name,
+        p.path,
+        p.type,
+        p.last_synced,
+        COUNT(pt.track_id) as track_count
+      FROM synced_playlists p
+      LEFT JOIN playlist_tracks pt ON p.id = pt.playlist_id
+      GROUP BY p.id
+      ORDER BY p.name ASC
+    ''');
+
+    return result;
+  }
+
+  /// Get multiple tracks by IDs in a single query
+  Future<Map<int, SyncedTrack>> getTracksByIds(List<int> ids) async {
+    if (ids.isEmpty) return {};
+
+    final db = await _dbHelper.database;
+    final placeholders = ids.map((_) => '?').join(',');
+    final results = await db.query(
+      'synced_tracks',
+      where: 'id IN ($placeholders)',
+      whereArgs: ids,
+    );
+
+    final tracks = <int, SyncedTrack>{};
+    for (final map in results) {
+      final track = SyncedTrack.fromMap(map);
+      tracks[track.id] = track;
+    }
+    return tracks;
   }
 }

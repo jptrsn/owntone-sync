@@ -166,4 +166,50 @@ class FileSystemRepository {
     // For now, we'll leave this as a placeholder
     // The actual implementation will need native Android code
   }
+
+  // Get the artwork cache directory
+  Future<Directory> getArtworkDirectory() async {
+    final musicDir = await getMusicDirectory();
+    final artworkDir = Directory(path.join(musicDir.path, 'artwork'));
+
+    if (!await artworkDir.exists()) {
+      await artworkDir.create(recursive: true);
+    }
+
+    return artworkDir;
+  }
+
+  // Generate artwork filename (using album_id to deduplicate)
+  String generateArtworkFilename(String albumId) {
+    return 'album_$albumId.jpg';
+  }
+
+  // Get artwork path for an album
+  Future<String> getArtworkPath(String albumId) async {
+    final artworkDir = await getArtworkDirectory();
+    final filename = generateArtworkFilename(albumId);
+    return path.join(artworkDir.path, filename);
+  }
+
+  // Check if artwork exists for an album
+  Future<bool> artworkExists(String albumId) async {
+    final artworkPath = await getArtworkPath(albumId);
+    return File(artworkPath).exists();
+  }
+
+  // Download artwork from URL
+  Future<String?> downloadArtwork(String artworkUrl, String albumId) async {
+    try {
+      final artworkPath = await getArtworkPath(albumId);
+
+      // Download the image
+      final dio = Dio();
+      await dio.download(artworkUrl, artworkPath);
+
+      return artworkPath;
+    } catch (e) {
+      print('Failed to download artwork: $e');
+      return null;
+    }
+  }
 }

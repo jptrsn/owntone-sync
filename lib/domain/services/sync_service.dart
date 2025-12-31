@@ -5,6 +5,7 @@ import '../../data/models/track.dart';
 import '../../data/repositories/owntone_api_repository.dart';
 import '../../data/repositories/local_database_repository.dart';
 import '../../data/repositories/file_system_repository.dart';
+import 'package:audiotags/audiotags.dart';
 
 class SyncProgress {
   final String currentPlaylist;
@@ -240,17 +241,16 @@ class SyncService {
     );
 
     final serverTracks = tracksResponse.items;
-    final localTracks = await _dbRepo.getTracksForPlaylist(playlist.id);
 
     // Find tracks to download (on server but not local, or file missing)
     final tracksToDownload = <Track>[];
+
+    // Get all server track IDs and query database once
+    final serverTrackIds = serverTracks.map((t) => t.id).toList();
+    final existingTracks = await _dbRepo.getTracksByIds(serverTrackIds);
+
     for (final track in serverTracks) {
-      SyncedTrack? localTrack;
-      try {
-        localTrack = localTracks.firstWhere((t) => t.id == track.id);
-      } catch (e) {
-        // Track not found
-      }
+      final localTrack = existingTracks[track.id];
 
       if (localTrack == null) {
         // Track not in database, need to download
@@ -302,22 +302,12 @@ class SyncService {
       downloaded++;
     }
 
-    // Rebuild playlist-track relationships from server state
-    // First, clear all existing relationships for this playlist
-    await _dbRepo.clearPlaylistTracks(playlist.id);
+    // Re-query to get all tracks now in database (including newly downloaded ones)
+    final allExistingTracks = await _dbRepo.getTracksByIds(serverTrackIds);
 
-    // Build set of track IDs we downloaded this session
-    final downloadedTrackIds = tracksToDownload.map((t) => t.id).toSet();
-
-    // Build set of track IDs that were already local
-    final existingLocalTrackIds = localTracks.map((t) => t.id).toSet();
-
-    // Then add all tracks from server that are now in our database
-    for (final track in serverTracks) {
-      if (downloadedTrackIds.contains(track.id) ||
-          existingLocalTrackIds.contains(track.id)) {
-        await _dbRepo.addTrackToPlaylist(playlist.id, track.id);
-      }
+    // Then add all tracks from server that exist in our database
+    for (final trackId in allExistingTracks.keys) {
+      await _dbRepo.addTrackToPlaylist(playlist.id, trackId);
     }
 
     // Update playlist in database
@@ -360,7 +350,29 @@ class SyncService {
       // Check if file already exists
       final finalFile = File(finalPath);
       if (await finalFile.exists()) {
-        // File already exists, skip download
+        // File already exists, but ensure it's in database
+        final fileSize = await _fileRepo.getFileSize(finalPath);
+
+        await _dbRepo.insertOrUpdateTrack(
+          SyncedTrack(
+            id: track.id,
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+            albumArtist: track.albumArtist,
+            localPath: finalPath,
+            serverPath: track.path,
+            downloadTimestamp: DateTime.now().millisecondsSinceEpoch,
+            fileSize: fileSize,
+            genre: track.genre,
+            lengthMs: track.lengthMs,
+            trackNumber: track.trackNumber,
+            discNumber: track.discNumber,
+            year: track.year,
+            artworkUrl: track.artworkUrl,
+            artworkPath: null, // TODO: Find artwork and sync later
+          ),
+        );
         return;
       }
 
@@ -383,6 +395,41 @@ class SyncService {
       // Get file size
       final fileSize = await _fileRepo.getFileSize(finalPath);
 
+      // Handle artwork
+      String? artworkPath;
+
+      // First, try to extract embedded artwork from the audio file
+      try {
+        final tag = await AudioTags.read(finalPath);
+        if (tag?.pictures != null && tag!.pictures!.isNotEmpty) {
+          // Has embedded artwork, save it to cache
+          final picture = tag.pictures!.first;
+          artworkPath = await _fileRepo.getArtworkPath(track.albumId);
+
+          // Only write if it doesn't already exist (multiple tracks share album art)
+          if (!await File(artworkPath).exists()) {
+            await File(artworkPath).writeAsBytes(picture.bytes);
+          }
+        }
+      } catch (e) {
+        print('Could not read embedded artwork: $e');
+      }
+
+      // If no embedded artwork and we have an artworkUrl, download it
+      if (artworkPath == null && track.artworkUrl.isNotEmpty) {
+        // Check if we already cached this album's artwork
+        if (await _fileRepo.artworkExists(track.albumId)) {
+          artworkPath = await _fileRepo.getArtworkPath(track.albumId);
+        } else {
+          // Download artwork
+          final fullArtworkUrl = '${_apiRepo.baseUrl}${track.artworkUrl}';
+          artworkPath = await _fileRepo.downloadArtwork(
+            fullArtworkUrl,
+            track.albumId,
+          );
+        }
+      }
+
       // Save track to database
       await _dbRepo.insertOrUpdateTrack(
         SyncedTrack(
@@ -395,6 +442,13 @@ class SyncService {
           serverPath: track.path,
           downloadTimestamp: DateTime.now().millisecondsSinceEpoch,
           fileSize: fileSize,
+          genre: track.genre,
+          lengthMs: track.lengthMs,
+          trackNumber: track.trackNumber,
+          discNumber: track.discNumber,
+          year: track.year,
+          artworkUrl: track.artworkUrl,
+          artworkPath: artworkPath,
         ),
       );
     } catch (e) {

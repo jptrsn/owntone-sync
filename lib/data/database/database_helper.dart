@@ -56,7 +56,14 @@ class DatabaseHelper {
         local_path TEXT NOT NULL,
         server_path TEXT NOT NULL,
         download_timestamp INTEGER NOT NULL,
-        file_size INTEGER NOT NULL
+        file_size INTEGER NOT NULL,
+        genre TEXT NOT NULL DEFAULT '',
+        length_ms INTEGER NOT NULL DEFAULT 0,
+        track_number INTEGER NOT NULL DEFAULT 0,
+        disc_number INTEGER NOT NULL DEFAULT 0,
+        year INTEGER NOT NULL DEFAULT 0,
+        artwork_url TEXT NOT NULL DEFAULT '',
+        artwork_path TEXT DEFAULT ''
       )
     ''');
 
@@ -92,6 +99,17 @@ class DatabaseHelper {
     );
     await db.execute(
       'CREATE INDEX idx_pending_events_synced ON pending_events(synced)',
+    );
+
+    // Indexes for browse queries
+    await db.execute(
+      'CREATE INDEX idx_synced_tracks_artist ON synced_tracks(artist)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_synced_tracks_album ON synced_tracks(album)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_synced_tracks_genre ON synced_tracks(genre)',
     );
   }
 
