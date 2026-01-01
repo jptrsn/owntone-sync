@@ -63,80 +63,10 @@ class _ScheduleConfigScreenState extends State<ScheduleConfigScreen> {
           ),
           const Divider(),
 
-          // Quick presets
           const Padding(
             padding: EdgeInsets.all(16.0),
             child: Text(
-              'Quick Setup',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-          ),
-          ListTile(
-            leading: const Icon(Icons.nightlight),
-            title: const Text('Overnight Sync'),
-            subtitle: const Text('Every night at 2:00 AM'),
-            trailing: _isOvernightPreset()
-                ? const Icon(Icons.check, color: Colors.green)
-                : null,
-            onTap: () {
-              setState(() {
-                _schedule = _schedule.copyWith(
-                  enabled: true,
-                  hour: 2,
-                  minute: 0,
-                  daysOfWeek: {1, 2, 3, 4, 5, 6, 7},
-                  requiresCharging: true,
-                  requiresWifi: true,
-                );
-              });
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.work),
-            title: const Text('Weekday Mornings'),
-            subtitle: const Text('Mon-Fri at 6:00 AM'),
-            trailing: _isWeekdayMorningPreset()
-                ? const Icon(Icons.check, color: Colors.green)
-                : null,
-            onTap: () {
-              setState(() {
-                _schedule = _schedule.copyWith(
-                  enabled: true,
-                  hour: 6,
-                  minute: 0,
-                  daysOfWeek: {1, 2, 3, 4, 5},
-                  requiresCharging: true,
-                  requiresWifi: true,
-                );
-              });
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.weekend),
-            title: const Text('Weekend Sync'),
-            subtitle: const Text('Sat-Sun at 10:00 AM'),
-            trailing: _isWeekendPreset()
-                ? const Icon(Icons.check, color: Colors.green)
-                : null,
-            onTap: () {
-              setState(() {
-                _schedule = _schedule.copyWith(
-                  enabled: true,
-                  hour: 10,
-                  minute: 0,
-                  daysOfWeek: {6, 7},
-                  requiresCharging: false,
-                  requiresWifi: true,
-                );
-              });
-            },
-          ),
-
-          const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text(
-              'Custom Schedule',
+              'Synchronization Schedule',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
           ),
@@ -272,29 +202,5 @@ class _ScheduleConfigScreenState extends State<ScheduleConfigScreen> {
             }
           : null,
     );
-  }
-
-  bool _isOvernightPreset() {
-    return _schedule.hour == 2 &&
-        _schedule.minute == 0 &&
-        _schedule.daysOfWeek.length == 7 &&
-        _schedule.requiresCharging &&
-        _schedule.requiresWifi;
-  }
-
-  bool _isWeekdayMorningPreset() {
-    return _schedule.hour == 6 &&
-        _schedule.minute == 0 &&
-        _schedule.daysOfWeek.length == 5 &&
-        !_schedule.daysOfWeek.contains(6) &&
-        !_schedule.daysOfWeek.contains(7);
-  }
-
-  bool _isWeekendPreset() {
-    return _schedule.hour == 10 &&
-        _schedule.minute == 0 &&
-        _schedule.daysOfWeek.length == 2 &&
-        _schedule.daysOfWeek.contains(6) &&
-        _schedule.daysOfWeek.contains(7);
   }
 }

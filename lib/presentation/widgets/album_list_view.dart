@@ -48,14 +48,24 @@ class AlbumListView extends StatelessWidget {
   Widget _buildAlbumArt(String? artworkPath) {
     if (artworkPath != null && artworkPath.isNotEmpty) {
       final file = File(artworkPath);
-      if (file.existsSync()) {
+      if (file.existsSync() && file.lengthSync() > 0) {
         return ClipRRect(
           borderRadius: BorderRadius.circular(4),
-          child: Image.file(file, width: 56, height: 56, fit: BoxFit.cover),
+          child: Image.file(
+            file,
+            width: 56,
+            height: 56,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _buildPlaceholder(),
+          ),
         );
       }
     }
 
+    return _buildPlaceholder();
+  }
+
+  Widget _buildPlaceholder() {
     return Container(
       width: 56,
       height: 56,

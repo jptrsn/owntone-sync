@@ -206,6 +206,16 @@ class FileSystemRepository {
       final dio = Dio();
       await dio.download(artworkUrl, artworkPath);
 
+      // Verify the file was downloaded and is not empty
+      final file = File(artworkPath);
+      if (!await file.exists() || await file.length() == 0) {
+        print('Artwork download failed or file is empty');
+        if (await file.exists()) {
+          await file.delete(); // Delete empty file
+        }
+        return null;
+      }
+
       return artworkPath;
     } catch (e) {
       print('Failed to download artwork: $e');
