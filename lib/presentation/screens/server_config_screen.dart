@@ -11,9 +11,18 @@ class ServerConfigScreen extends StatefulWidget {
 
 class _ServerConfigScreenState extends State<ServerConfigScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _urlController = TextEditingController(
-    text: 'http://192.168.1.100:3689',
-  );
+  late final TextEditingController _urlController;
+
+  @override
+  void initState() {
+    super.initState();
+    final provider = context.read<SyncProvider>();
+    _urlController = TextEditingController(
+      text: provider.serverUrl.isNotEmpty
+          ? provider.serverUrl
+          : 'http://192.168.1.100:3689',
+    );
+  }
 
   @override
   void dispose() {
