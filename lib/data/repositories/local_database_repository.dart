@@ -227,15 +227,6 @@ class LocalDatabaseRepository {
 
   Future<List<SyncedTrack>> getTracksForPlaylist(int playlistId) async {
     final db = await _dbHelper.database;
-    // Debug: Check playlist_tracks relationships
-    final relationships = await db.query(
-      'playlist_tracks',
-      where: 'playlist_id = ?',
-      whereArgs: [playlistId],
-    );
-    print(
-      'Found ${relationships.length} relationships for playlist $playlistId',
-    );
 
     final results = await db.rawQuery(
       '''
@@ -245,7 +236,7 @@ class LocalDatabaseRepository {
     ''',
       [playlistId],
     );
-    print('Query returned ${results.length} tracks for playlist $playlistId');
+
     return results.map((map) => SyncedTrack.fromMap(map)).toList();
   }
 

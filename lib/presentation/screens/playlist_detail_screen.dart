@@ -29,7 +29,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   Future<void> _loadTracks() async {
     setState(() => _isLoading = true);
     final tracks = await _dbRepo.getTracksForPlaylist(widget.playlistId);
-    print('Loaded ${tracks.length} tracks for playlist ${widget.playlistId}');
     setState(() {
       _tracks = tracks;
       _isLoading = false;

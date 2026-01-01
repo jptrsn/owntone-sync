@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
-import 'data/models/sync_history.dart';
 import 'data/models/sync_schedule.dart';
 import 'data/models/sync_state.dart';
 import 'data/repositories/file_system_repository.dart';
@@ -19,8 +18,6 @@ import 'presentation/screens/main_navigation_screen.dart';
 void callbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
     try {
-      print('[Background] Starting background sync task');
-
       // Load configuration from SharedPreferences
       final prefs = await SharedPreferences.getInstance();
 
@@ -34,17 +31,14 @@ void callbackDispatcher() {
       final syncStateJson = prefs.getString('sync_state');
 
       if (serverUrl == null || serverUrl.isEmpty) {
-        print('[Background] No server URL configured');
         return Future.value(false);
       }
 
       if (scheduleJson == null) {
-        print('[Background] No schedule configured');
         return Future.value(false);
       }
 
       if (selectedPlaylistIdsJson == null || selectedPlaylistIdsJson.isEmpty) {
-        print('[Background] No playlists selected');
         return Future.value(false);
       }
 
@@ -59,33 +53,8 @@ void callbackDispatcher() {
       // Check if we should sync now
       final now = DateTime.now();
       if (!schedule.shouldSyncNow(now, syncState)) {
-        print(
-          '[Background] Not time to sync. Current: ${now.hour}:${now.minute}, Scheduled: ${schedule.hour}:${schedule.minute}',
-        );
-
-        if (syncState.isRunning) {
-          print('[Background] Sync already in progress');
-        } else {
-          // Log that sync was skipped
-          final dbRepo = LocalDatabaseRepository();
-          final record = SyncHistoryRecord(
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            status: 'skipped',
-            errorMessage: 'Conditions not met',
-            triggerType: 'scheduled',
-          );
-          await dbRepo.insertSyncHistory(record);
-        }
-
-        if (syncState.lastSyncTime != null) {
-          print('[Background] Last sync: ${syncState.lastSyncTime}');
-        }
         return Future.value(true);
       }
-
-      print(
-        '[Background] Time to sync! Starting sync of ${selectedPlaylistIds.length} playlists',
-      );
 
       // Mark sync as running
       final runningSyncState = SyncState(
@@ -130,12 +99,8 @@ void callbackDispatcher() {
         );
 
         if (result.success) {
-          print(
-            '[Background] Sync completed successfully. Downloaded: ${result.tracksDownloaded}, Deleted: ${result.tracksDeleted}',
-          );
           return Future.value(true);
         } else {
-          print('[Background] Sync failed: ${result.error}');
           return Future.value(false);
         }
       } catch (e) {
@@ -151,9 +116,7 @@ void callbackDispatcher() {
         );
         rethrow;
       }
-    } catch (e, stackTrace) {
-      print('[Background] Error during background sync: $e');
-      print('[Background] Stack trace: $stackTrace');
+    } catch (e) {
       return Future.value(false);
     }
   });
@@ -162,7 +125,7 @@ void callbackDispatcher() {
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  Workmanager().initialize(callbackDispatcher, isInDebugMode: true);
+  Workmanager().initialize(callbackDispatcher);
 
   runApp(const MyApp());
 }

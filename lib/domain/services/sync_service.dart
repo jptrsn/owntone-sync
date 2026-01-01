@@ -270,14 +270,6 @@ class SyncService {
         orElse: () => throw Exception('Playlist not found'),
       );
 
-      // Check if we have this playlist locally
-      final localPlaylist = await _dbRepo.getPlaylistById(playlistId);
-
-      if (localPlaylist != null && localPlaylist.path != playlist.path) {
-        // Path changed - this shouldn't happen but handle it
-        print('Warning: Playlist path changed for ID $playlistId');
-      }
-
       return playlist;
     } catch (e) {
       // Playlist not found by ID, try recovery by path
@@ -304,9 +296,6 @@ class SyncService {
         ),
       );
 
-      print(
-        'Recovered playlist: ${recoveredPlaylist.name} with new ID ${recoveredPlaylist.id}',
-      );
       return recoveredPlaylist;
     }
   }
@@ -462,7 +451,7 @@ class SyncService {
             discNumber: track.discNumber,
             year: track.year,
             artworkUrl: track.artworkUrl,
-            artworkPath: null, // TODO: Find artwork and sync later
+            artworkPath: null,
           ),
         );
         return;
@@ -504,7 +493,7 @@ class SyncService {
           }
         }
       } catch (e) {
-        print('Could not read embedded artwork: $e');
+        // print('Could not read embedded artwork: $e');
       }
 
       // If no embedded artwork and we have an artworkUrl, download it
@@ -657,7 +646,7 @@ class SyncService {
             eventsSynced++;
           }
         } catch (e) {
-          print('Failed to sync events for track $trackId: $e');
+          // print('Failed to sync events for track $trackId: $e');
           // Continue with other tracks
         }
       }

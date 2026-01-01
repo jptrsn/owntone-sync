@@ -25,7 +25,7 @@ class FileSystemRepository {
         throw Exception('Unexpected storage path structure');
       }
 
-      final musicPath = parts.sublist(0, baseIndex + 2).join('/') + '/Music';
+      final musicPath = '${parts.sublist(0, baseIndex + 2).join('/')}/Music';
       final musicDir = Directory(musicPath);
 
       if (!await musicDir.exists()) {
@@ -209,7 +209,6 @@ class FileSystemRepository {
       // Verify the file was downloaded and is not empty
       final file = File(artworkPath);
       if (!await file.exists() || await file.length() == 0) {
-        print('Artwork download failed or file is empty');
         if (await file.exists()) {
           await file.delete(); // Delete empty file
         }
@@ -218,7 +217,6 @@ class FileSystemRepository {
 
       return artworkPath;
     } catch (e) {
-      print('Failed to download artwork: $e');
       return null;
     }
   }

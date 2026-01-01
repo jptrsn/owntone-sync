@@ -10,6 +10,7 @@ import 'dart:convert';
 import '../../data/models/sync_schedule.dart';
 import 'package:workmanager/workmanager.dart';
 import '../../data/models/sync_state.dart';
+import '../../domain/services/event_tracker_service.dart';
 
 class SyncProvider extends ChangeNotifier {
   final PermissionsService _permissionsService = PermissionsService();
@@ -31,6 +32,8 @@ class SyncProvider extends ChangeNotifier {
   bool _isOnline = true;
   bool _isCancelling = false;
   SyncSchedule _syncSchedule = SyncSchedule();
+  EventTrackerService? _eventTracker;
+  bool _eventTrackingEnabled = false;
 
   // Getters
   String get serverUrl => _serverUrl;
@@ -45,6 +48,7 @@ class SyncProvider extends ChangeNotifier {
   bool get isOnline => _isOnline;
   bool get isCancelling => _isCancelling;
   SyncSchedule get syncSchedule => _syncSchedule;
+  bool get eventTrackingEnabled => _eventTrackingEnabled;
 
   SyncProvider() {
     _initialize();
@@ -75,6 +79,14 @@ class SyncProvider extends ChangeNotifier {
 
     // Load cached playlist metadata
     await _loadPlaylistsFromCache();
+
+    // Load event tracking preference (premium only)
+    _eventTrackingEnabled = prefs.getBool('event_tracking_enabled') ?? false;
+
+    if (_eventTrackingEnabled && _dbRepo != null) {
+      _eventTracker = EventTrackerService(dbRepo: _dbRepo!);
+      _eventTracker!.enable();
+    }
 
     notifyListeners();
   }
@@ -197,12 +209,6 @@ class SyncProvider extends ChangeNotifier {
           requiresCharging: _syncSchedule.requiresCharging,
         ),
       );
-
-      print(
-        '[Config] Background sync registered. Schedule: ${_syncSchedule.getScheduleDescription()}',
-      );
-    } else {
-      print('[Config] Background sync disabled');
     }
   }
 
@@ -306,6 +312,11 @@ class SyncProvider extends ChangeNotifier {
         json.encode(runningSyncState.toJson()),
       );
 
+      // Sync events back to server if tracking is enabled
+      if (_eventTrackingEnabled && _syncService != null) {
+        await _syncService!.syncEvents();
+      }
+
       final result = await _syncService!.syncPlaylists(
         _selectedPlaylistIds.toList(),
       );
@@ -345,5 +356,36 @@ class SyncProvider extends ChangeNotifier {
       _syncProgress = null;
       notifyListeners();
     }
+  }
+
+  Future<bool> checkEventTrackingPermission() async {
+    if (_dbRepo == null) return false;
+
+    _eventTracker ??= EventTrackerService(dbRepo: _dbRepo!);
+    return await _eventTracker!.checkPermission();
+  }
+
+  Future<void> requestEventTrackingPermission() async {
+    if (_dbRepo == null) return;
+
+    _eventTracker ??= EventTrackerService(dbRepo: _dbRepo!);
+    await _eventTracker!.requestPermission();
+  }
+
+  Future<void> setEventTracking(bool enabled) async {
+    if (_dbRepo == null) return;
+
+    _eventTrackingEnabled = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('event_tracking_enabled', enabled);
+
+    if (enabled) {
+      _eventTracker ??= EventTrackerService(dbRepo: _dbRepo!);
+      _eventTracker!.enable();
+    } else {
+      _eventTracker?.disable();
+    }
+
+    notifyListeners();
   }
 }
