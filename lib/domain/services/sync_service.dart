@@ -415,9 +415,6 @@ class SyncService {
     logger.d('Updated playlist ${playlist.name} in database');
 
     // Generate .m3u playlist file
-    logger.i(
-      'Generating playlist file for ${playlist.name} with ${serverTracks.length} tracks',
-    );
     await _generatePlaylistFile(playlist, serverTracks);
 
     logger.i(
@@ -591,7 +588,7 @@ class SyncService {
             'artist': track.artist,
             'duration_ms': track.lengthMs,
           });
-          logger.d('Added track: ${track.title} by ${track.artist}');
+          // logger.d('Added track: ${track.title} by ${track.artist}');
         } else {
           logger.w(
             'Track ${track.id} (${track.title}) not found in database, skipping from playlist',

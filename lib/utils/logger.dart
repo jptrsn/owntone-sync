@@ -9,4 +9,5 @@ final logger = Logger(
     printEmojis: true,
   ),
   level: Level.debug, // Set to Level.info for production
+  // level: Level.info,
 );

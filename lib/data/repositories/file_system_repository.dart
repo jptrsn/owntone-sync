@@ -136,14 +136,11 @@ class FileSystemRepository {
   ) async {
     try {
       logger.d('Writing playlist file for: ${playlist.name}');
-      logger.d('Track paths count: ${trackPaths.length}');
 
       final playlistsDir = await getPlaylistsDirectory();
-      logger.d('Playlists directory: ${playlistsDir.path}');
 
       final sanitizedName = sanitizeFilename(playlist.name);
       final playlistPath = path.join(playlistsDir.path, '$sanitizedName.m3u');
-      logger.d('Playlist file path: $playlistPath');
 
       final file = File(playlistPath);
 
@@ -173,7 +170,6 @@ class FileSystemRepository {
       }
 
       final content = buffer.toString();
-      logger.d('Content length: ${content.length} characters');
 
       await file.writeAsString(content);
 

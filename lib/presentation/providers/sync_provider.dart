@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
@@ -10,7 +11,6 @@ import '../../data/models/sync_state.dart';
 import '../../data/repositories/file_system_repository.dart';
 import '../../data/repositories/local_database_repository.dart';
 import '../../data/repositories/owntone_api_repository.dart';
-import '../../domain/services/event_tracker_service.dart';
 import '../../domain/services/permissions_service.dart';
 import '../../domain/services/sync_service.dart';
 import '../../utils/logger.dart';
@@ -35,7 +35,6 @@ class SyncProvider extends ChangeNotifier {
   bool _isOnline = true;
   bool _isCancelling = false;
   SyncSchedule _syncSchedule = SyncSchedule();
-  EventTrackerService? _eventTracker;
   bool _eventTrackingEnabled = false;
 
   // Getters
@@ -86,12 +85,6 @@ class SyncProvider extends ChangeNotifier {
     // Load event tracking preference (premium only)
     _eventTrackingEnabled = prefs.getBool('event_tracking_enabled') ?? false;
     logger.i('Event tracking preference loaded: $_eventTrackingEnabled');
-
-    if (_eventTrackingEnabled && _dbRepo != null) {
-      _eventTracker = EventTrackerService(dbRepo: _dbRepo!);
-      _eventTracker!.enable();
-      logger.i('Event tracker service initialized and enabled');
-    }
 
     notifyListeners();
   }
@@ -376,36 +369,47 @@ class SyncProvider extends ChangeNotifier {
     }
   }
 
+  // Keep permission check methods (they open Android settings)
   Future<bool> checkEventTrackingPermission() async {
-    if (_dbRepo == null) return false;
-
-    _eventTracker ??= EventTrackerService(dbRepo: _dbRepo!);
-    return await _eventTracker!.checkPermission();
+    try {
+      // Just check Android settings, no EventTracker service needed
+      const channel = MethodChannel('dev.educoder.owntone_sync/events');
+      final result = await channel.invokeMethod(
+        'isNotificationPermissionGranted',
+      );
+      logger.d('Notification permission check: $result');
+      return result as bool;
+    } catch (e, stackTrace) {
+      logger.e(
+        'Error checking notification permission',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return false;
+    }
   }
 
   Future<void> requestEventTrackingPermission() async {
-    if (_dbRepo == null) return;
-
-    _eventTracker ??= EventTrackerService(dbRepo: _dbRepo!);
-    await _eventTracker!.requestPermission();
+    try {
+      logger.i('Requesting notification permission');
+      const channel = MethodChannel('dev.educoder.owntone_sync/events');
+      await channel.invokeMethod('requestNotificationPermission');
+    } catch (e, stackTrace) {
+      logger.e(
+        'Error requesting notification permission',
+        error: e,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
+  // Simplify toggle - just save to SharedPreferences
   Future<void> setEventTracking(bool enabled) async {
-    if (_dbRepo == null) return;
-
     _eventTrackingEnabled = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('event_tracking_enabled', enabled);
 
     logger.i('Event tracking ${enabled ? "enabled" : "disabled"}');
-
-    if (enabled) {
-      _eventTracker ??= EventTrackerService(dbRepo: _dbRepo!);
-      _eventTracker!.enable();
-    } else {
-      _eventTracker?.disable();
-    }
-
     notifyListeners();
   }
 }
