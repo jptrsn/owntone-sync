@@ -9,6 +9,7 @@ import '../../data/models/track.dart';
 import '../../data/repositories/file_system_repository.dart';
 import '../../data/repositories/local_database_repository.dart';
 import '../../data/repositories/owntone_api_repository.dart';
+import '../../utils/logger.dart';
 
 class SyncProgress {
   final String currentPlaylist;
@@ -75,6 +76,9 @@ class SyncService {
     List<int> playlistIds, {
     String triggerType = 'manual',
   }) async {
+    logger.i(
+      'Starting playlist sync for ${playlistIds.length} playlists (trigger: $triggerType)',
+    );
     final startTime = DateTime.now();
 
     try {
@@ -313,15 +317,22 @@ class SyncService {
     int totalTracks,
     int tracksProcessedSoFar,
   ) async {
+    logger.i(
+      'Syncing playlist ${playlistIndex + 1}/$totalPlaylists: ${playlist.name} (ID: ${playlist.id})',
+    );
     int downloaded = 0;
 
     // Fetch all tracks in this playlist
+    logger.d('Fetching tracks for playlist ${playlist.name}');
     final tracksResponse = await _apiRepo.getPlaylistTracks(
       playlist.id,
       limit: 10000,
     );
 
     final serverTracks = tracksResponse.items;
+    logger.i(
+      'Playlist ${playlist.name} has ${serverTracks.length} tracks on server',
+    );
 
     // Find tracks to download (on server but not local, or file missing)
     final tracksToDownload = <Track>[];
@@ -401,9 +412,17 @@ class SyncService {
         lastSynced: DateTime.now().millisecondsSinceEpoch,
       ),
     );
+    logger.d('Updated playlist ${playlist.name} in database');
 
     // Generate .m3u playlist file
+    logger.i(
+      'Generating playlist file for ${playlist.name} with ${serverTracks.length} tracks',
+    );
     await _generatePlaylistFile(playlist, serverTracks);
+
+    logger.i(
+      'Completed sync for playlist ${playlist.name}: $downloaded tracks downloaded',
+    );
 
     return {'downloaded': downloaded};
   }
@@ -554,17 +573,52 @@ class SyncService {
     Playlist playlist,
     List<Track> tracks,
   ) async {
-    final trackPaths = <String>[];
+    try {
+      logger.d(
+        'Generating playlist file for: ${playlist.name} with ${tracks.length} tracks',
+      );
 
-    for (final track in tracks) {
-      // Get the track from database to find its local path
-      final localTrack = await _dbRepo.getTrackById(track.id);
-      if (localTrack != null) {
-        trackPaths.add(localTrack.localPath);
+      final trackPaths = <String>[];
+      final trackMetadata = <Map<String, dynamic>>[];
+
+      for (final track in tracks) {
+        // Get the track from database to find its local path
+        final localTrack = await _dbRepo.getTrackById(track.id);
+        if (localTrack != null) {
+          trackPaths.add(localTrack.localPath);
+          trackMetadata.add({
+            'title': track.title,
+            'artist': track.artist,
+            'duration_ms': track.lengthMs,
+          });
+          logger.d('Added track: ${track.title} by ${track.artist}');
+        } else {
+          logger.w(
+            'Track ${track.id} (${track.title}) not found in database, skipping from playlist',
+          );
+        }
       }
-    }
 
-    await _fileRepo.writePlaylistFile(playlist, trackPaths);
+      logger.i(
+        'Collected ${trackPaths.length} track paths for playlist ${playlist.name}',
+      );
+
+      if (trackPaths.isEmpty) {
+        logger.w(
+          'No tracks found for playlist ${playlist.name}, creating empty playlist file',
+        );
+      }
+
+      await _fileRepo.writePlaylistFile(playlist, trackPaths, trackMetadata);
+      logger.i('Playlist file generation completed for: ${playlist.name}');
+    } catch (e, stackTrace) {
+      logger.e(
+        'Error generating playlist file for ${playlist.name}',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
   }
 
   /// Delete orphaned tracks (not in any playlist)
@@ -585,13 +639,22 @@ class SyncService {
   /// Sync playback events back to server
   Future<SyncResult> syncEvents() async {
     try {
+      logger.i('Starting event sync');
       final unsyncedEvents = await _dbRepo.getUnsyncedEvents();
+      logger.i('Found ${unsyncedEvents.length} unsynced events');
+
+      if (unsyncedEvents.isEmpty) {
+        logger.d('No events to sync');
+        return SyncResult(success: true, eventsySynced: 0);
+      }
 
       // Group events by track ID
       final eventsByTrack = <int, List<PendingEvent>>{};
       for (final event in unsyncedEvents) {
         eventsByTrack.putIfAbsent(event.trackId, () => []).add(event);
       }
+
+      logger.d('Events grouped into ${eventsByTrack.length} tracks');
 
       int eventsSynced = 0;
 
@@ -601,8 +664,13 @@ class SyncService {
         final events = entry.value;
 
         try {
+          logger.d('Syncing ${events.length} events for track $trackId');
+
           // Fetch current server stats
           final track = await _apiRepo.getTrack(trackId);
+          logger.d(
+            'Current server stats - plays: ${track.playCount}, skips: ${track.skipCount}',
+          );
 
           // Calculate merged stats
           int playCount = track.playCount;
@@ -631,6 +699,8 @@ class SyncService {
             }
           }
 
+          logger.d('New stats - plays: $playCount, skips: $skipCount');
+
           // Update server
           await _apiRepo.updateTrackStats(
             trackId,
@@ -640,19 +710,27 @@ class SyncService {
             timeSkipped: timeSkipped,
           );
 
+          logger.i('Successfully updated server stats for track $trackId');
+
           // Mark events as synced and delete them
           for (final event in events) {
             await _dbRepo.deleteEvent(event.id!);
             eventsSynced++;
           }
-        } catch (e) {
-          // print('Failed to sync events for track $trackId: $e');
+        } catch (e, stackTrace) {
+          logger.e(
+            'Failed to sync events for track $trackId',
+            error: e,
+            stackTrace: stackTrace,
+          );
           // Continue with other tracks
         }
       }
 
+      logger.i('Event sync completed: $eventsSynced events synced');
       return SyncResult(success: true, eventsySynced: eventsSynced);
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logger.e('Event sync failed', error: e, stackTrace: stackTrace);
       return SyncResult(success: false, error: e.toString());
     }
   }

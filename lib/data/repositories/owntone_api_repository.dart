@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+
 import '../models/playlist.dart';
 import '../models/track.dart';
 
@@ -56,6 +57,7 @@ class OwnToneApiRepository {
     await _dio.download(
       '/databases/1/items/$trackId.dat',
       savePath,
+      queryParameters: {'no_register_playback': '1'},
       options: Options(headers: {'Accept-Codecs': 'mpeg,alac,flac,wav'}),
       onReceiveProgress: onProgress,
     );

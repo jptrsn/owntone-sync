@@ -1,16 +1,19 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../data/repositories/owntone_api_repository.dart';
-import '../../data/repositories/local_database_repository.dart';
-import '../../data/repositories/file_system_repository.dart';
-import '../../domain/services/sync_service.dart';
-import '../../domain/services/permissions_service.dart';
-import '../../data/models/playlist.dart';
-import 'dart:convert';
-import '../../data/models/sync_schedule.dart';
 import 'package:workmanager/workmanager.dart';
+
+import '../../data/models/playlist.dart';
+import '../../data/models/sync_schedule.dart';
 import '../../data/models/sync_state.dart';
+import '../../data/repositories/file_system_repository.dart';
+import '../../data/repositories/local_database_repository.dart';
+import '../../data/repositories/owntone_api_repository.dart';
 import '../../domain/services/event_tracker_service.dart';
+import '../../domain/services/permissions_service.dart';
+import '../../domain/services/sync_service.dart';
+import '../../utils/logger.dart';
 
 class SyncProvider extends ChangeNotifier {
   final PermissionsService _permissionsService = PermissionsService();
@@ -78,14 +81,16 @@ class SyncProvider extends ChangeNotifier {
     await _loadSyncSchedule();
 
     // Load cached playlist metadata
-    await _loadPlaylistsFromCache();
+    await fetchPlaylists();
 
     // Load event tracking preference (premium only)
     _eventTrackingEnabled = prefs.getBool('event_tracking_enabled') ?? false;
+    logger.i('Event tracking preference loaded: $_eventTrackingEnabled');
 
     if (_eventTrackingEnabled && _dbRepo != null) {
       _eventTracker = EventTrackerService(dbRepo: _dbRepo!);
       _eventTracker!.enable();
+      logger.i('Event tracker service initialized and enabled');
     }
 
     notifyListeners();
@@ -130,6 +135,7 @@ class SyncProvider extends ChangeNotifier {
   Future<void> fetchPlaylists() async {
     if (_apiRepo == null || _dbRepo == null) {
       _lastError = 'Server URL not configured';
+      logger.i('Failed to fetch playlists - Server URL not configured');
       notifyListeners();
       return;
     }
@@ -139,6 +145,8 @@ class SyncProvider extends ChangeNotifier {
       final response = await _apiRepo!.getPlaylists(limit: 1000);
       _availablePlaylists = response.items;
       _isOnline = true;
+
+      logger.i('Fetched ${_availablePlaylists.length} playlists from server');
 
       // Cache the playlists
       await _dbRepo!.clearPlaylistCache();
@@ -150,6 +158,8 @@ class SyncProvider extends ChangeNotifier {
     } catch (e) {
       _lastError = 'Failed to fetch playlists: $e';
       _isOnline = false;
+
+      logger.i('Failed to fetch playlists: $e');
 
       // Load from cache if server is unreachable
       await _loadPlaylistsFromCache();
@@ -314,6 +324,7 @@ class SyncProvider extends ChangeNotifier {
 
       // Sync events back to server if tracking is enabled
       if (_eventTrackingEnabled && _syncService != null) {
+        logger.i('Syncing events to server before playlist sync');
         await _syncService!.syncEvents();
       }
 
@@ -334,14 +345,21 @@ class SyncProvider extends ChangeNotifier {
 
       if (result.success) {
         _lastError = null;
+        logger.i('Sync completed successfully');
+
+        // Refresh playlist metadata from server
+        logger.i('Refreshing playlist metadata after sync');
+        await fetchPlaylists();
       } else {
         // Don't show cancellation as an error
         if (result.error != 'Sync cancelled by user') {
           _lastError = result.error;
+          logger.e('Sync failed: ${result.error}');
         }
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       _lastError = 'Sync failed: $e';
+      logger.e('Sync exception', error: e, stackTrace: stackTrace);
 
       // Mark sync as not running on error
       final prefs = await SharedPreferences.getInstance();
@@ -378,6 +396,8 @@ class SyncProvider extends ChangeNotifier {
     _eventTrackingEnabled = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('event_tracking_enabled', enabled);
+
+    logger.i('Event tracking ${enabled ? "enabled" : "disabled"}');
 
     if (enabled) {
       _eventTracker ??= EventTrackerService(dbRepo: _dbRepo!);

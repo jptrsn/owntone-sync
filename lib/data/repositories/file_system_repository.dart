@@ -4,6 +4,7 @@ import 'package:path/path.dart' as path;
 import 'package:dio/dio.dart';
 import '../models/track.dart';
 import '../models/playlist.dart';
+import '../../utils/logger.dart';
 
 class FileSystemRepository {
   // Get the base Music directory
@@ -131,32 +132,93 @@ class FileSystemRepository {
   Future<void> writePlaylistFile(
     Playlist playlist,
     List<String> trackPaths,
+    List<Map<String, dynamic>> trackMetadata, // Add track metadata parameter
   ) async {
-    final playlistsDir = await getPlaylistsDirectory();
-    final sanitizedName = sanitizeFilename(playlist.name);
-    final playlistPath = path.join(playlistsDir.path, '$sanitizedName.m3u');
+    try {
+      logger.d('Writing playlist file for: ${playlist.name}');
+      logger.d('Track paths count: ${trackPaths.length}');
 
-    final file = File(playlistPath);
+      final playlistsDir = await getPlaylistsDirectory();
+      logger.d('Playlists directory: ${playlistsDir.path}');
 
-    // Convert absolute paths to relative paths from playlist directory
-    final relativePaths = trackPaths.map((trackPath) {
-      return path.relative(trackPath, from: playlistsDir.path);
-    }).toList();
+      final sanitizedName = sanitizeFilename(playlist.name);
+      final playlistPath = path.join(playlistsDir.path, '$sanitizedName.m3u');
+      logger.d('Playlist file path: $playlistPath');
 
-    // Write M3U file
-    final content = relativePaths.join('\n');
-    await file.writeAsString(content);
+      final file = File(playlistPath);
+
+      // Build extended M3U content
+      final buffer = StringBuffer();
+
+      // M3U header
+      buffer.writeln('#EXTM3U');
+      buffer.writeln('#PLAYLIST:${playlist.name}');
+      buffer.writeln('#EXTENC:UTF-8');
+
+      // Add tracks with metadata
+      for (int i = 0; i < trackPaths.length; i++) {
+        final trackPath = trackPaths[i];
+        final metadata = trackMetadata[i];
+
+        // #EXTINF:duration_in_seconds,Artist - Title
+        final duration = (metadata['duration_ms'] as int) ~/ 1000;
+        final artist = metadata['artist'] as String;
+        final title = metadata['title'] as String;
+
+        buffer.writeln('#EXTINF:$duration,$artist - $title');
+
+        // Convert to relative path
+        final relativePath = path.relative(trackPath, from: playlistsDir.path);
+        buffer.writeln(relativePath);
+      }
+
+      final content = buffer.toString();
+      logger.d('Content length: ${content.length} characters');
+
+      await file.writeAsString(content);
+
+      // Verify file was written
+      if (await file.exists()) {
+        final fileSize = await file.length();
+        logger.i(
+          'Playlist file written successfully: $playlistPath ($fileSize bytes, ${trackPaths.length} tracks)',
+        );
+      } else {
+        logger.e('Playlist file does not exist after write: $playlistPath');
+      }
+    } catch (e, stackTrace) {
+      logger.e(
+        'Error writing playlist file for ${playlist.name}',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
   }
 
   // Delete a playlist file
   Future<void> deletePlaylistFile(String playlistName) async {
-    final playlistsDir = await getPlaylistsDirectory();
-    final sanitizedName = sanitizeFilename(playlistName);
-    final playlistPath = path.join(playlistsDir.path, '$sanitizedName.m3u');
+    try {
+      final playlistsDir = await getPlaylistsDirectory();
+      final sanitizedName = sanitizeFilename(playlistName);
+      final playlistPath = path.join(playlistsDir.path, '$sanitizedName.m3u');
 
-    final file = File(playlistPath);
-    if (await file.exists()) {
-      await file.delete();
+      final file = File(playlistPath);
+      if (await file.exists()) {
+        await file.delete();
+        logger.i('Deleted playlist file: $playlistPath');
+      } else {
+        logger.d(
+          'Playlist file does not exist, skipping delete: $playlistPath',
+        );
+      }
+    } catch (e, stackTrace) {
+      logger.e(
+        'Error deleting playlist file: $playlistName',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     }
   }
 
@@ -201,6 +263,7 @@ class FileSystemRepository {
   Future<String?> downloadArtwork(String artworkUrl, String albumId) async {
     try {
       final artworkPath = await getArtworkPath(albumId);
+      logger.d('Downloading artwork to: $artworkPath');
 
       // Download the image
       final dio = Dio();
@@ -209,14 +272,18 @@ class FileSystemRepository {
       // Verify the file was downloaded and is not empty
       final file = File(artworkPath);
       if (!await file.exists() || await file.length() == 0) {
+        logger.w('Artwork download failed or file is empty');
         if (await file.exists()) {
           await file.delete(); // Delete empty file
         }
         return null;
       }
 
+      final fileSize = await file.length();
+      logger.i('Artwork downloaded successfully: $fileSize bytes');
       return artworkPath;
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logger.e('Error downloading artwork', error: e, stackTrace: stackTrace);
       return null;
     }
   }

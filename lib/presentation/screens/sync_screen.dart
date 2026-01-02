@@ -12,6 +12,10 @@ class SyncScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<SyncProvider>(
       builder: (context, provider, child) {
+        if (provider.isSyncing) {
+          return _buildSyncingView(context, provider);
+        }
+
         if (!provider.hasStoragePermission) {
           return _buildPermissionRequest(context, provider);
         }
@@ -26,6 +30,36 @@ class SyncScreen extends StatelessWidget {
 
         return _buildPlaylistSelection(context, provider);
       },
+    );
+  }
+
+  Widget _buildSyncingView(BuildContext context, SyncProvider provider) {
+    return Column(
+      children: [
+        if (provider.syncProgress != null)
+          _buildSyncProgress(context, provider.syncProgress!),
+        Expanded(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 24),
+                  Text(
+                    provider.syncProgress != null
+                        ? 'Syncing ${provider.syncProgress!.currentPlaylist}...'
+                        : 'Preparing sync...',
+                    style: const TextStyle(fontSize: 18),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -173,7 +207,7 @@ class SyncScreen extends StatelessWidget {
             ),
           ),
         if (provider.isSyncing && provider.syncProgress != null)
-          _buildSyncProgress(provider.syncProgress!),
+          _buildSyncProgress(context, provider.syncProgress!),
 
         // Sync options section
         Card(
@@ -273,10 +307,10 @@ class SyncScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildSyncProgress(SyncProgress progress) {
+  Widget _buildSyncProgress(BuildContext context, SyncProgress progress) {
     return Container(
       padding: const EdgeInsets.all(16),
-      color: Colors.blue.shade50,
+      color: Theme.of(context).colorScheme.primaryContainer,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -285,7 +319,10 @@ class SyncScreen extends StatelessWidget {
             children: [
               Text(
                 'Syncing: ${progress.currentPlaylist}',
-                style: const TextStyle(fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                ),
               ),
               Consumer<SyncProvider>(
                 builder: (context, provider, child) {
@@ -297,7 +334,9 @@ class SyncScreen extends StatelessWidget {
                     label: Text(
                       provider.isCancelling ? 'Cancelling...' : 'Cancel',
                     ),
-                    style: TextButton.styleFrom(foregroundColor: Colors.red),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Theme.of(context).colorScheme.error,
+                    ),
                   );
                 },
               ),
@@ -305,14 +344,22 @@ class SyncScreen extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           if (progress.currentTrackTitle != null)
-            Text('Downloading: ${progress.currentTrackTitle}'),
+            Text(
+              'Downloading: ${progress.currentTrackTitle}',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+              ),
+            ),
           const SizedBox(height: 8),
           LinearProgressIndicator(value: progress.downloadProgress),
           const SizedBox(height: 4),
           Text(
             'Playlist ${progress.currentPlaylistIndex + 1}/${progress.totalPlaylists} - '
             'Track ${progress.downloadedTracks}/${progress.totalTracks}',
-            style: const TextStyle(fontSize: 12),
+            style: TextStyle(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onPrimaryContainer,
+            ),
           ),
         ],
       ),
