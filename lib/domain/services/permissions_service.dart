@@ -32,29 +32,33 @@ class PermissionsService {
     }
   }
 
-  /// Request storage permissions
   Future<bool> requestStoragePermission() async {
     if (!Platform.isAndroid) return true;
 
     final sdk = await _getAndroidSdk();
-    print('SDK VERSION: $sdk'); // DEBUG
+    print('DEBUG: Requesting permission for SDK $sdk'); // DEBUG
 
     if (sdk >= 33) {
-      print('Requesting READ_MEDIA_AUDIO...'); // DEBUG
+      print('DEBUG: Requesting READ_MEDIA_AUDIO...'); // DEBUG
       final audioStatus = await ph.Permission.audio.request();
-      print('Audio permission result: ${audioStatus.isGranted}'); // DEBUG
+      print(
+        'DEBUG: Audio permission result: ${audioStatus.isGranted}',
+      ); // DEBUG
 
       if (!audioStatus.isGranted) {
         return false;
       }
 
-      print('Requesting Music folder access...'); // DEBUG
+      print('DEBUG: Requesting Music folder access...'); // DEBUG
       final result = await _requestMusicFolderAccess();
-      print('SAF picker result: $result'); // DEBUG
+      print('DEBUG: SAF picker result: $result'); // DEBUG
       return result;
     } else {
-      // Android 10-12
+      // Android 10-12: Request WRITE_EXTERNAL_STORAGE explicitly
+      print('DEBUG: Requesting WRITE_EXTERNAL_STORAGE...'); // DEBUG
       final status = await ph.Permission.storage.request();
+      print('DEBUG: Storage permission granted: ${status.isGranted}'); // DEBUG
+      print('DEBUG: Storage permission status: ${status}'); // DEBUG
       return status.isGranted;
     }
   }

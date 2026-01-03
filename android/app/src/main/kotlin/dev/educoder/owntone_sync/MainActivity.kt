@@ -10,6 +10,9 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.OutputStream
+import android.content.ContentValues
+import android.provider.MediaStore
+import android.content.ContentUris
 
 class MainActivity: FlutterActivity() {
     private val EVENTS_CHANNEL = "dev.educoder.owntone_sync/events"
@@ -65,6 +68,9 @@ class MainActivity: FlutterActivity() {
                 }
                 "writeFileString" -> {
                     writeFileString(call, result)
+                }
+                "writeFileStringMediaStore" -> {   // ← ADD THIS LINE
+                    writeFileStringMediaStore(call, result)
                 }
                 else -> {
                     result.notImplemented()
@@ -317,6 +323,86 @@ class MainActivity: FlutterActivity() {
             }
 
             result.success(true)
+        } catch (e: Exception) {
+            result.error("WRITE_FAILED", e.message, null)
+        }
+    }
+
+    private fun writeFileStringMediaStore(call: MethodCall, result: MethodChannel.Result) {
+        val filePath = call.argument<String>("path")
+        val content = call.argument<String>("content")
+
+        if (filePath == null || content == null) {
+            result.error("INVALID_ARGUMENT", "File path and content are required", null)
+            return
+        }
+
+        try {
+            val fileName = filePath.substringAfterLast('/')
+
+            // For .m3u playlist files, use Audio.Playlists collection
+            if (fileName.endsWith(".m3u") || fileName.endsWith(".m3u8")) {
+                // Use the external storage volume for playlists
+                val playlistsUri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    MediaStore.Audio.Playlists.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                } else {
+                    MediaStore.Audio.Playlists.EXTERNAL_CONTENT_URI
+                }
+
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Audio.Playlists.NAME, fileName.removeSuffix(".m3u").removeSuffix(".m3u8"))
+                    put(MediaStore.Audio.Playlists.DATE_ADDED, System.currentTimeMillis() / 1000)
+                    put(MediaStore.Audio.Playlists.DATE_MODIFIED, System.currentTimeMillis() / 1000)
+                }
+
+                // Check if playlist already exists and delete it
+                val existingUri = contentResolver.query(
+                    playlistsUri,
+                    arrayOf(MediaStore.Audio.Playlists._ID),
+                    "${MediaStore.Audio.Playlists.NAME} = ?",
+                    arrayOf(fileName.removeSuffix(".m3u").removeSuffix(".m3u8")),
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Audio.Playlists._ID))
+                        ContentUris.withAppendedId(playlistsUri, id)
+                    } else null
+                }
+
+                existingUri?.let { contentResolver.delete(it, null, null) }
+
+                // Insert new playlist
+                val uri = contentResolver.insert(playlistsUri, contentValues)
+
+                if (uri != null) {
+                    // Write the .m3u content
+                    contentResolver.openOutputStream(uri)?.use { output ->
+                        output.write(content.toByteArray(Charsets.UTF_8))
+                    }
+                    result.success(true)
+                } else {
+                    result.error("INSERT_FAILED", "Could not create playlist in MediaStore", null)
+                }
+            } else {
+                // For other files, try Download directory
+                val relativePath = "Download/OwnTone"
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+                }
+
+                val uri = contentResolver.insert(MediaStore.Files.getContentUri("external"), contentValues)
+
+                if (uri != null) {
+                    contentResolver.openOutputStream(uri)?.use { output ->
+                        output.write(content.toByteArray(Charsets.UTF_8))
+                    }
+                    result.success(true)
+                } else {
+                    result.error("INSERT_FAILED", "Could not insert file into MediaStore", null)
+                }
+            }
         } catch (e: Exception) {
             result.error("WRITE_FAILED", e.message, null)
         }

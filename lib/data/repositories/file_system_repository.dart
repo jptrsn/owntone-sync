@@ -176,13 +176,20 @@ class FileSystemRepository {
         rethrow;
       }
     } else {
-      await File(filePath).writeAsBytes(bytes);
+      // Ensure parent directory exists
+      final file = File(filePath);
+      final parentDir = file.parent;
+      if (!await parentDir.exists()) {
+        await parentDir.create(recursive: true);
+      }
+      await file.writeAsBytes(bytes);
     }
   }
 
-  /// Write string content via SAF or File() depending on SDK version
+  /// Write string content via SAF or MediaStore or File() depending on SDK version
   Future<void> writeFileString(String filePath, String content) async {
     if (await _usingSaf()) {
+      // SDK 33+: Use SAF
       try {
         await _storageChannel.invokeMethod('writeFileString', {
           'path': filePath,
@@ -193,7 +200,28 @@ class FileSystemRepository {
         rethrow;
       }
     } else {
-      await File(filePath).writeAsString(content);
+      final sdk = await _getAndroidSdk();
+
+      // SDK 29-32: Use MediaStore for public Music directory
+      if (sdk >= 29) {
+        try {
+          await _storageChannel.invokeMethod('writeFileStringMediaStore', {
+            'path': filePath,
+            'content': content,
+          });
+        } catch (e) {
+          logger.e('Error writing file via MediaStore', error: e);
+          rethrow;
+        }
+      } else {
+        // SDK < 29: Use File() directly (legacy)
+        final file = File(filePath);
+        final parentDir = file.parent;
+        if (!await parentDir.exists()) {
+          await parentDir.create(recursive: true);
+        }
+        await file.writeAsString(content);
+      }
     }
   }
 
