@@ -305,6 +305,9 @@ class SyncService {
     final existingTracks = await _dbRepo.getTracksByIds(serverTrackIds);
 
     for (int i = 0; i < serverTracks.length; i++) {
+      if (_cancelRequested) {
+        break;
+      }
       final track = serverTracks[i];
 
       // Update progress during validation
