@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:workmanager/workmanager.dart';
 
 import '../../data/models/playlist.dart';
 import '../../data/models/sync_schedule.dart';
@@ -195,29 +194,6 @@ class SyncProvider extends ChangeNotifier {
     }
 
     notifyListeners();
-  }
-
-  /// Configure background sync with workmanager
-  Future<void> _configureBackgroundSync() async {
-    await Workmanager().cancelAll();
-
-    if (_syncSchedule.enabled && _selectedPlaylistIds.isNotEmpty) {
-      // Save selected playlists so background task can access them
-      await _saveSelectedPlaylists();
-
-      // Run every hour to check if we should sync
-      await Workmanager().registerPeriodicTask(
-        'sync-task',
-        'syncPlaylists',
-        frequency: const Duration(hours: 1),
-        constraints: Constraints(
-          networkType: _syncSchedule.requiresWifi
-              ? NetworkType.unmetered
-              : NetworkType.connected,
-          requiresCharging: _syncSchedule.requiresCharging,
-        ),
-      );
-    }
   }
 
   /// Load playlists from local cache
