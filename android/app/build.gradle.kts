@@ -61,4 +61,14 @@ flutter {
 dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // HTTP client
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+
+    // JSON parsing
+    implementation("com.google.code.gson:gson:2.10.1")
+
+    // WorkManager (should already be there from Flutter)
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 }

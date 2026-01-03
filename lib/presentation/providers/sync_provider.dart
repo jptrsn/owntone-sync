@@ -186,8 +186,13 @@ class SyncProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('sync_schedule', json.encode(schedule.toJson()));
 
-    // Update workmanager
-    await _configureBackgroundSync();
+    // Update native worker
+    try {
+      const channel = MethodChannel('dev.educoder.owntone_sync/sync');
+      await channel.invokeMethod('updateSyncSchedule');
+    } catch (e) {
+      logger.e('Error updating sync schedule', error: e);
+    }
 
     notifyListeners();
   }

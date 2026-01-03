@@ -14,6 +14,21 @@ import java.io.OutputStream
 import android.content.ContentValues
 import android.provider.MediaStore
 import android.content.ContentUris
+import androidx.work.Constraints
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import java.util.concurrent.TimeUnit
+import androidx.work.ExistingPeriodicWorkPolicy
+import android.util.Log
+import com.google.gson.Gson
+import androidx.work.OneTimeWorkRequestBuilder
+
+data class SyncSchedule(
+    val enabled: Boolean,
+    val requiresWifi: Boolean,
+    val requiresCharging: Boolean
+)
 
 class MainActivity: FlutterActivity() {
     private val EVENTS_CHANNEL = "dev.educoder.owntone_sync/events"
@@ -91,6 +106,29 @@ class MainActivity: FlutterActivity() {
                 }
             }
         }
+
+        // Add a new channel for sync control
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "dev.educoder.owntone_sync/sync").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "triggerBackgroundSync" -> {
+                    // Trigger sync immediately for testing
+                    val workRequest = OneTimeWorkRequestBuilder<BackgroundSyncWorker>()
+                        .build()
+                    WorkManager.getInstance(applicationContext).enqueue(workRequest)
+                    result.success(true)
+                }
+                "updateSyncSchedule" -> {
+                    // Re-register worker when schedule changes
+                    registerBackgroundSync()
+                    result.success(true)
+                }
+                else -> {
+                    result.notImplemented()
+                }
+            }
+        }
+
+        registerBackgroundSync()
     }
 
     private fun isNotificationServiceEnabled(): Boolean {
@@ -336,6 +374,55 @@ class MainActivity: FlutterActivity() {
             CoroutineScope(Dispatchers.Main).launch {
                 result.error("WRITE_FAILED", e.message, null)
             }
+        }
+    }
+
+    private fun registerBackgroundSync() {
+        val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+        val syncScheduleJson = prefs.getString("flutter.sync_schedule", null)
+
+        if (syncScheduleJson == null) {
+            Log.d("MainActivity", "No sync schedule configured")
+            return
+        }
+
+        try {
+            // Parse sync schedule JSON
+            val gson = com.google.gson.Gson()
+            val schedule = gson.fromJson(syncScheduleJson, SyncSchedule::class.java)
+
+            if (!schedule.enabled) {
+                // Cancel all work if sync is disabled
+                WorkManager.getInstance(applicationContext).cancelAllWorkByTag("sync-task")
+                Log.d("MainActivity", "Background sync disabled")
+                return
+            }
+
+            // Build constraints based on schedule settings
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(
+                    if (schedule.requiresWifi) NetworkType.UNMETERED else NetworkType.CONNECTED
+                )
+                .setRequiresCharging(schedule.requiresCharging)
+                .build()
+
+            val syncWorkRequest = PeriodicWorkRequestBuilder<BackgroundSyncWorker>(
+                1, TimeUnit.HOURS
+            )
+                .setConstraints(constraints)
+                .addTag("sync-task")
+                .build()
+
+            WorkManager.getInstance(applicationContext)
+                .enqueueUniquePeriodicWork(
+                    "sync-task",
+                    androidx.work.ExistingPeriodicWorkPolicy.REPLACE,
+                    syncWorkRequest
+                )
+
+            Log.d("MainActivity", "Background sync registered with WiFi=${schedule.requiresWifi}, Charging=${schedule.requiresCharging}")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error registering background sync", e)
         }
     }
 
