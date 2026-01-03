@@ -1,41 +1,27 @@
+import 'dart:convert';
 import 'dart:io';
 
-import 'package:device_info_plus/device_info_plus.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 
 import '../../utils/logger.dart';
 import '../models/playlist.dart';
 import '../models/track.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class FileSystemRepository {
   static const _storageChannel = MethodChannel(
     'dev.educoder.owntone_sync/storage',
   );
 
-  /// Get Android SDK version
-  Future<int> _getAndroidSdk() async {
-    if (!Platform.isAndroid) return 0;
-    final androidInfo = await DeviceInfoPlugin().androidInfo;
-    return androidInfo.version.sdkInt;
-  }
-
-  /// Check if we're using SAF (Android 13+)
-  Future<bool> _usingSaf() async {
-    final sdk = await _getAndroidSdk();
-    return sdk >= 33;
-  }
-
-  // Get the tracks directory path (relative)
+  // Get the tracks directory path (relative to SAF root)
   String getTracksPath() => 'tracks';
 
-  // Get the playlists directory path (relative)
+  // Get the playlists directory path (relative to SAF root)
   String getPlaylistsPath() => 'playlists';
 
-  // Get the artwork directory path (relative)
+  // Get the artwork directory path (app-private storage)
   String getArtworkPath() => 'artwork';
 
   String sanitizeFilename(String name) {
@@ -59,129 +45,99 @@ class FileSystemRepository {
   Future<bool> trackExists(Track track, String extension) async {
     final trackPath = getTrackFilePath(track, extension);
 
-    if (await _usingSaf()) {
-      try {
-        final exists = await _storageChannel.invokeMethod<bool>('fileExists', {
-          'path': trackPath,
-        });
-        return exists ?? false;
-      } catch (e) {
-        logger.e('Error checking file existence via SAF', error: e);
-        return false;
-      }
-    } else {
-      final absolutePath = await _getAbsolutePath(trackPath);
-      return File(absolutePath).exists();
+    try {
+      final exists = await _storageChannel.invokeMethod<bool>('fileExists', {
+        'path': trackPath,
+      });
+      return exists ?? false;
+    } catch (e) {
+      logger.e('Error checking file existence', error: e);
+      return false;
     }
   }
 
   Future<bool> fileExists(String filePath) async {
-    if (await _usingSaf()) {
-      try {
-        final exists = await _storageChannel.invokeMethod<bool>('fileExists', {
-          'path': filePath,
-        });
-        return exists ?? false;
-      } catch (e) {
-        logger.e('Error checking file existence via SAF', error: e);
-        return false;
-      }
-    } else {
-      final absolutePath = await _getAbsolutePath(filePath);
+    // Artwork is in app-private storage
+    if (filePath.startsWith('artwork/')) {
+      final absolutePath = await _getArtworkAbsolutePath(filePath);
       return File(absolutePath).exists();
+    }
+
+    // Music/playlists are in SAF storage
+    try {
+      final exists = await _storageChannel.invokeMethod<bool>('fileExists', {
+        'path': filePath,
+      });
+      return exists ?? false;
+    } catch (e) {
+      logger.e('Error checking file existence', error: e);
+      return false;
     }
   }
 
   Future<int> getFileSize(String filePath) async {
-    if (await _usingSaf()) {
-      try {
-        final size = await _storageChannel.invokeMethod<int>('getFileSize', {
-          'path': filePath,
-        });
-        return size ?? 0;
-      } catch (e) {
-        logger.e('Error getting file size via SAF', error: e);
-        return 0;
-      }
-    } else {
-      final absolutePath = await _getAbsolutePath(filePath);
+    // Artwork is in app-private storage
+    if (filePath.startsWith('artwork/')) {
+      final absolutePath = await _getArtworkAbsolutePath(filePath);
       final file = File(absolutePath);
       if (!await file.exists()) return 0;
       return file.length();
     }
+
+    // Music/playlists are in SAF storage
+    try {
+      final size = await _storageChannel.invokeMethod<int>('getFileSize', {
+        'path': filePath,
+      });
+      return size ?? 0;
+    } catch (e) {
+      logger.e('Error getting file size', error: e);
+      return 0;
+    }
   }
 
   Future<void> deleteTrack(String localPath) async {
-    if (await _usingSaf()) {
-      try {
-        await _storageChannel.invokeMethod('deleteFile', {'path': localPath});
-      } catch (e) {
-        logger.e('Error deleting file via SAF', error: e);
-        rethrow;
-      }
-    } else {
-      final absolutePath = await _getAbsolutePath(localPath);
+    // Artwork is in app-private storage
+    if (localPath.startsWith('artwork/')) {
+      final absolutePath = await _getArtworkAbsolutePath(localPath);
       final file = File(absolutePath);
       if (await file.exists()) {
         await file.delete();
       }
+      return;
+    }
+
+    // Music/playlists are in SAF storage
+    try {
+      await _storageChannel.invokeMethod('deleteFile', {'path': localPath});
+    } catch (e) {
+      logger.e('Error deleting file', error: e);
+      rethrow;
     }
   }
 
   Future<void> writeFile(String filePath, Uint8List bytes) async {
-    if (await _usingSaf()) {
-      try {
-        await _storageChannel.invokeMethod('writeFile', {
-          'path': filePath,
-          'data': bytes,
-        });
-      } catch (e) {
-        logger.e('Error writing file via SAF', error: e);
-        rethrow;
-      }
-    } else {
-      final absolutePath = await _getAbsolutePath(filePath);
+    // Artwork is in app-private storage
+    if (filePath.startsWith('artwork/')) {
+      final absolutePath = await _getArtworkAbsolutePath(filePath);
       final file = File(absolutePath);
       final parentDir = file.parent;
       if (!await parentDir.exists()) {
         await parentDir.create(recursive: true);
       }
       await file.writeAsBytes(bytes);
+      return;
     }
-  }
 
-  Future<void> writeFileString(String filePath, String content) async {
-    if (await _usingSaf()) {
-      try {
-        await _storageChannel.invokeMethod('writeFileString', {
-          'path': filePath,
-          'content': content,
-        });
-      } catch (e) {
-        logger.e('Error writing file string via SAF', error: e);
-        rethrow;
-      }
-    } else {
-      final sdk = await _getAndroidSdk();
-
-      if (sdk >= 29) {
-        try {
-          await _storageChannel.invokeMethod('writeFileStringMediaStore', {
-            'path': filePath,
-            'content': content,
-          });
-        } catch (e) {
-          logger.e('Error writing file via MediaStore', error: e);
-          rethrow;
-        }
-      } else {
-        final file = File(filePath);
-        final parentDir = file.parent;
-        if (!await parentDir.exists()) {
-          await parentDir.create(recursive: true);
-        }
-        await file.writeAsString(content);
-      }
+    // Music/playlists are in SAF storage
+    try {
+      await _storageChannel.invokeMethod('writeFile', {
+        'path': filePath,
+        'data': bytes,
+      });
+    } catch (e) {
+      logger.e('Error writing file', error: e);
+      rethrow;
     }
   }
 
@@ -235,7 +191,8 @@ class FileSystemRepository {
       }
 
       final content = buffer.toString();
-      await writeFileString(playlistPath, content);
+      final bytes = Uint8List.fromList(utf8.encode(content));
+      await writeFile(playlistPath, bytes);
 
       logger.i(
         'Playlist file written successfully: $playlistPath (${trackPaths.length} tracks)',
@@ -278,20 +235,8 @@ class FileSystemRepository {
 
   Future<bool> artworkExists(String albumId) async {
     final artworkPath = getArtworkFilePath(albumId);
-
-    if (await _usingSaf()) {
-      try {
-        final exists = await _storageChannel.invokeMethod<bool>('fileExists', {
-          'path': artworkPath,
-        });
-        return exists ?? false;
-      } catch (e) {
-        return false;
-      }
-    } else {
-      final absolutePath = await _getAbsolutePath(artworkPath);
-      return File(absolutePath).exists();
-    }
+    final absolutePath = await _getArtworkAbsolutePath(artworkPath);
+    return File(absolutePath).exists();
   }
 
   Future<String?> downloadArtwork(String artworkUrl, String albumId) async {
@@ -323,26 +268,9 @@ class FileSystemRepository {
     }
   }
 
-  /// Convert relative path to absolute path (only on legacy storage)
-  Future<String> _getAbsolutePath(String relativePath) async {
-    if (await _usingSaf()) {
-      // On SAF, keep paths relative
-      return relativePath;
-    } else {
-      // On legacy storage, need absolute paths
-      final directory = await getExternalStorageDirectory();
-      if (directory == null) {
-        throw Exception('Could not access external storage');
-      }
-
-      final parts = directory.path.split('/');
-      final baseIndex = parts.indexOf('emulated');
-      if (baseIndex == -1) {
-        throw Exception('Unexpected storage path structure');
-      }
-
-      final basePath = '${parts.sublist(0, baseIndex + 2).join('/')}/Music';
-      return path.join(basePath, relativePath);
-    }
+  /// Get absolute path for artwork stored in app-private directory
+  Future<String> _getArtworkAbsolutePath(String relativePath) async {
+    final cacheDir = await getApplicationDocumentsDirectory();
+    return path.join(cacheDir.path, relativePath);
   }
 }

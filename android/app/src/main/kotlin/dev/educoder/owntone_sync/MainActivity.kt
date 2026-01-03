@@ -1,5 +1,6 @@
 package dev.educoder.owntone_sync
 
+import kotlinx.coroutines.*
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
@@ -44,36 +45,49 @@ class MainActivity: FlutterActivity() {
 
         // Storage channel
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, STORAGE_CHANNEL).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "hasMusicFolderAccess" -> {
-                    result.success(hasMusicFolderAccess())
-                }
-                "requestMusicFolderAccess" -> {
-                    requestMusicFolderAccess(result)
-                }
-                "getMusicFolderUri" -> {
-                    result.success(getMusicFolderUri())
-                }
-                "fileExists" -> {
-                    fileExists(call, result)
-                }
-                "getFileSize" -> {
-                    getFileSize(call, result)
-                }
-                "deleteFile" -> {
-                    deleteFile(call, result)
-                }
-                "writeFile" -> {
-                    writeFile(call, result)
-                }
-                "writeFileString" -> {
-                    writeFileString(call, result)
-                }
-                "writeFileStringMediaStore" -> {   // ← ADD THIS LINE
-                    writeFileStringMediaStore(call, result)
-                }
-                else -> {
-                    result.notImplemented()
+            // Run storage operations on background thread
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    when (call.method) {
+                        "hasMusicFolderAccess" -> {
+                            val hasAccess = hasMusicFolderAccess()
+                            withContext(Dispatchers.Main) {
+                                result.success(hasAccess)
+                            }
+                        }
+                        "requestMusicFolderAccess" -> {
+                            withContext(Dispatchers.Main) {
+                                requestMusicFolderAccess(result)
+                            }
+                        }
+                        "getMusicFolderUri" -> {
+                            val uri = getMusicFolderUri()
+                            withContext(Dispatchers.Main) {
+                                result.success(uri)
+                            }
+                        }
+                        "fileExists" -> {
+                            fileExists(call, result)
+                        }
+                        "getFileSize" -> {
+                            getFileSize(call, result)
+                        }
+                        "deleteFile" -> {
+                            deleteFile(call, result)
+                        }
+                        "writeFile" -> {
+                            writeFile(call, result)
+                        }
+                        else -> {
+                            withContext(Dispatchers.Main) {
+                                result.notImplemented()
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        result.error("EXCEPTION", e.message, null)
+                    }
                 }
             }
         }
@@ -185,70 +199,56 @@ class MainActivity: FlutterActivity() {
         return currentFolder.findFile(fileName)
     }
 
-    private fun createDocumentFileFromPath(filePath: String, mimeType: String): DocumentFile? {
-        val musicFolder = getMusicFolderDocumentFile() ?: return null
-
-        // Path is already relative
-        val pathParts = filePath.split("/")
-        var currentFolder = musicFolder
-
-        // Navigate/create parent folders
-        for (i in 0 until pathParts.size - 1) {
-            val folderName = pathParts[i]
-            var folder = currentFolder.findFile(folderName)
-
-            if (folder == null || !folder.isDirectory) {
-                folder = currentFolder.createDirectory(folderName) ?: return null
-            }
-
-            currentFolder = folder
-        }
-
-        val fileName = pathParts.last()
-        currentFolder.findFile(fileName)?.delete()
-
-        return currentFolder.createFile(mimeType, fileName)
-    }
-
     private fun fileExists(call: MethodCall, result: MethodChannel.Result) {
         val filePath = call.argument<String>("path")
         if (filePath == null) {
-            result.error("INVALID_ARGUMENT", "File path is required", null)
+            CoroutineScope(Dispatchers.Main).launch {
+                result.error("INVALID_ARGUMENT", "File path is required", null)
+            }
             return
         }
 
         val file = getDocumentFileFromPath(filePath)
-        result.success(file?.exists() == true)
+        CoroutineScope(Dispatchers.Main).launch {
+            result.success(file?.exists() == true)
+        }
     }
 
     private fun getFileSize(call: MethodCall, result: MethodChannel.Result) {
         val filePath = call.argument<String>("path")
         if (filePath == null) {
-            result.error("INVALID_ARGUMENT", "File path is required", null)
+            CoroutineScope(Dispatchers.Main).launch {
+                result.error("INVALID_ARGUMENT", "File path is required", null)
+            }
             return
         }
 
         val file = getDocumentFileFromPath(filePath)
-        if (file?.exists() == true) {
-            result.success(file.length())
-        } else {
-            result.success(0)
+        val size = if (file?.exists() == true) file.length() else 0
+        CoroutineScope(Dispatchers.Main).launch {
+            result.success(size)
         }
     }
 
     private fun deleteFile(call: MethodCall, result: MethodChannel.Result) {
         val filePath = call.argument<String>("path")
         if (filePath == null) {
-            result.error("INVALID_ARGUMENT", "File path is required", null)
+            CoroutineScope(Dispatchers.Main).launch {
+                result.error("INVALID_ARGUMENT", "File path is required", null)
+            }
             return
         }
 
         try {
             val file = getDocumentFileFromPath(filePath)
             val deleted = file?.delete() ?: false
-            result.success(deleted)
+            CoroutineScope(Dispatchers.Main).launch {
+                result.success(deleted)
+            }
         } catch (e: Exception) {
-            result.error("DELETE_FAILED", e.message, null)
+            CoroutineScope(Dispatchers.Main).launch {
+                result.error("DELETE_FAILED", e.message, null)
+            }
         }
     }
 
@@ -257,11 +257,21 @@ class MainActivity: FlutterActivity() {
         val data = call.argument<ByteArray>("data")
 
         if (filePath == null || data == null) {
-            result.error("INVALID_ARGUMENT", "File path and data are required", null)
+            CoroutineScope(Dispatchers.Main).launch {
+                result.error("INVALID_ARGUMENT", "File path and data are required", null)
+            }
             return
         }
 
         try {
+            val musicFolder = getMusicFolderDocumentFile()
+            if (musicFolder == null) {
+                CoroutineScope(Dispatchers.Main).launch {
+                    result.error("NO_ACCESS", "Music folder access not granted", null)
+                }
+                return
+            }
+
             // Determine MIME type from extension
             val extension = filePath.substringAfterLast('.', "")
             val mimeType = when (extension) {
@@ -275,127 +285,58 @@ class MainActivity: FlutterActivity() {
                 else -> "application/octet-stream"
             }
 
-            val file = createDocumentFileFromPath(filePath, mimeType)
-            if (file == null) {
-                result.error("CREATE_FAILED", "Could not create file", null)
-                return
+            // Path is already relative
+            val pathParts = filePath.split("/")
+            var currentFolder: DocumentFile = musicFolder
+
+            // Navigate/create parent folders
+            for (i in 0 until pathParts.size - 1) {
+                val folderName = pathParts[i]
+                var folder = currentFolder.findFile(folderName)
+
+                if (folder == null || !folder.isDirectory) {
+                    folder = currentFolder.createDirectory(folderName)
+                    if (folder == null) {
+                        CoroutineScope(Dispatchers.Main).launch {
+                            result.error("CREATE_FAILED", "Could not create directory: $folderName", null)
+                        }
+                        return
+                    }
+                }
+
+                currentFolder = folder
             }
 
-            contentResolver.openOutputStream(file.uri)?.use { output ->
+            val fileName = pathParts.last()
+            val existingFile = currentFolder.findFile(fileName)
+
+            val outputStream: OutputStream? = if (existingFile?.exists() == true) {
+                // File exists - open it and truncate (overwrite)
+                contentResolver.openOutputStream(existingFile.uri, "wt")
+            } else {
+                // File doesn't exist - create new
+                val newFile = currentFolder.createFile(mimeType, fileName)
+                if (newFile == null) {
+                    CoroutineScope(Dispatchers.Main).launch {
+                        result.error("CREATE_FAILED", "Could not create file", null)
+                    }
+                    return
+                }
+                contentResolver.openOutputStream(newFile.uri)
+            }
+
+            outputStream?.use { output ->
                 output.write(data)
             }
 
-            result.success(true)
+            CoroutineScope(Dispatchers.Main).launch {
+                result.success(true)
+            }
         } catch (e: Exception) {
-            result.error("WRITE_FAILED", e.message, null)
+            CoroutineScope(Dispatchers.Main).launch {
+                result.error("WRITE_FAILED", e.message, null)
+            }
         }
     }
 
-    private fun writeFileString(call: MethodCall, result: MethodChannel.Result) {
-        val filePath = call.argument<String>("path")
-        val content = call.argument<String>("content")
-
-        if (filePath == null || content == null) {
-            result.error("INVALID_ARGUMENT", "File path and content are required", null)
-            return
-        }
-
-        try {
-            val mimeType = "text/plain"
-            val file = createDocumentFileFromPath(filePath, mimeType)
-
-            if (file == null) {
-                result.error("CREATE_FAILED", "Could not create file", null)
-                return
-            }
-
-            contentResolver.openOutputStream(file.uri)?.use { output ->
-                output.write(content.toByteArray(Charsets.UTF_8))
-            }
-
-            result.success(true)
-        } catch (e: Exception) {
-            result.error("WRITE_FAILED", e.message, null)
-        }
-    }
-
-    private fun writeFileStringMediaStore(call: MethodCall, result: MethodChannel.Result) {
-        val filePath = call.argument<String>("path")
-        val content = call.argument<String>("content")
-
-        if (filePath == null || content == null) {
-            result.error("INVALID_ARGUMENT", "File path and content are required", null)
-            return
-        }
-
-        try {
-            val fileName = filePath.substringAfterLast('/')
-
-            // For .m3u playlist files, use Audio.Playlists collection
-            if (fileName.endsWith(".m3u") || fileName.endsWith(".m3u8")) {
-                // Use the external storage volume for playlists
-                val playlistsUri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                    MediaStore.Audio.Playlists.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                } else {
-                    MediaStore.Audio.Playlists.EXTERNAL_CONTENT_URI
-                }
-
-                val contentValues = ContentValues().apply {
-                    put(MediaStore.Audio.Playlists.NAME, fileName.removeSuffix(".m3u").removeSuffix(".m3u8"))
-                    put(MediaStore.Audio.Playlists.DATE_ADDED, System.currentTimeMillis() / 1000)
-                    put(MediaStore.Audio.Playlists.DATE_MODIFIED, System.currentTimeMillis() / 1000)
-                }
-
-                // Check if playlist already exists and delete it
-                val existingUri = contentResolver.query(
-                    playlistsUri,
-                    arrayOf(MediaStore.Audio.Playlists._ID),
-                    "${MediaStore.Audio.Playlists.NAME} = ?",
-                    arrayOf(fileName.removeSuffix(".m3u").removeSuffix(".m3u8")),
-                    null
-                )?.use { cursor ->
-                    if (cursor.moveToFirst()) {
-                        val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Audio.Playlists._ID))
-                        ContentUris.withAppendedId(playlistsUri, id)
-                    } else null
-                }
-
-                existingUri?.let { contentResolver.delete(it, null, null) }
-
-                // Insert new playlist
-                val uri = contentResolver.insert(playlistsUri, contentValues)
-
-                if (uri != null) {
-                    // Write the .m3u content
-                    contentResolver.openOutputStream(uri)?.use { output ->
-                        output.write(content.toByteArray(Charsets.UTF_8))
-                    }
-                    result.success(true)
-                } else {
-                    result.error("INSERT_FAILED", "Could not create playlist in MediaStore", null)
-                }
-            } else {
-                // For other files, try Download directory
-                val relativePath = "Download/OwnTone"
-                val contentValues = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                    put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
-                }
-
-                val uri = contentResolver.insert(MediaStore.Files.getContentUri("external"), contentValues)
-
-                if (uri != null) {
-                    contentResolver.openOutputStream(uri)?.use { output ->
-                        output.write(content.toByteArray(Charsets.UTF_8))
-                    }
-                    result.success(true)
-                } else {
-                    result.error("INSERT_FAILED", "Could not insert file into MediaStore", null)
-                }
-            }
-        } catch (e: Exception) {
-            result.error("WRITE_FAILED", e.message, null)
-        }
-    }
 }

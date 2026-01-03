@@ -304,15 +304,41 @@ class SyncService {
     final serverTrackIds = serverTracks.map((t) => t.id).toList();
     final existingTracks = await _dbRepo.getTracksByIds(serverTrackIds);
 
-    for (final track in serverTracks) {
+    for (int i = 0; i < serverTracks.length; i++) {
+      final track = serverTracks[i];
+
+      // Update progress during validation
+      onProgress?.call(
+        SyncProgress(
+          currentPlaylist: playlist.name,
+          totalPlaylists: totalPlaylists,
+          currentPlaylistIndex: playlistIndex,
+          totalTracks: totalTracks,
+          downloadedTracks: tracksProcessedSoFar + i,
+          currentTrackTitle: 'Validating: ${track.title}',
+          downloadProgress: null,
+        ),
+      );
+
       final localTrack = existingTracks[track.id];
 
       if (localTrack == null) {
         tracksToDownload.add(track);
+      } else if (!await _fileRepo.fileExists(localTrack.localPath)) {
+        tracksToDownload.add(track);
       } else {
-        if (!await _fileRepo.fileExists(localTrack.localPath)) {
-          tracksToDownload.add(track);
-        }
+        // Update progress during validation
+        onProgress?.call(
+          SyncProgress(
+            currentPlaylist: playlist.name,
+            totalPlaylists: totalPlaylists,
+            currentPlaylistIndex: playlistIndex,
+            totalTracks: totalTracks,
+            downloadedTracks: tracksProcessedSoFar + i,
+            currentTrackTitle: 'Validated: ${track.title}',
+            downloadProgress: null,
+          ),
+        );
       }
     }
 
