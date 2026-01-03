@@ -165,12 +165,8 @@ class MainActivity: FlutterActivity() {
     private fun getDocumentFileFromPath(filePath: String): DocumentFile? {
         val musicFolder = getMusicFolderDocumentFile() ?: return null
 
-        // Extract relative path from absolute path
-        // e.g., "/storage/emulated/0/Music/tracks/song.mp3" -> "tracks/song.mp3"
-        val relativePath = filePath.substringAfter("/Music/")
-
-        // Navigate through folder structure
-        val pathParts = relativePath.split("/")
+        // Path is already relative (e.g., "tracks/artist_album_123.mp3")
+        val pathParts = filePath.split("/")
         var currentFolder = musicFolder
 
         // Navigate to parent folders
@@ -179,14 +175,12 @@ class MainActivity: FlutterActivity() {
             var folder = currentFolder.findFile(folderName)
 
             if (folder == null || !folder.isDirectory) {
-                // Create folder if it doesn't exist
                 folder = currentFolder.createDirectory(folderName) ?: return null
             }
 
             currentFolder = folder
         }
 
-        // Return or create the file
         val fileName = pathParts.last()
         return currentFolder.findFile(fileName)
     }
@@ -194,8 +188,8 @@ class MainActivity: FlutterActivity() {
     private fun createDocumentFileFromPath(filePath: String, mimeType: String): DocumentFile? {
         val musicFolder = getMusicFolderDocumentFile() ?: return null
 
-        val relativePath = filePath.substringAfter("/Music/")
-        val pathParts = relativePath.split("/")
+        // Path is already relative
+        val pathParts = filePath.split("/")
         var currentFolder = musicFolder
 
         // Navigate/create parent folders
@@ -210,10 +204,7 @@ class MainActivity: FlutterActivity() {
             currentFolder = folder
         }
 
-        // Create the file
         val fileName = pathParts.last()
-
-        // Delete existing file if present
         currentFolder.findFile(fileName)?.delete()
 
         return currentFolder.createFile(mimeType, fileName)

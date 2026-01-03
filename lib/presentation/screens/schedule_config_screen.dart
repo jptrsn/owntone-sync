@@ -168,7 +168,9 @@ class _ScheduleConfigScreenState extends State<ScheduleConfigScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Note: Syncs may be delayed by up to 1 hour due to Android\'s battery optimization.',
+                  'Note: Background syncs are subject to Android battery optimization and may be delayed. '
+                  'On Android 12+, syncs typically run within a 1-hour window of the scheduled time when '
+                  'charging/WiFi conditions are met.',
                   style: Theme.of(context).textTheme.bodySmall,
                   textAlign: TextAlign.center,
                 ),

@@ -30,6 +30,69 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
     super.dispose();
   }
 
+  String? _validateServerUrl(String? url) {
+    if (url == null || url.isEmpty) {
+      return 'Please enter a server URL';
+    }
+
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      return 'URL must start with http:// or https://';
+    }
+
+    // Parse the URL to extract the host
+    try {
+      final uri = Uri.parse(url);
+      final host = uri.host;
+
+      // If using HTTP (not HTTPS), validate it's a private/local IP
+      if (url.startsWith('http://') && !_isLocalAddress(host)) {
+        return 'HTTP is only allowed for local network addresses.\n'
+            'Use HTTPS for remote servers, or use a local IP like:\n'
+            '• 192.168.x.x\n'
+            '• 10.x.x.x\n'
+            '• 172.16-31.x.x\n'
+            '• localhost / 127.0.0.1';
+      }
+
+      return null;
+    } catch (e) {
+      return 'Invalid URL format';
+    }
+  }
+
+  bool _isLocalAddress(String host) {
+    // Check for localhost
+    if (host == 'localhost' || host == '127.0.0.1' || host == '::1') {
+      return true;
+    }
+
+    // Check for private IP ranges
+    try {
+      final parts = host.split('.');
+      if (parts.length != 4) return false;
+
+      final octets = parts.map(int.parse).toList();
+
+      // 10.0.0.0/8
+      if (octets[0] == 10) return true;
+
+      // 172.16.0.0/12
+      if (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31) return true;
+
+      // 192.168.0.0/16
+      if (octets[0] == 192 && octets[1] == 168) return true;
+
+      // 169.254.0.0/16 (link-local)
+      if (octets[0] == 169 && octets[1] == 254) return true;
+
+      return false;
+    } catch (e) {
+      // Not a valid IPv4 address, might be hostname
+      // For safety, reject HTTP for non-IP hostnames
+      return false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -68,16 +131,7 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
                   prefixIcon: Icon(Icons.link),
                 ),
                 keyboardType: TextInputType.url,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a server URL';
-                  }
-                  if (!value.startsWith('http://') &&
-                      !value.startsWith('https://')) {
-                    return 'URL must start with http:// or https://';
-                  }
-                  return null;
-                },
+                validator: _validateServerUrl,
               ),
               const SizedBox(height: 24),
               const SizedBox(height: 32),
@@ -102,12 +156,18 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
                             context: context,
                             builder: (context) => AlertDialog(
                               title: const Text('Notification Access Required'),
-                              content: const Text(
+                              content: Text(
                                 'To track your playback statistics, OwnTone Sync needs notification access.\n\n'
-                                'Why? Android requires "notification listener" permission to detect when songs play or skip in other music apps. '
-                                'This is the same permission used by apps like Last.fm scrobbler.\n\n'
-                                'Privacy: OwnTone Sync only reads media notifications (song titles, artists). '
-                                'Your data is ONLY sent to your personal OwnTone server, never to any third party.',
+                                'What data is collected:\n'
+                                '• Song titles, artists, and album names from media notifications\n'
+                                '• Play and skip events\n\n'
+                                'Where it goes:\n'
+                                '• Only to YOUR OwnTone server (${provider.serverUrl})\n'
+                                '• Never sent to the developer or third parties\n\n'
+                                'What we DON\'T collect:\n'
+                                '• Other app notifications\n'
+                                '• Messages, emails, or personal notifications\n\n'
+                                'You can revoke this permission anytime in Settings.',
                               ),
                               actions: [
                                 TextButton(

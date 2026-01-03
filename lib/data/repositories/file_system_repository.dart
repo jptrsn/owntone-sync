@@ -1,13 +1,15 @@
 import 'dart:io';
-import 'dart:typed_data';
+
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as path;
 import 'package:dio/dio.dart';
-import '../models/track.dart';
-import '../models/playlist.dart';
+import 'package:flutter/services.dart';
+import 'package:path/path.dart' as path;
+
 import '../../utils/logger.dart';
+import '../models/playlist.dart';
+import '../models/track.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class FileSystemRepository {
   static const _storageChannel = MethodChannel(
@@ -27,71 +29,20 @@ class FileSystemRepository {
     return sdk >= 33;
   }
 
-  // Get the base Music directory
-  Future<Directory> getMusicDirectory() async {
-    // On Android SDK < 33, use the legacy path approach
-    if (Platform.isAndroid && !await _usingSaf()) {
-      final directory = await getExternalStorageDirectory();
-      if (directory == null) {
-        throw Exception('Could not access external storage');
-      }
+  // Get the tracks directory path (relative)
+  String getTracksPath() => 'tracks';
 
-      final parts = directory.path.split('/');
-      final baseIndex = parts.indexOf('emulated');
-      if (baseIndex == -1) {
-        throw Exception('Unexpected storage path structure');
-      }
+  // Get the playlists directory path (relative)
+  String getPlaylistsPath() => 'playlists';
 
-      final musicPath = '${parts.sublist(0, baseIndex + 2).join('/')}/Music';
-      final musicDir = Directory(musicPath);
+  // Get the artwork directory path (relative)
+  String getArtworkPath() => 'artwork';
 
-      if (!await musicDir.exists()) {
-        await musicDir.create(recursive: true);
-      }
-
-      return musicDir;
-    } else if (Platform.isAndroid && await _usingSaf()) {
-      // On SDK 33+, we can't use File() paths - return a dummy directory
-      // Actual file operations will go through SAF method channels
-      return Directory(
-        '/storage/emulated/0/Music',
-      ); // Placeholder for path building
-    } else {
-      throw UnsupportedError('Platform not supported');
-    }
-  }
-
-  // Get the tracks directory
-  Future<Directory> getTracksDirectory() async {
-    final musicDir = await getMusicDirectory();
-    final tracksDir = Directory(path.join(musicDir.path, 'tracks'));
-
-    if (!await _usingSaf() && !await tracksDir.exists()) {
-      await tracksDir.create(recursive: true);
-    }
-
-    return tracksDir;
-  }
-
-  // Get the playlists directory
-  Future<Directory> getPlaylistsDirectory() async {
-    final musicDir = await getMusicDirectory();
-    final playlistsDir = Directory(path.join(musicDir.path, 'playlists'));
-
-    if (!await _usingSaf() && !await playlistsDir.exists()) {
-      await playlistsDir.create(recursive: true);
-    }
-
-    return playlistsDir;
-  }
-
-  // Sanitize a string for use in filesystem paths
   String sanitizeFilename(String name) {
     final invalidChars = RegExp(r'[/\\:*?"<>|]');
     return name.replaceAll(invalidChars, '_');
   }
 
-  // Generate a filename for a track
   String generateTrackFilename(Track track, String extension) {
     final artist = sanitizeFilename(track.artist);
     final album = sanitizeFilename(track.album);
@@ -100,19 +51,15 @@ class FileSystemRepository {
     return '${artist}_${album}_$trackId.$extension';
   }
 
-  // Get the local file path for a track
-  Future<String> getTrackPath(Track track, String extension) async {
-    final tracksDir = await getTracksDirectory();
+  String getTrackFilePath(Track track, String extension) {
     final filename = generateTrackFilename(track, extension);
-    return path.join(tracksDir.path, filename);
+    return path.join(getTracksPath(), filename);
   }
 
-  // Check if a track file exists locally
   Future<bool> trackExists(Track track, String extension) async {
-    final trackPath = await getTrackPath(track, extension);
+    final trackPath = getTrackFilePath(track, extension);
 
     if (await _usingSaf()) {
-      // Use native method to check file existence via SAF
       try {
         final exists = await _storageChannel.invokeMethod<bool>('fileExists', {
           'path': trackPath,
@@ -123,11 +70,28 @@ class FileSystemRepository {
         return false;
       }
     } else {
-      return File(trackPath).exists();
+      final absolutePath = await _getAbsolutePath(trackPath);
+      return File(absolutePath).exists();
     }
   }
 
-  // Get file size
+  Future<bool> fileExists(String filePath) async {
+    if (await _usingSaf()) {
+      try {
+        final exists = await _storageChannel.invokeMethod<bool>('fileExists', {
+          'path': filePath,
+        });
+        return exists ?? false;
+      } catch (e) {
+        logger.e('Error checking file existence via SAF', error: e);
+        return false;
+      }
+    } else {
+      final absolutePath = await _getAbsolutePath(filePath);
+      return File(absolutePath).exists();
+    }
+  }
+
   Future<int> getFileSize(String filePath) async {
     if (await _usingSaf()) {
       try {
@@ -140,13 +104,13 @@ class FileSystemRepository {
         return 0;
       }
     } else {
-      final file = File(filePath);
+      final absolutePath = await _getAbsolutePath(filePath);
+      final file = File(absolutePath);
       if (!await file.exists()) return 0;
       return file.length();
     }
   }
 
-  // Delete a track file
   Future<void> deleteTrack(String localPath) async {
     if (await _usingSaf()) {
       try {
@@ -156,14 +120,14 @@ class FileSystemRepository {
         rethrow;
       }
     } else {
-      final file = File(localPath);
+      final absolutePath = await _getAbsolutePath(localPath);
+      final file = File(absolutePath);
       if (await file.exists()) {
         await file.delete();
       }
     }
   }
 
-  /// Write file bytes via SAF or File() depending on SDK version
   Future<void> writeFile(String filePath, Uint8List bytes) async {
     if (await _usingSaf()) {
       try {
@@ -176,8 +140,8 @@ class FileSystemRepository {
         rethrow;
       }
     } else {
-      // Ensure parent directory exists
-      final file = File(filePath);
+      final absolutePath = await _getAbsolutePath(filePath);
+      final file = File(absolutePath);
       final parentDir = file.parent;
       if (!await parentDir.exists()) {
         await parentDir.create(recursive: true);
@@ -186,10 +150,8 @@ class FileSystemRepository {
     }
   }
 
-  /// Write string content via SAF or MediaStore or File() depending on SDK version
   Future<void> writeFileString(String filePath, String content) async {
     if (await _usingSaf()) {
-      // SDK 33+: Use SAF
       try {
         await _storageChannel.invokeMethod('writeFileString', {
           'path': filePath,
@@ -202,7 +164,6 @@ class FileSystemRepository {
     } else {
       final sdk = await _getAndroidSdk();
 
-      // SDK 29-32: Use MediaStore for public Music directory
       if (sdk >= 29) {
         try {
           await _storageChannel.invokeMethod('writeFileStringMediaStore', {
@@ -214,7 +175,6 @@ class FileSystemRepository {
           rethrow;
         }
       } else {
-        // SDK < 29: Use File() directly (legacy)
         final file = File(filePath);
         final parentDir = file.parent;
         if (!await parentDir.exists()) {
@@ -225,7 +185,6 @@ class FileSystemRepository {
     }
   }
 
-  // Extract file extension from content-type header
   String getExtensionFromContentType(String contentType) {
     final typeMap = {
       'audio/mpeg': 'mp3',
@@ -245,7 +204,6 @@ class FileSystemRepository {
     return typeMap[normalized] ?? 'mp3';
   }
 
-  // Create or update a playlist file
   Future<void> writePlaylistFile(
     Playlist playlist,
     List<String> trackPaths,
@@ -254,11 +212,9 @@ class FileSystemRepository {
     try {
       logger.d('Writing playlist file for: ${playlist.name}');
 
-      final playlistsDir = await getPlaylistsDirectory();
       final sanitizedName = sanitizeFilename(playlist.name);
-      final playlistPath = path.join(playlistsDir.path, '$sanitizedName.m3u');
+      final playlistPath = path.join(getPlaylistsPath(), '$sanitizedName.m3u');
 
-      // Build extended M3U content
       final buffer = StringBuffer();
       buffer.writeln('#EXTM3U');
       buffer.writeln('#PLAYLIST:${playlist.name}');
@@ -274,13 +230,11 @@ class FileSystemRepository {
 
         buffer.writeln('#EXTINF:$duration,$artist - $title');
 
-        final relativePath = path.relative(trackPath, from: playlistsDir.path);
+        final relativePath = path.relative(trackPath, from: getPlaylistsPath());
         buffer.writeln(relativePath);
       }
 
       final content = buffer.toString();
-
-      // Use platform-aware write method
       await writeFileString(playlistPath, content);
 
       logger.i(
@@ -296,14 +250,12 @@ class FileSystemRepository {
     }
   }
 
-  // Delete a playlist file
   Future<void> deletePlaylistFile(String playlistName) async {
     try {
-      final playlistsDir = await getPlaylistsDirectory();
       final sanitizedName = sanitizeFilename(playlistName);
-      final playlistPath = path.join(playlistsDir.path, '$sanitizedName.m3u');
+      final playlistPath = path.join(getPlaylistsPath(), '$sanitizedName.m3u');
 
-      await deleteTrack(playlistPath); // Reuse delete logic
+      await deleteTrack(playlistPath);
       logger.i('Deleted playlist file: $playlistPath');
     } catch (e, stackTrace) {
       logger.e(
@@ -315,33 +267,17 @@ class FileSystemRepository {
     }
   }
 
-  // Get the artwork cache directory
-  Future<Directory> getArtworkDirectory() async {
-    final musicDir = await getMusicDirectory();
-    final artworkDir = Directory(path.join(musicDir.path, 'artwork'));
-
-    if (!await _usingSaf() && !await artworkDir.exists()) {
-      await artworkDir.create(recursive: true);
-    }
-
-    return artworkDir;
-  }
-
-  // Generate artwork filename (using album_id to deduplicate)
   String generateArtworkFilename(String albumId) {
     return 'album_$albumId.jpg';
   }
 
-  // Get artwork path for an album
-  Future<String> getArtworkPath(String albumId) async {
-    final artworkDir = await getArtworkDirectory();
+  String getArtworkFilePath(String albumId) {
     final filename = generateArtworkFilename(albumId);
-    return path.join(artworkDir.path, filename);
+    return path.join(getArtworkPath(), filename);
   }
 
-  // Check if artwork exists for an album
   Future<bool> artworkExists(String albumId) async {
-    final artworkPath = await getArtworkPath(albumId);
+    final artworkPath = getArtworkFilePath(albumId);
 
     if (await _usingSaf()) {
       try {
@@ -353,14 +289,14 @@ class FileSystemRepository {
         return false;
       }
     } else {
-      return File(artworkPath).exists();
+      final absolutePath = await _getAbsolutePath(artworkPath);
+      return File(absolutePath).exists();
     }
   }
 
-  // Download artwork from URL
   Future<String?> downloadArtwork(String artworkUrl, String albumId) async {
     try {
-      final artworkPath = await getArtworkPath(albumId);
+      final artworkPath = getArtworkFilePath(albumId);
       logger.d('Downloading artwork to: $artworkPath');
 
       final dio = Dio();
@@ -370,8 +306,6 @@ class FileSystemRepository {
       );
 
       final bytes = Uint8List.fromList(response.data!);
-
-      // Use platform-aware write
       await writeFile(artworkPath, bytes);
 
       final fileSize = await getFileSize(artworkPath);
@@ -386,6 +320,29 @@ class FileSystemRepository {
     } catch (e, stackTrace) {
       logger.e('Error downloading artwork', error: e, stackTrace: stackTrace);
       return null;
+    }
+  }
+
+  /// Convert relative path to absolute path (only on legacy storage)
+  Future<String> _getAbsolutePath(String relativePath) async {
+    if (await _usingSaf()) {
+      // On SAF, keep paths relative
+      return relativePath;
+    } else {
+      // On legacy storage, need absolute paths
+      final directory = await getExternalStorageDirectory();
+      if (directory == null) {
+        throw Exception('Could not access external storage');
+      }
+
+      final parts = directory.path.split('/');
+      final baseIndex = parts.indexOf('emulated');
+      if (baseIndex == -1) {
+        throw Exception('Unexpected storage path structure');
+      }
+
+      final basePath = '${parts.sublist(0, baseIndex + 2).join('/')}/Music';
+      return path.join(basePath, relativePath);
     }
   }
 }
