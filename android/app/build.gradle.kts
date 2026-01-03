@@ -30,7 +30,7 @@ android {
 
     defaultConfig {
         applicationId = "dev.educoder.owntone_sync"
-        minSdk = 26
+        minSdk = 29
         targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -56,4 +56,8 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation("androidx.documentfile:documentfile:1.0.1")
 }

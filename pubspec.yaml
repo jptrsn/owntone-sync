@@ -43,6 +43,9 @@ dependencies:
   # Logging
   logger: ^2.0.0
 
+  # Detect Android Version
+  device_info_plus: ^10.1.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

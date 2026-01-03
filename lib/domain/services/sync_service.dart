@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:audiotags/audiotags.dart';
 import 'package:dio/dio.dart';
@@ -473,21 +474,25 @@ class SyncService {
         return;
       }
 
-      // Create temporary file to download to
-      final tracksDir = await _fileRepo.getTracksDirectory();
-      final tempPath = '${tracksDir.path}/temp_${track.id}.$extension';
+      // Download the file to memory first
+      final dio = Dio();
+      final response = await dio.get<List<int>>(
+        '${_apiRepo.baseUrl}/databases/1/items/${track.id}.dat',
+        queryParameters: {'no_register_playback': '1'},
+        options: Options(
+          responseType: ResponseType.bytes,
+          headers: {'Accept-Codecs': 'mpeg,alac,flac,wav'},
+        ),
+        onReceiveProgress: onProgress,
+      );
 
-      // Download the file
-      await _apiRepo.downloadTrack(track.id, tempPath, onProgress: onProgress);
-
-      // Verify the file was downloaded
-      final tempFile = File(tempPath);
-      if (!await tempFile.exists()) {
-        throw Exception('Download failed - file not created');
+      if (response.data == null || response.data!.isEmpty) {
+        throw Exception('Download failed - no data received');
       }
 
-      // Move temp file to final location
-      await tempFile.rename(finalPath);
+      // Write using platform-aware method
+      final bytes = Uint8List.fromList(response.data!);
+      await _fileRepo.writeFile(finalPath, bytes);
 
       // Get file size
       final fileSize = await _fileRepo.getFileSize(finalPath);

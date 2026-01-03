@@ -1,68 +1,120 @@
-import 'package:permission_handler/permission_handler.dart';
+import 'dart:io';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:permission_handler/permission_handler.dart' as ph;
+import 'package:flutter/services.dart';
 
 class PermissionsService {
+  static const _storageChannel = MethodChannel(
+    'dev.educoder.owntone_sync/storage',
+  );
+
+  /// Get Android SDK version
+  Future<int> _getAndroidSdk() async {
+    if (!Platform.isAndroid) return 0;
+    final androidInfo = await DeviceInfoPlugin().androidInfo;
+    return androidInfo.version.sdkInt;
+  }
+
   /// Check if we have the necessary storage permissions
   Future<bool> hasStoragePermission() async {
-    // Check for manage external storage (Android 11+)
-    if (await Permission.manageExternalStorage.isGranted) {
-      return true;
-    }
+    if (!Platform.isAndroid) return true;
 
-    // On Android 13+ (API 33+), we need READ_MEDIA_AUDIO
-    if (await Permission.audio.isGranted) {
-      return true;
-    }
+    final sdk = await _getAndroidSdk();
 
-    if (await Permission.storage.isGranted) {
-      return true;
+    if (sdk >= 33) {
+      // Android 13+: Need READ_MEDIA_AUDIO + SAF Music folder access
+      final hasAudioPermission = await ph.Permission.audio.isGranted;
+      final hasFolderAccess = await _hasMusicFolderAccess();
+      return hasAudioPermission && hasFolderAccess;
+    } else {
+      // Android 10-12: Need WRITE_EXTERNAL_STORAGE
+      return await ph.Permission.storage.isGranted;
     }
-
-    return false;
   }
 
   /// Request storage permissions
   Future<bool> requestStoragePermission() async {
-    // Try to request manage external storage first (Android 11+)
-    PermissionStatus status = await Permission.manageExternalStorage.request();
-    if (status.isGranted) {
-      return true;
-    }
+    if (!Platform.isAndroid) return true;
 
-    // Try audio permission (Android 13+)
-    status = await Permission.audio.request();
-    if (status.isGranted) {
-      return true;
-    }
+    final sdk = await _getAndroidSdk();
+    print('SDK VERSION: $sdk'); // DEBUG
 
-    // Fall back to storage permission (older Android)
-    status = await Permission.storage.request();
-    if (status.isGranted) {
-      return true;
-    }
+    if (sdk >= 33) {
+      print('Requesting READ_MEDIA_AUDIO...'); // DEBUG
+      final audioStatus = await ph.Permission.audio.request();
+      print('Audio permission result: ${audioStatus.isGranted}'); // DEBUG
 
-    return false;
+      if (!audioStatus.isGranted) {
+        return false;
+      }
+
+      print('Requesting Music folder access...'); // DEBUG
+      final result = await _requestMusicFolderAccess();
+      print('SAF picker result: $result'); // DEBUG
+      return result;
+    } else {
+      // Android 10-12
+      final status = await ph.Permission.storage.request();
+      return status.isGranted;
+    }
   }
 
   /// Check if permission was permanently denied
   Future<bool> isStoragePermissionPermanentlyDenied() async {
-    return await Permission.manageExternalStorage.isPermanentlyDenied ||
-        await Permission.audio.isPermanentlyDenied ||
-        await Permission.storage.isPermanentlyDenied;
+    if (!Platform.isAndroid) return false;
+
+    final sdk = await _getAndroidSdk();
+
+    if (sdk >= 33) {
+      return await ph.Permission.audio.isPermanentlyDenied;
+    } else {
+      return await ph.Permission.storage.isPermanentlyDenied;
+    }
   }
 
-  /// Check if we have notification listener permission (for playback tracking)
-  Future<bool> hasNotificationPermission() async {
-    return await Permission.notification.isGranted;
+  /// Check if we have Music folder access (Android 13+ only)
+  Future<bool> _hasMusicFolderAccess() async {
+    try {
+      final result = await _storageChannel.invokeMethod<bool>(
+        'hasMusicFolderAccess',
+      );
+      return result ?? false;
+    } catch (e) {
+      return false;
+    }
   }
 
-  /// Request notification listener permission
-  Future<bool> requestNotificationPermission() async {
-    final status = await Permission.notification.request();
-    return status.isGranted;
+  /// Request Music folder access via SAF (Android 13+ only)
+  Future<bool> _requestMusicFolderAccess() async {
+    try {
+      final result = await _storageChannel.invokeMethod<bool>(
+        'requestMusicFolderAccess',
+      );
+      return result ?? false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Get the persisted Music folder URI (for use in FileSystemRepository)
+  Future<String?> getMusicFolderUri() async {
+    if (!Platform.isAndroid) return null;
+
+    final sdk = await _getAndroidSdk();
+    if (sdk < 33) return null;
+
+    try {
+      final uri = await _storageChannel.invokeMethod<String>(
+        'getMusicFolderUri',
+      );
+      return uri;
+    } catch (e) {
+      return null;
+    }
   }
 
   /// Open app settings (for when permissions are permanently denied)
   Future<void> openAppSettings() async {
-    await openAppSettings();
+    await ph.openAppSettings();
   }
 }
