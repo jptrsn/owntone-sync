@@ -165,6 +165,58 @@ class DatabaseHelper(private val context: Context) {
         return id
     }
 
+    fun insertSyncHistoryPlaylist(playlist: SyncHistoryPlaylist) {
+        val db = openDatabase()
+        val values = ContentValues().apply {
+            put("sync_id", playlist.syncId)
+            put("playlist_id", playlist.playlistId)
+            put("playlist_name", playlist.playlistName)
+            put("tracks_in_playlist", playlist.tracksInPlaylist)
+        }
+        db.insert("sync_history_playlists", null, values)
+        db.close()
+    }
+
+    fun getTracksForPlaylist(playlistId: Int): List<SyncedTrack> {
+        val db = openDatabase()
+        val cursor = db.rawQuery(
+            """
+            SELECT st.* FROM synced_tracks st
+            INNER JOIN playlist_tracks pt ON st.id = pt.track_id
+            WHERE pt.playlist_id = ?
+            """,
+            arrayOf(playlistId.toString())
+        )
+
+        val tracks = mutableListOf<SyncedTrack>()
+        while (cursor.moveToNext()) {
+            tracks.add(SyncedTrack.fromCursor(cursor))
+        }
+
+        cursor.close()
+        db.close()
+        return tracks
+    }
+
+    fun getPlaylistById(id: Int): SyncedPlaylist? {
+        val db = openDatabase()
+        val cursor = db.query(
+            "synced_playlists",
+            null,
+            "id = ?",
+            arrayOf(id.toString()),
+            null, null, null
+        )
+
+        val playlist = if (cursor.moveToFirst()) {
+            SyncedPlaylist.fromCursor(cursor)
+        } else null
+
+        cursor.close()
+        db.close()
+        return playlist
+    }
+
     // Data classes
     data class SyncedPlaylist(
         val id: Int,
@@ -234,4 +286,12 @@ class DatabaseHelper(private val context: Context) {
         val durationMs: Long,
         val triggerType: String
     )
+
+    data class SyncHistoryPlaylist(
+        val syncId: Int,
+        val playlistId: Int,
+        val playlistName: String,
+        val tracksInPlaylist: Int
+    )
+
 }

@@ -23,12 +23,8 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import android.util.Log
 import com.google.gson.Gson
 import androidx.work.OneTimeWorkRequestBuilder
-
-data class SyncSchedule(
-    val enabled: Boolean,
-    val requiresWifi: Boolean,
-    val requiresCharging: Boolean
-)
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.ExistingWorkPolicy
 
 class MainActivity: FlutterActivity() {
     private val EVENTS_CHANNEL = "dev.educoder.owntone_sync/events"
@@ -387,7 +383,6 @@ class MainActivity: FlutterActivity() {
         }
 
         try {
-            // Parse sync schedule JSON
             val gson = com.google.gson.Gson()
             val schedule = gson.fromJson(syncScheduleJson, SyncSchedule::class.java)
 
@@ -398,7 +393,23 @@ class MainActivity: FlutterActivity() {
                 return
             }
 
-            // Build constraints based on schedule settings
+            // Calculate delay until next scheduled time
+            val now = java.util.Calendar.getInstance()
+            val scheduledTime = java.util.Calendar.getInstance().apply {
+                set(java.util.Calendar.HOUR_OF_DAY, schedule.hour)
+                set(java.util.Calendar.MINUTE, schedule.minute)
+                set(java.util.Calendar.SECOND, 0)
+                set(java.util.Calendar.MILLISECOND, 0)
+
+                // If scheduled time has passed today, schedule for tomorrow
+                if (before(now)) {
+                    add(java.util.Calendar.DAY_OF_MONTH, 1)
+                }
+            }
+
+            val delayMillis = scheduledTime.timeInMillis - now.timeInMillis
+
+            // Build constraints
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(
                     if (schedule.requiresWifi) NetworkType.UNMETERED else NetworkType.CONNECTED
@@ -406,24 +417,34 @@ class MainActivity: FlutterActivity() {
                 .setRequiresCharging(schedule.requiresCharging)
                 .build()
 
-            val syncWorkRequest = PeriodicWorkRequestBuilder<BackgroundSyncWorker>(
-                1, TimeUnit.HOURS
-            )
+            // Use OneTimeWorkRequest with calculated delay
+            val syncWorkRequest = OneTimeWorkRequestBuilder<BackgroundSyncWorker>()
+                .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
                 .setConstraints(constraints)
                 .addTag("sync-task")
                 .build()
 
             WorkManager.getInstance(applicationContext)
-                .enqueueUniquePeriodicWork(
+                .enqueueUniqueWork(
                     "sync-task",
-                    androidx.work.ExistingPeriodicWorkPolicy.REPLACE,
+                    ExistingWorkPolicy.REPLACE,
                     syncWorkRequest
                 )
 
-            Log.d("MainActivity", "Background sync registered with WiFi=${schedule.requiresWifi}, Charging=${schedule.requiresCharging}")
+            Log.d("MainActivity", "Background sync scheduled for ${scheduledTime.time} (${delayMillis / 1000 / 60} minutes from now)")
         } catch (e: Exception) {
             Log.e("MainActivity", "Error registering background sync", e)
         }
     }
+
+    data class SyncSchedule(
+        val enabled: Boolean,
+        val scheduleType: String,
+        val hour: Int,
+        val minute: Int,
+        val daysOfWeek: List<Int>,
+        val requiresCharging: Boolean,
+        val requiresWifi: Boolean
+    )
 
 }

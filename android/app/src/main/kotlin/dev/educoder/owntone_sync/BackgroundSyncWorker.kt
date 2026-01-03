@@ -8,6 +8,8 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.ExistingWorkPolicy
 
 class BackgroundSyncWorker(
     context: Context,
@@ -211,8 +213,26 @@ class BackgroundSyncWorker(
 
             val duration = System.currentTimeMillis() - startTime
 
+            // Prepare playlist details for history
+            val playlistDetails = mutableListOf<Map<String, Any>>()
+            for (playlistId in playlistIds) {
+                try {
+                    val playlist = dbHelper.getPlaylistById(playlistId)
+                    if (playlist != null) {
+                        val trackCount = dbHelper.getTracksForPlaylist(playlistId).size
+                        playlistDetails.add(mapOf(
+                            "playlist_id" to playlistId,
+                            "playlist_name" to playlist.name,
+                            "tracks_in_playlist" to trackCount
+                        ))
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error getting playlist details for history", e)
+                }
+            }
+
             // Log sync history
-            dbHelper.insertSyncHistory(
+            val syncId = dbHelper.insertSyncHistory(
                 DatabaseHelper.SyncHistoryRecord(
                     timestamp = System.currentTimeMillis(),
                     status = "success",
@@ -224,6 +244,21 @@ class BackgroundSyncWorker(
                     triggerType = "scheduled"
                 )
             )
+
+            // Insert playlist details
+            for (detail in playlistDetails) {
+                dbHelper.insertSyncHistoryPlaylist(
+                    DatabaseHelper.SyncHistoryPlaylist(
+                        syncId = syncId.toInt(),
+                        playlistId = detail["playlist_id"] as Int,
+                        playlistName = detail["playlist_name"] as String,
+                        tracksInPlaylist = detail["tracks_in_playlist"] as Int
+                    )
+                )
+            }
+
+            // Schedule next sync
+            scheduleNextSync()
 
             Log.i(TAG, "Background sync completed: $tracksDownloaded tracks downloaded in ${duration}ms")
             Result.success()
@@ -332,4 +367,65 @@ class BackgroundSyncWorker(
             Log.e(TAG, "Error generating playlist file", e)
         }
     }
+
+    private fun scheduleNextSync() {
+        val prefs = applicationContext.getSharedPreferences(
+            "FlutterSharedPreferences",
+            Context.MODE_PRIVATE
+        )
+        val syncScheduleJson = prefs.getString("flutter.sync_schedule", null) ?: return
+
+        try {
+            val gson = com.google.gson.Gson()
+            val schedule = gson.fromJson(syncScheduleJson, SyncSchedule::class.java)
+
+            if (!schedule.enabled) return
+
+            // Calculate delay until next scheduled time (tomorrow)
+            val now = java.util.Calendar.getInstance()
+            val scheduledTime = java.util.Calendar.getInstance().apply {
+                set(java.util.Calendar.HOUR_OF_DAY, schedule.hour)
+                set(java.util.Calendar.MINUTE, schedule.minute)
+                set(java.util.Calendar.SECOND, 0)
+                set(java.util.Calendar.MILLISECOND, 0)
+                add(java.util.Calendar.DAY_OF_MONTH, 1) // Tomorrow
+            }
+
+            val delayMillis = scheduledTime.timeInMillis - now.timeInMillis
+
+            val constraints = androidx.work.Constraints.Builder()
+                .setRequiredNetworkType(
+                    if (schedule.requiresWifi) androidx.work.NetworkType.UNMETERED
+                    else androidx.work.NetworkType.CONNECTED
+                )
+                .setRequiresCharging(schedule.requiresCharging)
+                .build()
+
+            val syncWorkRequest = androidx.work.OneTimeWorkRequestBuilder<BackgroundSyncWorker>()
+                .setInitialDelay(delayMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
+                .setConstraints(constraints)
+                .addTag("sync-task")
+                .build()
+
+            WorkManager.getInstance(applicationContext)
+                .enqueueUniqueWork(
+                    "sync-task",
+                    androidx.work.ExistingWorkPolicy.REPLACE,
+                    syncWorkRequest
+                )
+
+            Log.d(TAG, "Next sync scheduled for ${scheduledTime.time}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error scheduling next sync", e)
+        }
+    }
+
+    data class SyncSchedule(
+        val enabled: Boolean,
+        val hour: Int,
+        val minute: Int,
+        val requiresCharging: Boolean,
+        val requiresWifi: Boolean
+    )
+
 }
