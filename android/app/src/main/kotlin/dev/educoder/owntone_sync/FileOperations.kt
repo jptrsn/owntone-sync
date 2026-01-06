@@ -55,7 +55,7 @@ class FileOperations(private val context: Context) {
         return file?.exists() == true
     }
 
-    fun writeFile(filePath: String, data: ByteArray, onProgress: ((bytesWritten: Long, totalBytes: Long) -> Unit)? = null): Boolean {
+    fun writeFile(filePath: String, data: ByteArray): Boolean {
         try {
             val musicFolder = getMusicFolderDocumentFile() ?: return false
 
@@ -93,38 +93,20 @@ class FileOperations(private val context: Context) {
             val existingFile = currentFolder.findFile(fileName)
 
             val outputStream: OutputStream? = if (existingFile?.exists() == true) {
-                // File exists - open it and truncate (overwrite)
                 context.contentResolver.openOutputStream(existingFile.uri, "wt")
             } else {
-                // File doesn't exist - create new
                 val newFile = currentFolder.createFile(mimeType, fileName) ?: return false
                 context.contentResolver.openOutputStream(newFile.uri)
             }
 
             outputStream?.use { output ->
-                // Write with progress tracking
-                val totalBytes = data.size.toLong()
-                var bytesWritten = 0L
-                val chunkSize = 8192
-                var lastProgressUpdate = 0L
-
-                var offset = 0
-                while (offset < data.size) {
-                    val length = minOf(chunkSize, data.size - offset)
-                    output.write(data, offset, length)
-                    offset += length
-                    bytesWritten += length
-
-                    // Throttle progress updates
-                    val now = System.currentTimeMillis()
-                    if (now - lastProgressUpdate >= 500) {
-                        lastProgressUpdate = now
-                        onProgress?.invoke(bytesWritten, totalBytes)
-                    }
+                // Use BufferedOutputStream for better performance
+                java.io.BufferedOutputStream(output, 262144).use { buffered ->  // 256KB buffer
+                    val totalBytes = data.size.toLong()
+                    // Write entire array at once - fastest method
+                    buffered.write(data)
+                    buffered.flush()
                 }
-
-                // Final progress update
-                onProgress?.invoke(bytesWritten, totalBytes)
             }
 
             return true

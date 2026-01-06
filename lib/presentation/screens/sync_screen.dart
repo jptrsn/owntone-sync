@@ -49,7 +49,7 @@ class SyncScreen extends StatelessWidget {
                   const SizedBox(height: 24),
                   Text(
                     provider.syncProgress != null
-                        ? 'Syncing ${provider.syncProgress!.currentPlaylist}...'
+                        ? '${provider.syncProgress!.currentPlaylist}...'
                         : 'Preparing sync...',
                     style: const TextStyle(fontSize: 18),
                     textAlign: TextAlign.center,
@@ -345,7 +345,7 @@ class SyncScreen extends StatelessWidget {
           const SizedBox(height: 8),
           if (progress.currentTrackTitle != null)
             Text(
-              'Downloading: ${progress.currentTrackTitle}',
+              '${progress.currentTrackTitle}',
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onPrimaryContainer,
               ),

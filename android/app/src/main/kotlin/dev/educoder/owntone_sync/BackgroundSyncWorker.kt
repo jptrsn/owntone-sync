@@ -81,6 +81,7 @@ class BackgroundSyncWorker(
 
             val startTime = System.currentTimeMillis()
             var tracksDownloaded = 0
+            var syncCancelled = false
 
             SyncProgressBroadcaster.updateProgress(
                 applicationContext, worker, "Reading existing tracks", 0, playlistIds.size, 0, 0
@@ -106,6 +107,7 @@ class BackgroundSyncWorker(
                 // Check if work is cancelled
                 if (isStopped) {
                     Log.i(TAG, "Sync cancelled by user")
+                    syncCancelled = true
                     break
                 }
                 try {
@@ -148,6 +150,7 @@ class BackgroundSyncWorker(
                         // Check if work is cancelled
                         if (isStopped) {
                             Log.i(TAG, "Sync cancelled, stopping downloads")
+                            syncCancelled = true
                             break
                         }
                         try {
@@ -158,21 +161,28 @@ class BackgroundSyncWorker(
                             )
 
                             // Download track data and get content type with progress tracking
+                            val downloadStart = System.currentTimeMillis()
                             val (trackData, contentType) = apiClient.downloadTrack(track.id) { bytesRead, totalBytes ->
-                                // Don't update progress if worker is stopped
                                 if (!isStopped) {
-                                    // Download is 0-50% of total progress
-                                    val downloadProgress = if (totalBytes > 0) (bytesRead.toDouble() / totalBytes.toDouble()) * 0.5 else 0.0
+                                    try {
+                                        val downloadProgress = if (totalBytes > 0) (bytesRead.toDouble() / totalBytes.toDouble()) else 0.0
 
-                                    kotlinx.coroutines.runBlocking {
-                                        SyncProgressBroadcaster.updateProgress(
-                                            applicationContext, worker, playlist.name, playlistIndex, playlistIds.size,
-                                            tracksDownloaded, totalTracks,
-                                            track.title, downloadProgress
-                                        )
+                                        kotlinx.coroutines.runBlocking {
+                                            SyncProgressBroadcaster.updateProgress(
+                                                applicationContext, worker, playlist.name, playlistIndex, playlistIds.size,
+                                                tracksDownloaded, totalTracks,
+                                                "Downloading ${track.title}", downloadProgress
+                                            )
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.d(TAG, "Ignoring progress update error during cancellation: ${e.message}")
                                     }
                                 }
                             }
+
+                            val downloadTime = System.currentTimeMillis() - downloadStart
+                            Log.i(TAG, "Download took ${downloadTime}ms for ${trackData.size} bytes (${track.title})")
+
 
                             val extension = fileOps.getExtensionFromContentType(contentType)
 
@@ -180,22 +190,22 @@ class BackgroundSyncWorker(
                             val filename = fileOps.generateTrackFilename(track, extension)
                             val filePath = "tracks/$filename"
 
-                            // Write to file with progress tracking (50-100%)
-                            val success = fileOps.writeFile(filePath, trackData) { bytesWritten, totalBytes ->
-                                // Don't update progress if worker is stopped
-                                if (!isStopped) {
-                                    // Save is 50-100% of total progress
-                                    val saveProgress = 0.5 + (if (totalBytes > 0) (bytesWritten.toDouble() / totalBytes.toDouble()) * 0.5 else 0.0)
+                            kotlinx.coroutines.runBlocking {
+                                            SyncProgressBroadcaster.updateProgress(
+                                                applicationContext, worker, playlist.name, playlistIndex, playlistIds.size,
+                                                tracksDownloaded, totalTracks,
+                                                "Saving ${track.title}", 1.0
+                                            )
+                                        }
+                            val writeStart = System.currentTimeMillis()
+                            val success = fileOps.writeFile(filePath, trackData)
 
-                                    kotlinx.coroutines.runBlocking {
-                                        SyncProgressBroadcaster.updateProgress(
-                                            applicationContext, worker, playlist.name, playlistIndex, playlistIds.size,
-                                            tracksDownloaded, totalTracks,
-                                            track.title, saveProgress
-                                        )
-                                    }
-                                }
-                            }
+                            val writeTime = System.currentTimeMillis() - writeStart
+                            Log.i(TAG, "File write took ${writeTime}ms for ${trackData.size} bytes (${track.title})")
+
+                            val totalTime = downloadTime + writeTime
+                            Log.i(TAG, "Total time: ${totalTime}ms (download: ${downloadTime}ms / ${(downloadTime.toFloat()/totalTime*100).toInt()}%, write: ${writeTime}ms / ${(writeTime.toFloat()/totalTime*100).toInt()}%)")
+
 
                             if (success) {
                                 // Save to database
@@ -277,11 +287,11 @@ class BackgroundSyncWorker(
             val syncId = dbHelper.insertSyncHistory(
                 DatabaseHelper.SyncHistoryRecord(
                     timestamp = System.currentTimeMillis(),
-                    status = "success",
+                    status = if (syncCancelled) "cancelled" else "success",
                     playlistsSynced = playlistIds.size,
                     tracksDownloaded = tracksDownloaded,
                     tracksDeleted = 0,
-                    errorMessage = null,
+                    errorMessage = if (syncCancelled) "Cancelled by user" else null,
                     durationMs = duration,
                     triggerType = triggerType
                 )
