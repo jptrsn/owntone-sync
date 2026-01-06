@@ -81,7 +81,7 @@ class OwnToneApiClient(private val baseUrl: String) {
         }
     }
 
-    fun downloadTrack(trackId: Int): Pair<ByteArray, String> {
+    fun downloadTrack(trackId: Int, onProgress: ((bytesRead: Long, totalBytes: Long) -> Unit)? = null): Pair<ByteArray, String> {
         val url = "$baseUrl/databases/1/items/$trackId.dat?no_register_playback=1"
         Log.d("OwnToneApiClient", "Downloading track $trackId from: $url")
 
@@ -96,8 +96,32 @@ class OwnToneApiClient(private val baseUrl: String) {
             Log.d("OwnToneApiClient", "Connected, response code: ${connection.responseCode}")
 
             val contentType = connection.getHeaderField("Content-Type") ?: "audio/mpeg"
+            val contentLength = connection.contentLength.toLong()
             val inputStream = connection.inputStream
-            val bytes = inputStream.readBytes()
+
+            // Read with progress tracking
+            val buffer = ByteArray(8192)
+            val output = java.io.ByteArrayOutputStream()
+            var bytesRead = 0L
+            var read: Int
+            var lastProgressUpdate = 0L
+
+            while (inputStream.read(buffer).also { read = it } != -1) {
+                output.write(buffer, 0, read)
+                bytesRead += read
+
+                // Throttle progress callbacks to every 500ms
+                val now = System.currentTimeMillis()
+                if (now - lastProgressUpdate >= 500) {
+                    lastProgressUpdate = now
+                    onProgress?.invoke(bytesRead, contentLength)
+                }
+            }
+
+            // Final progress update at 100%
+            onProgress?.invoke(bytesRead, contentLength)
+
+            val bytes = output.toByteArray()
 
             Log.d("OwnToneApiClient", "Downloaded ${bytes.size} bytes, type: $contentType")
             return Pair(bytes, contentType)

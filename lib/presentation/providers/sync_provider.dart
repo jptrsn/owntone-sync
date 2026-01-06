@@ -6,16 +6,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/models/playlist.dart';
 import '../../data/models/sync_schedule.dart';
-import '../../data/models/sync_state.dart';
 import '../../data/repositories/file_system_repository.dart';
 import '../../data/repositories/local_database_repository.dart';
 import '../../data/repositories/owntone_api_repository.dart';
 import '../../domain/services/permissions_service.dart';
 import '../../domain/services/sync_service.dart';
 import '../../utils/logger.dart';
+import 'dart:async';
 
 class SyncProvider extends ChangeNotifier {
   final PermissionsService _permissionsService = PermissionsService();
+
+  static const _progressChannel = EventChannel(
+    'dev.educoder.owntone_sync/sync_progress',
+  );
+  StreamSubscription<dynamic>? _progressSubscription;
 
   OwnToneApiRepository? _apiRepo;
   LocalDatabaseRepository? _dbRepo;
@@ -55,6 +60,12 @@ class SyncProvider extends ChangeNotifier {
     _initialize();
   }
 
+  @override
+  void dispose() {
+    _progressSubscription?.cancel();
+    super.dispose();
+  }
+
   Future<void> _initialize() async {
     _dbRepo = LocalDatabaseRepository();
     _fileRepo = FileSystemRepository();
@@ -85,6 +96,9 @@ class SyncProvider extends ChangeNotifier {
     _eventTrackingEnabled = prefs.getBool('event_tracking_enabled') ?? false;
     logger.i('Event tracking preference loaded: $_eventTrackingEnabled');
 
+    // Check if background sync is already running
+    await checkIfSyncRunning();
+
     notifyListeners();
   }
 
@@ -114,6 +128,96 @@ class SyncProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> resetAppData({required bool deleteFiles}) async {
+    if (_dbRepo == null || _fileRepo == null) {
+      throw Exception('Repositories not initialized');
+    }
+
+    try {
+      // Get all playlists and tracks before deleting
+      final allPlaylists = await _dbRepo!.getAllPlaylists();
+      final allTracks = await _dbRepo!.getAllTracks();
+
+      // Delete music files if requested
+      if (deleteFiles) {
+        for (final track in allTracks) {
+          try {
+            await _fileRepo!.deleteTrack(track.localPath);
+          } catch (e) {
+            logger.e('Error deleting track file: ${track.localPath}', error: e);
+            // Continue even if file deletion fails
+          }
+
+          // Delete artwork if it exists
+          if (track.artworkPath != null) {
+            try {
+              await _fileRepo!.deleteTrack(track.artworkPath!);
+            } catch (e) {
+              logger.e(
+                'Error deleting artwork: ${track.artworkPath}',
+                error: e,
+              );
+            }
+          }
+        }
+
+        // Delete playlist files
+        for (final playlist in allPlaylists) {
+          try {
+            await _fileRepo!.deletePlaylistFile(playlist.name);
+          } catch (e) {
+            logger.e(
+              'Error deleting playlist file: ${playlist.name}',
+              error: e,
+            );
+          }
+        }
+      }
+
+      // Clear database - order matters due to foreign keys
+
+      // 1. Clear playlist-track relationships for all playlists
+      for (final playlist in allPlaylists) {
+        await _dbRepo!.clearPlaylistTracks(playlist.id);
+      }
+
+      // 2. Delete all playlists
+      for (final playlist in allPlaylists) {
+        await _dbRepo!.deletePlaylist(playlist.id);
+      }
+
+      // 3. Delete all tracks
+      for (final track in allTracks) {
+        await _dbRepo!.deleteTrack(track.id);
+      }
+
+      // 4. Clear playlist cache
+      await _dbRepo!.clearPlaylistCache();
+
+      // 5. Clear pending events
+      final unsyncedEvents = await _dbRepo!.getUnsyncedEvents();
+      for (final event in unsyncedEvents) {
+        if (event.id != null) {
+          await _dbRepo!.deleteEvent(event.id!);
+        }
+      }
+      await _dbRepo!.deleteSyncedEvents();
+
+      // Note: We're NOT clearing sync history - user might want to see what was synced before
+
+      // Clear in-memory state
+      _selectedPlaylistIds.clear();
+      _availablePlaylists.clear();
+
+      notifyListeners();
+
+      logger.i('App data reset completed. Files deleted: $deleteFiles');
+    } catch (e, stackTrace) {
+      logger.e('Error resetting app data', error: e, stackTrace: stackTrace);
+      rethrow;
+    }
+  }
+
   /// Request storage permission
   Future<bool> requestStoragePermission() async {
     _hasStoragePermission = await _permissionsService
@@ -122,7 +226,65 @@ class SyncProvider extends ChangeNotifier {
     return _hasStoragePermission;
   }
 
-  /// Fetch available playlists from server
+  /// Check if a background sync is running
+  Future<void> checkIfSyncRunning() async {
+    try {
+      const channel = MethodChannel('dev.educoder.owntone_sync/sync');
+      final isRunning = await channel.invokeMethod<bool>('isSyncRunning');
+
+      if (isRunning == true) {
+        logger.i('Background sync is currently running');
+        _isSyncing = true;
+        _subscribeToSyncProgress();
+        notifyListeners();
+      } else {
+        logger.d('No background sync running');
+      }
+    } catch (e) {
+      logger.e('Error checking sync state', error: e);
+    }
+  }
+
+  void _subscribeToSyncProgress() {
+    // Cancel existing subscription if any
+    _progressSubscription?.cancel();
+
+    _progressSubscription = _progressChannel.receiveBroadcastStream().listen(
+      (dynamic event) {
+        logger.d('Received progress event: $event');
+        if (event is Map) {
+          _syncProgress = SyncProgress(
+            currentPlaylist: event['currentPlaylist'] as String,
+            totalPlaylists: event['totalPlaylists'] as int,
+            currentPlaylistIndex: event['currentPlaylistIndex'] as int,
+            totalTracks: event['totalTracks'] as int,
+            downloadedTracks: event['downloadedTracks'] as int,
+            currentTrackTitle: event['currentTrackTitle'] as String?,
+            downloadProgress: event['downloadProgress'] as double?,
+          );
+          _isSyncing = true;
+          notifyListeners();
+        }
+      },
+      onError: (error) {
+        logger.e('Error receiving sync progress', error: error);
+        _isSyncing = false;
+        _syncProgress = null;
+        _isCancelling = false;
+        notifyListeners();
+      },
+      onDone: () {
+        logger.i('Sync progress stream closed - sync completed or cancelled');
+        _isSyncing = false;
+        _syncProgress = null;
+        _isCancelling = false;
+        notifyListeners();
+      },
+    );
+
+    logger.d('Subscribed to sync progress events');
+  }
+
   /// Fetch available playlists from server
   Future<void> fetchPlaylists() async {
     if (_apiRepo == null || _dbRepo == null) {
@@ -160,11 +322,26 @@ class SyncProvider extends ChangeNotifier {
   }
 
   /// Cancel ongoing sync
-  void cancelSync() {
-    if (_syncService != null && _isSyncing && !_isCancelling) {
+  Future<void> cancelSync() async {
+    if (_isSyncing && !_isCancelling) {
       _isCancelling = true;
-      _syncService!.cancelSync();
       notifyListeners();
+
+      try {
+        const channel = MethodChannel('dev.educoder.owntone_sync/sync');
+        await channel.invokeMethod('cancelSync');
+        logger.i('Sync cancelled');
+
+        // Clean up state
+        _isSyncing = false;
+        _isCancelling = false;
+        _syncProgress = null;
+        notifyListeners();
+      } catch (e) {
+        logger.e('Error cancelling sync', error: e);
+        _isCancelling = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -262,13 +439,8 @@ class SyncProvider extends ChangeNotifier {
   }
 
   /// Start sync
+  /// Start sync (triggers background worker)
   Future<void> startSync() async {
-    if (_syncService == null) {
-      _lastError = 'Sync service not initialized';
-      notifyListeners();
-      return;
-    }
-
     if (!_hasStoragePermission) {
       _lastError = 'Storage permission not granted';
       notifyListeners();
@@ -283,69 +455,23 @@ class SyncProvider extends ChangeNotifier {
 
     try {
       _isSyncing = true;
-      _isCancelling = false;
       _lastError = null;
       _syncProgress = null;
       notifyListeners();
 
-      // Mark sync as running
-      final prefs = await SharedPreferences.getInstance();
-      final runningSyncState = SyncState(isRunning: true);
-      await prefs.setString(
-        'sync_state',
-        json.encode(runningSyncState.toJson()),
-      );
+      // Trigger background sync via WorkManager
+      const channel = MethodChannel('dev.educoder.owntone_sync/sync');
+      await channel.invokeMethod('triggerBackgroundSync');
 
-      // Sync events back to server if tracking is enabled
-      if (_eventTrackingEnabled && _syncService != null) {
-        logger.i('Syncing events to server before playlist sync');
-        await _syncService!.syncEvents();
-      }
+      logger.i('Background sync triggered');
 
-      final result = await _syncService!.syncPlaylists(
-        _selectedPlaylistIds.toList(),
-      );
-
-      // Update sync state
-      final completedSyncState = SyncState(
-        isRunning: false,
-        lastSyncTime: DateTime.now(),
-        lastSyncSuccess: result.success,
-      );
-      await prefs.setString(
-        'sync_state',
-        json.encode(completedSyncState.toJson()),
-      );
-
-      if (result.success) {
-        _lastError = null;
-        logger.i('Sync completed successfully');
-
-        // Refresh playlist metadata from server
-        logger.i('Refreshing playlist metadata after sync');
-        await fetchPlaylists();
-      } else {
-        // Don't show cancellation as an error
-        if (result.error != 'Sync cancelled by user') {
-          _lastError = result.error;
-          logger.e('Sync failed: ${result.error}');
-        }
-      }
+      // Subscribe to progress events
+      _subscribeToSyncProgress();
     } catch (e, stackTrace) {
-      _lastError = 'Sync failed: $e';
-      logger.e('Sync exception', error: e, stackTrace: stackTrace);
-
-      // Mark sync as not running on error
-      final prefs = await SharedPreferences.getInstance();
-      final errorSyncState = SyncState(
-        isRunning: false,
-        lastSyncSuccess: false,
-      );
-      await prefs.setString('sync_state', json.encode(errorSyncState.toJson()));
-    } finally {
+      _lastError = 'Failed to start sync: $e';
       _isSyncing = false;
-      _isCancelling = false;
       _syncProgress = null;
+      logger.e('Error triggering sync', error: e, stackTrace: stackTrace);
       notifyListeners();
     }
   }

@@ -365,6 +365,7 @@ class SyncService {
 
       await _downloadTrack(track, (received, total) {
         final progress = total > 0 ? received / total : 0.0;
+        logger.d('${track.title} progress: $progress');
         onProgress?.call(
           SyncProgress(
             currentPlaylist: playlist.name,

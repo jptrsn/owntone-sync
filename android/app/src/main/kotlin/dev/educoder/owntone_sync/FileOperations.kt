@@ -18,12 +18,44 @@ class FileOperations(private val context: Context) {
         return DocumentFile.fromTreeUri(context, uri)
     }
 
+    fun getExistingFiles(directoryPath: String): Set<String> {
+        try {
+            val musicFolder = getMusicFolderDocumentFile() ?: return emptySet()
+
+            // Navigate to the directory
+            val pathParts = directoryPath.split("/")
+            var currentFolder = musicFolder
+
+            for (folderName in pathParts) {
+                if (folderName.isEmpty()) continue
+                val folder = currentFolder.findFile(folderName)
+                if (folder == null || !folder.isDirectory) {
+                    return emptySet()
+                }
+                currentFolder = folder
+            }
+
+            // Get all files in this directory
+            val existingFiles = mutableSetOf<String>()
+            currentFolder.listFiles().forEach { file ->
+                if (file.isFile) {
+                    existingFiles.add("$directoryPath/${file.name}")
+                }
+            }
+
+            return existingFiles
+        } catch (e: Exception) {
+            android.util.Log.e("FileOperations", "Error getting existing files", e)
+            return emptySet()
+        }
+    }
+
     fun fileExists(filePath: String): Boolean {
         val file = getDocumentFileFromPath(filePath)
         return file?.exists() == true
     }
 
-    fun writeFile(filePath: String, data: ByteArray): Boolean {
+    fun writeFile(filePath: String, data: ByteArray, onProgress: ((bytesWritten: Long, totalBytes: Long) -> Unit)? = null): Boolean {
         try {
             val musicFolder = getMusicFolderDocumentFile() ?: return false
 
@@ -70,7 +102,29 @@ class FileOperations(private val context: Context) {
             }
 
             outputStream?.use { output ->
-                output.write(data)
+                // Write with progress tracking
+                val totalBytes = data.size.toLong()
+                var bytesWritten = 0L
+                val chunkSize = 8192
+                var lastProgressUpdate = 0L
+
+                var offset = 0
+                while (offset < data.size) {
+                    val length = minOf(chunkSize, data.size - offset)
+                    output.write(data, offset, length)
+                    offset += length
+                    bytesWritten += length
+
+                    // Throttle progress updates
+                    val now = System.currentTimeMillis()
+                    if (now - lastProgressUpdate >= 500) {
+                        lastProgressUpdate = now
+                        onProgress?.invoke(bytesWritten, totalBytes)
+                    }
+                }
+
+                // Final progress update
+                onProgress?.invoke(bytesWritten, totalBytes)
             }
 
             return true

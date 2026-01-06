@@ -25,10 +25,14 @@ import com.google.gson.Gson
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.ExistingWorkPolicy
+import androidx.work.WorkInfo
+import androidx.work.Data
+import io.flutter.plugin.common.EventChannel
 
 class MainActivity: FlutterActivity() {
     private val EVENTS_CHANNEL = "dev.educoder.owntone_sync/events"
     private val STORAGE_CHANNEL = "dev.educoder.owntone_sync/storage"
+    private val PROGRESS_CHANNEL = "dev.educoder.owntone_sync/sync_progress"
     private val REQUEST_CODE_MUSIC_FOLDER = 1001
 
     private var pendingMusicFolderResult: MethodChannel.Result? = null
@@ -103,20 +107,60 @@ class MainActivity: FlutterActivity() {
             }
         }
 
+        // Sync progress channel
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, PROGRESS_CHANNEL)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    SyncProgressBroadcaster.eventSink = events
+                    Log.d("MainActivity", "Progress listener attached")
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    SyncProgressBroadcaster.eventSink = null
+                    Log.d("MainActivity", "Progress listener detached")
+                }
+            })
+
         // Add a new channel for sync control
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "dev.educoder.owntone_sync/sync").setMethodCallHandler { call, result ->
             when (call.method) {
                 "triggerBackgroundSync" -> {
                     // Trigger sync immediately for testing
                     val workRequest = OneTimeWorkRequestBuilder<BackgroundSyncWorker>()
+                        .addTag("sync-task")
+                        .setInputData(
+                            androidx.work.Data.Builder()
+                                .putString("trigger_type", "manual")
+                                .build()
+                        )
                         .build()
                     WorkManager.getInstance(applicationContext).enqueue(workRequest)
+                    result.success(true)
+                }
+                "cancelSync" -> {
+                    WorkManager.getInstance(applicationContext)
+                        .cancelAllWorkByTag("sync-task")
                     result.success(true)
                 }
                 "updateSyncSchedule" -> {
                     // Re-register worker when schedule changes
                     registerBackgroundSync()
                     result.success(true)
+                }
+                "isSyncRunning" -> {
+                    try {
+                        val workInfos = WorkManager.getInstance(applicationContext)
+                            .getWorkInfosByTag("sync-task")
+                            .get()
+                        val isRunning = workInfos.any {
+                            it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED
+                        }
+                        Log.d("MainActivity", "Sync running check: $isRunning (found ${workInfos.size} work items)")
+                        result.success(isRunning)
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Error checking sync state", e)
+                        result.success(false)
+                    }
                 }
                 else -> {
                     result.notImplemented()

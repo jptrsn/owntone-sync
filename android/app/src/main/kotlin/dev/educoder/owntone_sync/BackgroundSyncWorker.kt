@@ -6,10 +6,11 @@ import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.ExistingWorkPolicy
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 
 class BackgroundSyncWorker(
     context: Context,
@@ -18,19 +19,20 @@ class BackgroundSyncWorker(
 
     companion object {
         private const val TAG = "BackgroundSyncWorker"
-        private const val NOTIFICATION_ID = 1
-        private const val CHANNEL_ID = "sync_channel"
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        val worker = this@BackgroundSyncWorker
         try {
-            // Create notification channel
-            createNotificationChannel()
 
-            // Show initial notification
-            setForeground(createForegroundInfo("Starting sync...", 0, 0, 0, 0))
+            SyncProgressBroadcaster.updateProgress(
+                applicationContext, worker, "Starting sync...", 0, 0, 0, 0
+            )
 
             Log.i(TAG, "Starting background sync")
+
+            // Get trigger type from input data (default to "scheduled")
+            val triggerType = inputData.getString("trigger_type") ?: "scheduled"
 
             // Get server URL from shared preferences
             val prefs = applicationContext.getSharedPreferences(
@@ -80,6 +82,14 @@ class BackgroundSyncWorker(
             val startTime = System.currentTimeMillis()
             var tracksDownloaded = 0
 
+            SyncProgressBroadcaster.updateProgress(
+                applicationContext, worker, "Reading existing tracks", 0, playlistIds.size, 0, 0
+            )
+
+            // Get all existing files in tracks directory (one SAF call)
+            val existingFiles = fileOps.getExistingFiles("tracks")
+            Log.d(TAG, "Found ${existingFiles.size} existing files in tracks directory")
+
             // Count total tracks first
             var totalTracks = 0
             for (playlistId in playlistIds) {
@@ -93,6 +103,11 @@ class BackgroundSyncWorker(
 
             // Sync each playlist
             for ((playlistIndex, playlistId) in playlistIds.withIndex()) {
+                // Check if work is cancelled
+                if (isStopped) {
+                    Log.i(TAG, "Sync cancelled by user")
+                    break
+                }
                 try {
                     Log.i(TAG, "Syncing playlist $playlistId")
 
@@ -106,13 +121,9 @@ class BackgroundSyncWorker(
                     }
 
                     // Update notification with playlist name
-                    setForeground(createForegroundInfo(
-                        playlist.name,
-                        playlistIndex + 1,
-                        playlistIds.size,
-                        tracksDownloaded,
-                        totalTracks
-                    ))
+                    SyncProgressBroadcaster.updateProgress(
+                        applicationContext, worker, "Validating playlist ${playlist.name}", playlistIndex, playlistIds.size, tracksDownloaded, totalTracks
+                    )
 
                     // Fetch tracks for this playlist
                     val tracksResponse = apiClient.getPlaylistTracks(playlistId)
@@ -127,33 +138,64 @@ class BackgroundSyncWorker(
                     // Determine which tracks to download
                     val tracksToDownload = serverTracks.filter { track ->
                         val localTrack = existingTracks[track.id]
-                        localTrack == null || !fileOps.fileExists(localTrack.localPath)
+                        localTrack == null || !existingFiles.contains(localTrack.localPath)
                     }
 
                     Log.i(TAG, "Need to download ${tracksToDownload.size} tracks")
 
                     // Download tracks
                     for (track in tracksToDownload) {
+                        // Check if work is cancelled
+                        if (isStopped) {
+                            Log.i(TAG, "Sync cancelled, stopping downloads")
+                            break
+                        }
                         try {
                             // Update notification for current track
-                            setForeground(createForegroundInfo(
-                                "${playlist.name} - ${track.title}",
-                                playlistIndex + 1,
-                                playlistIds.size,
-                                tracksDownloaded,
-                                totalTracks
-                            ))
+                            SyncProgressBroadcaster.updateProgress(
+                                applicationContext, worker, playlist.name, playlistIndex, playlistIds.size, tracksDownloaded, totalTracks,
+                                track.title, 0.0
+                            )
 
-                            // Download track data and get content type
-                            val (trackData, contentType) = apiClient.downloadTrack(track.id)
+                            // Download track data and get content type with progress tracking
+                            val (trackData, contentType) = apiClient.downloadTrack(track.id) { bytesRead, totalBytes ->
+                                // Don't update progress if worker is stopped
+                                if (!isStopped) {
+                                    // Download is 0-50% of total progress
+                                    val downloadProgress = if (totalBytes > 0) (bytesRead.toDouble() / totalBytes.toDouble()) * 0.5 else 0.0
+
+                                    kotlinx.coroutines.runBlocking {
+                                        SyncProgressBroadcaster.updateProgress(
+                                            applicationContext, worker, playlist.name, playlistIndex, playlistIds.size,
+                                            tracksDownloaded, totalTracks,
+                                            track.title, downloadProgress
+                                        )
+                                    }
+                                }
+                            }
+
                             val extension = fileOps.getExtensionFromContentType(contentType)
 
                             // Generate file path
                             val filename = fileOps.generateTrackFilename(track, extension)
                             val filePath = "tracks/$filename"
 
-                            // Write to file
-                            val success = fileOps.writeFile(filePath, trackData)
+                            // Write to file with progress tracking (50-100%)
+                            val success = fileOps.writeFile(filePath, trackData) { bytesWritten, totalBytes ->
+                                // Don't update progress if worker is stopped
+                                if (!isStopped) {
+                                    // Save is 50-100% of total progress
+                                    val saveProgress = 0.5 + (if (totalBytes > 0) (bytesWritten.toDouble() / totalBytes.toDouble()) * 0.5 else 0.0)
+
+                                    kotlinx.coroutines.runBlocking {
+                                        SyncProgressBroadcaster.updateProgress(
+                                            applicationContext, worker, playlist.name, playlistIndex, playlistIds.size,
+                                            tracksDownloaded, totalTracks,
+                                            track.title, saveProgress
+                                        )
+                                    }
+                                }
+                            }
 
                             if (success) {
                                 // Save to database
@@ -241,7 +283,7 @@ class BackgroundSyncWorker(
                     tracksDeleted = 0,
                     errorMessage = null,
                     durationMs = duration,
-                    triggerType = "scheduled"
+                    triggerType = triggerType
                 )
             )
 
@@ -263,73 +305,13 @@ class BackgroundSyncWorker(
             Log.i(TAG, "Background sync completed: $tracksDownloaded tracks downloaded in ${duration}ms")
             Result.success()
 
+        } catch (e: CancellationException) {
+            Log.i(TAG, "Sync cancelled")
+            Result.success()
         } catch (e: Exception) {
             Log.e(TAG, "Background sync failed", e)
             Result.failure()
         }
-    }
-
-    private fun createNotificationChannel() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            val channel = android.app.NotificationChannel(
-                CHANNEL_ID,
-                "Music Sync",
-                android.app.NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Background music synchronization"
-            }
-
-            val notificationManager = applicationContext.getSystemService(
-                android.app.NotificationManager::class.java
-            )
-            notificationManager.createNotificationChannel(channel)
-        }
-    }
-
-    private fun createForegroundInfo(
-        currentTrack: String,
-        currentPlaylist: Int,
-        totalPlaylists: Int,
-        downloadedTracks: Int,
-        totalTracks: Int
-    ): ForegroundInfo {
-        val intent = applicationContext.packageManager.getLaunchIntentForPackage(
-            applicationContext.packageName
-        )
-        val pendingIntent = android.app.PendingIntent.getActivity(
-            applicationContext,
-            0,
-            intent,
-            android.app.PendingIntent.FLAG_IMMUTABLE
-        )
-
-        // Cancel intent
-        val cancelIntent = WorkManager.getInstance(applicationContext)
-            .createCancelPendingIntent(id)
-
-        val notification = androidx.core.app.NotificationCompat.Builder(
-            applicationContext,
-            CHANNEL_ID
-        )
-            .setContentTitle("Syncing Music")
-            .setContentText(currentTrack)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setOngoing(true)
-            .setContentIntent(pendingIntent)
-            .addAction(
-                android.R.drawable.ic_delete,
-                "Cancel",
-                cancelIntent
-            )
-            .setProgress(
-                totalTracks,
-                downloadedTracks,
-                totalTracks == 0
-            )
-            .setSubText("Playlist $currentPlaylist/$totalPlaylists • Track $downloadedTracks/$totalTracks")
-            .build()
-
-        return ForegroundInfo(NOTIFICATION_ID, notification)
     }
 
     private fun generatePlaylistFile(
