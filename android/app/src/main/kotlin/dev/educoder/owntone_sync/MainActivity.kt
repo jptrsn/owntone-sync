@@ -153,9 +153,11 @@ class MainActivity: FlutterActivity() {
                             .getWorkInfosByTag("sync-task")
                             .get()
                         val isRunning = workInfos.any {
-                            it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED
+                            it.state == WorkInfo.State.RUNNING ||
+                            it.state == WorkInfo.State.BLOCKED
+                            // Don't include ENQUEUED - that's just scheduled, not running
                         }
-                        Log.d("MainActivity", "Sync running check: $isRunning (found ${workInfos.size} work items)")
+                        Log.d("MainActivity", "Sync running check: $isRunning (found ${workInfos.size} work items, states: ${workInfos.map { it.state }})")
                         result.success(isRunning)
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Error checking sync state", e)
@@ -169,6 +171,9 @@ class MainActivity: FlutterActivity() {
         }
 
         registerBackgroundSync()
+
+        // Clean up old work items periodically
+        WorkManager.getInstance(applicationContext).pruneWork()
     }
 
     private fun isNotificationServiceEnabled(): Boolean {

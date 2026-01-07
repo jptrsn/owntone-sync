@@ -45,17 +45,51 @@ class _HistoryScreenState extends State<HistoryScreen> {
   String _formatTimestamp(int timestamp) {
     final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
     final now = DateTime.now();
-    final diff = now.difference(date);
 
-    if (diff.inDays == 0) {
-      return 'Today at ${DateFormat('h:mm a').format(date)}';
-    } else if (diff.inDays == 1) {
+    // Create date-only versions (midnight of each day)
+    final dateOnly = DateTime(date.year, date.month, date.day);
+    final todayOnly = DateTime(now.year, now.month, now.day);
+
+    final daysDifference = todayOnly.difference(dateOnly).inDays;
+
+    // Calculate actual time elapsed
+    final elapsed = now.difference(date);
+
+    if (daysDifference == 0) {
+      // Same calendar day - use relative time
+      if (elapsed.inSeconds < 60) {
+        return 'a few seconds ago';
+      } else if (elapsed.inMinutes < 60) {
+        final minutes = elapsed.inMinutes;
+        return '$minutes minute${minutes == 1 ? '' : 's'} ago';
+      } else {
+        final hours = elapsed.inHours;
+        return '$hours hour${hours == 1 ? '' : 's'} ago';
+      }
+    } else if (daysDifference == 1) {
+      // Yesterday
       return 'Yesterday at ${DateFormat('h:mm a').format(date)}';
-    } else if (diff.inDays < 7) {
+    } else if (daysDifference < 7 && _isInCurrentWeek(date, now)) {
+      // This week
       return DateFormat('EEEE at h:mm a').format(date);
     } else {
+      // Older
       return DateFormat('MMM d, y at h:mm a').format(date);
     }
+  }
+
+  bool _isInCurrentWeek(DateTime date, DateTime now) {
+    // Find the start of the current week (most recent Sunday at midnight)
+    final startOfWeek = now.subtract(Duration(days: now.weekday % 7));
+    final startOfWeekOnly = DateTime(
+      startOfWeek.year,
+      startOfWeek.month,
+      startOfWeek.day,
+    );
+
+    // Check if date is on or after the start of this week
+    final dateOnly = DateTime(date.year, date.month, date.day);
+    return !dateOnly.isBefore(startOfWeekOnly);
   }
 
   Color _getStatusColor(String status) {
