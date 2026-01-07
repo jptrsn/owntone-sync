@@ -11,6 +11,7 @@ import androidx.work.ForegroundInfo
 import androidx.work.WorkManager
 import io.flutter.plugin.common.EventChannel
 import java.util.UUID
+import android.util.Log
 import androidx.work.CoroutineWorker
 
 object SyncProgressBroadcaster {
@@ -19,6 +20,7 @@ object SyncProgressBroadcaster {
 
     private const val NOTIFICATION_ID = 1
     private const val CHANNEL_ID = "sync_channel"
+    private const val TAG = "SyncProgressBroadcaster"
 
     fun createNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -102,6 +104,9 @@ object SyncProgressBroadcaster {
         currentTrackTitle: String? = null,
         downloadProgress: Double? = null
     ) {
+
+        createNotificationChannel(context)
+
         // Create and set foreground notification
         val foregroundInfo = createForegroundInfo(
             context,
@@ -114,7 +119,12 @@ object SyncProgressBroadcaster {
             currentTrackTitle,
             downloadProgress
         )
-        worker.setForeground(foregroundInfo)
+
+        try {
+            worker.setForeground(foregroundInfo)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to set foreground", e)
+        }
 
         // Send to Dart on main thread
         val progressData = mapOf(
@@ -129,6 +139,18 @@ object SyncProgressBroadcaster {
 
         mainHandler.post {
             eventSink?.success(progressData)
+        }
+    }
+
+    fun broadcastSyncComplete(status: String, message: String? = null) {
+        val completionData = mapOf(
+            "syncComplete" to true,
+            "status" to status,
+            "message" to message
+        )
+
+        mainHandler.post {
+            eventSink?.success(completionData)
         }
     }
 }

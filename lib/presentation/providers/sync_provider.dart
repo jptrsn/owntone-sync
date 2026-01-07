@@ -253,6 +253,17 @@ class SyncProvider extends ChangeNotifier {
       (dynamic event) {
         logger.d('Received progress event: $event');
         if (event is Map) {
+          // Check if this is a completion event
+          if (event['syncComplete'] == true) {
+            logger.i('Sync completed with status: ${event['status']}');
+            _isSyncing = false;
+            _syncProgress = null;
+            _isCancelling = false;
+            notifyListeners();
+            return;
+          }
+
+          // Otherwise it's a progress event
           _syncProgress = SyncProgress(
             currentPlaylist: event['currentPlaylist'] as String,
             totalPlaylists: event['totalPlaylists'] as int,

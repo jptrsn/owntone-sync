@@ -23,16 +23,21 @@ class BackgroundSyncWorker(
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val worker = this@BackgroundSyncWorker
+        val triggerType = inputData.getString("trigger_type") ?: "scheduled"
+        val startTime = System.currentTimeMillis()
+
         try {
+
+            Log.i(TAG, "=== SYNC WORKER STARTED ===")
+            Log.i(TAG, "Worker ID: ${worker.id}")
+            Log.i(TAG, "Run attempt: ${worker.runAttemptCount}")
+            Log.i(TAG, "Tags: ${worker.tags}")
 
             SyncProgressBroadcaster.updateProgress(
                 applicationContext, worker, "Starting sync...", 0, 0, 0, 0
             )
 
             Log.i(TAG, "Starting background sync")
-
-            // Get trigger type from input data (default to "scheduled")
-            val triggerType = inputData.getString("trigger_type") ?: "scheduled"
 
             // Get server URL from shared preferences
             val prefs = applicationContext.getSharedPreferences(
@@ -43,14 +48,14 @@ class BackgroundSyncWorker(
 
             if (serverUrl == null) {
                 Log.e(TAG, "No server URL configured")
-                return@withContext Result.failure()
+                throw SyncException("No server URL configured")
             }
 
             // Get selected playlist IDs - Flutter stores StringList with special encoding
             val playlistIdsString = prefs.getString("flutter.selected_playlist_ids", null)
             if (playlistIdsString == null || playlistIdsString.isEmpty()) {
                 Log.i(TAG, "No playlists selected for sync")
-                return@withContext Result.success()
+                throw SyncException("No playlists selected for sync")
             }
 
             // Parse Flutter's StringList format: "prefix!["id1","id2"]"
@@ -66,12 +71,12 @@ class BackgroundSyncWorker(
                 list.map { it.toInt() }
             } catch (e: Exception) {
                 Log.e(TAG, "Error parsing playlist IDs: $playlistIdsString", e)
-                return@withContext Result.failure()
+                throw SyncException("Error parsing playlist IDs: $playlistIdsString", e)
             }
 
             if (playlistIds.isEmpty()) {
                 Log.i(TAG, "No playlists selected for sync")
-                return@withContext Result.success()
+                throw SyncException("No playlists selected for sync")
             }
 
             // Initialize helpers
@@ -79,7 +84,6 @@ class BackgroundSyncWorker(
             val dbHelper = DatabaseHelper(applicationContext)
             val fileOps = FileOperations(applicationContext)
 
-            val startTime = System.currentTimeMillis()
             var tracksDownloaded = 0
             var syncCancelled = false
 
@@ -313,13 +317,42 @@ class BackgroundSyncWorker(
             scheduleNextSync()
 
             Log.i(TAG, "Background sync completed: $tracksDownloaded tracks downloaded in ${duration}ms")
+            if (syncCancelled) {
+                SyncProgressBroadcaster.broadcastSyncComplete("cancelled", "Cancelled by user")
+            } else {
+                SyncProgressBroadcaster.broadcastSyncComplete("success")
+            }
+
             Result.success()
 
         } catch (e: CancellationException) {
             Log.i(TAG, "Sync cancelled")
+            SyncProgressBroadcaster.broadcastSyncComplete("cancelled")
             Result.success()
         } catch (e: Exception) {
             Log.e(TAG, "Background sync failed", e)
+            val duration = System.currentTimeMillis() - startTime
+
+            try {
+                val dbHelper = DatabaseHelper(applicationContext)
+                dbHelper.insertSyncHistory(
+                    DatabaseHelper.SyncHistoryRecord(
+                        timestamp = System.currentTimeMillis(),
+                        status = "failed",
+                        playlistsSynced = 0,
+                        tracksDownloaded = 0,
+                        tracksDeleted = 0,
+                        errorMessage = e.message ?: e.javaClass.simpleName,
+                        durationMs = duration,
+                        triggerType = triggerType
+                    )
+                )
+            } catch (dbError: Exception) {
+                Log.e(TAG, "Failed to log sync failure to database", dbError)
+            }
+
+            SyncProgressBroadcaster.broadcastSyncComplete("failed", e.message)
+
             Result.failure()
         }
     }
@@ -421,3 +454,5 @@ class BackgroundSyncWorker(
     )
 
 }
+
+class SyncException(message: String, cause: Throwable? = null) : Exception(message, cause)
