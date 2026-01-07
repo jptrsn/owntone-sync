@@ -194,11 +194,13 @@ class BackgroundSyncWorker(
                             val filename = fileOps.generateTrackFilename(track, extension)
                             val filePath = "tracks/$filename"
 
+                            val jobProgress = if (totalTracks > 0) (tracksDownloaded.toDouble() / totalTracks.toDouble()) else 0.0
+
                             kotlinx.coroutines.runBlocking {
                                             SyncProgressBroadcaster.updateProgress(
                                                 applicationContext, worker, playlist.name, playlistIndex, playlistIds.size,
                                                 tracksDownloaded, totalTracks,
-                                                "Saving ${track.title}", 1.0
+                                                "Saving ${track.title}", jobProgress
                                             )
                                         }
                             val writeStart = System.currentTimeMillis()
@@ -267,6 +269,49 @@ class BackgroundSyncWorker(
                 }
             }
 
+            var tracksDeleted = 0
+            val deleteOrphanedFiles = prefs.getBoolean("flutter.delete_orphaned_files", false)
+
+            if (deleteOrphanedFiles && !syncCancelled) {
+                Log.i(TAG, "Checking for orphaned files...")
+
+                // Get all track IDs that are in any synced playlist
+                val allSyncedTrackIds = mutableSetOf<Int>()
+                for (playlistId in playlistIds) {
+                    val trackIds = dbHelper.getTracksForPlaylist(playlistId)
+                    allSyncedTrackIds.addAll(trackIds.map { it.id })
+                }
+
+                // Get all tracks in the database
+                val allLocalTracks = dbHelper.getAllTracks()
+
+                // Find orphans: tracks in DB but not in any synced playlist
+                val orphanedTracks = allLocalTracks.filter { it.id !in allSyncedTrackIds }
+
+                Log.i(TAG, "Found ${orphanedTracks.size} orphaned tracks")
+
+                for (track in orphanedTracks) {
+                    if (isStopped) {
+                        syncCancelled = true
+                        break
+                    }
+                    try {
+                        // Delete the file
+                        val deleted = fileOps.deleteFile(track.localPath)
+                        if (deleted) {
+                            // Remove from database
+                            dbHelper.deleteTrack(track.id)
+                            tracksDeleted++
+                            Log.i(TAG, "Deleted orphaned track: ${track.title}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error deleting orphaned track ${track.id}", e)
+                    }
+                }
+
+                Log.i(TAG, "Deleted $tracksDeleted orphaned tracks")
+            }
+
             val duration = System.currentTimeMillis() - startTime
 
             // Prepare playlist details for history
@@ -294,7 +339,7 @@ class BackgroundSyncWorker(
                     status = if (syncCancelled) "cancelled" else "success",
                     playlistsSynced = playlistIds.size,
                     tracksDownloaded = tracksDownloaded,
-                    tracksDeleted = 0,
+                    tracksDeleted = tracksDeleted,
                     errorMessage = if (syncCancelled) "Cancelled by user" else null,
                     durationMs = duration,
                     triggerType = triggerType

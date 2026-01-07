@@ -217,6 +217,20 @@ class DatabaseHelper(private val context: Context) {
         return playlist
     }
 
+    fun getAllTracks(): List<SyncedTrack> {
+        val db = openDatabase()
+        val tracks = mutableListOf<SyncedTrack>()
+        val cursor = db.query("synced_tracks", null, null, null, null, null, null)
+
+        while (cursor.moveToNext()) {
+            tracks.add(SyncedTrack.fromCursor(cursor))
+        }
+
+        cursor.close()
+        db.close()
+        return tracks
+    }
+
     // Data classes
     data class SyncedPlaylist(
         val id: Int,

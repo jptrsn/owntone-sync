@@ -125,17 +125,46 @@ class MainActivity: FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "dev.educoder.owntone_sync/sync").setMethodCallHandler { call, result ->
             when (call.method) {
                 "triggerBackgroundSync" -> {
-                    // Trigger sync immediately for testing
-                    val workRequest = OneTimeWorkRequestBuilder<BackgroundSyncWorker>()
-                        .addTag("sync-task")
-                        .setInputData(
-                            androidx.work.Data.Builder()
-                                .putString("trigger_type", "manual")
-                                .build()
-                        )
-                        .build()
-                    WorkManager.getInstance(applicationContext).enqueue(workRequest)
-                    result.success(true)
+                    try {
+                        // Check if a sync is already running
+                        val workInfos = WorkManager.getInstance(applicationContext)
+                            .getWorkInfosForUniqueWork("sync-task")
+                            .get()
+
+                        val isRunning = workInfos.any {
+                            it.state == WorkInfo.State.RUNNING
+                        }
+
+                        if (isRunning) {
+                            Log.d("MainActivity", "Sync already running, ignoring request")
+                            result.success(false)
+                            return@setMethodCallHandler
+                        }
+
+                        // Build the work request
+                        val workRequest = OneTimeWorkRequestBuilder<BackgroundSyncWorker>()
+                            .addTag("sync-task")
+                            .setInputData(
+                                Data.Builder()
+                                    .putString("trigger_type", "manual")
+                                    .build()
+                            )
+                            .build()
+
+                        // Replace any scheduled (but not running) sync with this immediate one
+                        WorkManager.getInstance(applicationContext)
+                            .enqueueUniqueWork(
+                                "sync-task",
+                                ExistingWorkPolicy.REPLACE,
+                                workRequest
+                            )
+
+                        Log.d("MainActivity", "Manual sync triggered")
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Error triggering sync", e)
+                        result.error("SYNC_ERROR", e.message, null)
+                    }
                 }
                 "cancelSync" -> {
                     WorkManager.getInstance(applicationContext)

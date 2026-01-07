@@ -168,4 +168,14 @@ class FileOperations(private val context: Context) {
 
         return "${artist}_${album}_$trackId.$extension"
     }
+
+    fun deleteFile(filePath: String): Boolean {
+        return try {
+            val file = getDocumentFileFromPath(filePath)
+            file?.delete() ?: false
+        } catch (e: Exception) {
+            android.util.Log.e("FileOperations", "Error deleting file: $filePath", e)
+            false
+        }
+    }
 }
