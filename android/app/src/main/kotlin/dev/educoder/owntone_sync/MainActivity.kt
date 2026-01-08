@@ -18,6 +18,7 @@ import androidx.work.Constraints
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import android.os.PowerManager
 import java.util.concurrent.TimeUnit
 import androidx.work.ExistingPeriodicWorkPolicy
 import android.util.Log
@@ -28,11 +29,13 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.WorkInfo
 import androidx.work.Data
 import io.flutter.plugin.common.EventChannel
+import android.content.Context
 
 class MainActivity: FlutterActivity() {
     private val EVENTS_CHANNEL = "dev.educoder.owntone_sync/events"
     private val STORAGE_CHANNEL = "dev.educoder.owntone_sync/storage"
     private val PROGRESS_CHANNEL = "dev.educoder.owntone_sync/sync_progress"
+    private val SYNC_CHANNEL = "dev.educoder.owntone_sync/sync"
     private val REQUEST_CODE_MUSIC_FOLDER = 1001
 
     private var pendingMusicFolderResult: MethodChannel.Result? = null
@@ -51,6 +54,21 @@ class MainActivity: FlutterActivity() {
                 "isNotificationPermissionGranted" -> {
                     val enabled = isNotificationServiceEnabled()
                     result.success(enabled)
+                }
+                "isBatteryOptimizationDisabled" -> {
+                    val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+                    result.success(powerManager.isIgnoringBatteryOptimizations(packageName))
+                }
+                "requestBatteryOptimizationExemption" -> {
+                    try {
+                        Log.d("MainActivity", "Opening battery optimization settings")
+                        val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                        startActivity(intent)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Error opening battery optimization settings", e)
+                        result.success(false)
+                    }
                 }
                 else -> {
                     result.notImplemented()
@@ -122,7 +140,7 @@ class MainActivity: FlutterActivity() {
             })
 
         // Add a new channel for sync control
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "dev.educoder.owntone_sync/sync").setMethodCallHandler { call, result ->
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYNC_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "triggerBackgroundSync" -> {
                     try {
@@ -512,6 +530,10 @@ class MainActivity: FlutterActivity() {
                 )
 
             Log.d("MainActivity", "Background sync scheduled for ${scheduledTime.time} (${delayMillis / 1000 / 60} minutes from now)")
+
+            // Save expected sync time for missed sync detection
+            prefs.edit().putString("flutter.expected_next_sync", scheduledTime.timeInMillis.toString()).apply()
+
         } catch (e: Exception) {
             Log.e("MainActivity", "Error registering background sync", e)
         }

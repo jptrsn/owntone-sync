@@ -485,6 +485,10 @@ class BackgroundSyncWorker(
                 )
 
             Log.d(TAG, "Next sync scheduled for ${scheduledTime.time}")
+
+            // Save expected sync time for missed sync detection
+            prefs.edit().putString("flutter.expected_next_sync", scheduledTime.timeInMillis.toString()).apply()
+
         } catch (e: Exception) {
             Log.e(TAG, "Error scheduling next sync", e)
         }

@@ -40,6 +40,8 @@ class SyncProvider extends ChangeNotifier {
   bool _isCancelling = false;
   SyncSchedule _syncSchedule = SyncSchedule();
   bool _eventTrackingEnabled = false;
+  bool _isBatteryOptimizationDisabled = false;
+  DateTime? _missedSyncTime;
 
   // Getters
   String get serverUrl => _serverUrl;
@@ -55,6 +57,8 @@ class SyncProvider extends ChangeNotifier {
   bool get isCancelling => _isCancelling;
   SyncSchedule get syncSchedule => _syncSchedule;
   bool get eventTrackingEnabled => _eventTrackingEnabled;
+  bool get isBatteryOptimizationDisabled => _isBatteryOptimizationDisabled;
+  DateTime? get missedSyncTime => _missedSyncTime;
 
   SyncProvider() {
     _initialize();
@@ -92,6 +96,12 @@ class SyncProvider extends ChangeNotifier {
     // Load cached playlist metadata
     await fetchPlaylists();
 
+    // Check battery optimization status
+    await checkBatteryOptimization();
+
+    // Check for missed syncs
+    _missedSyncTime = await checkForMissedSync();
+
     // Load event tracking preference (premium only)
     _eventTrackingEnabled = prefs.getBool('event_tracking_enabled') ?? false;
     logger.i('Event tracking preference loaded: $_eventTrackingEnabled');
@@ -128,6 +138,7 @@ class SyncProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Clear server-specific settings and allow user to set up fresh
   Future<void> resetAppData({required bool deleteFiles}) async {
     if (_dbRepo == null || _fileRepo == null) {
       throw Exception('Repositories not initialized');
@@ -384,6 +395,68 @@ class SyncProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Check for missed background syncs that did not execute as scheduled
+  Future<DateTime?> checkForMissedSync() async {
+    if (!_syncSchedule.enabled) {
+      return null;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final expectedSyncStr = prefs.getString('expected_next_sync');
+
+    if (expectedSyncStr == null) {
+      return null;
+    }
+
+    final expectedSyncMs = int.tryParse(expectedSyncStr);
+    if (expectedSyncMs == null) {
+      return null;
+    }
+
+    final expectedTime = DateTime.fromMillisecondsSinceEpoch(expectedSyncMs);
+    final now = DateTime.now();
+
+    // If expected time hasn't passed yet, no missed sync
+    if (now.isBefore(expectedTime)) {
+      return null;
+    }
+
+    // Give a 2-hour grace period for WorkManager delays
+    final gracePeriod = expectedTime.add(const Duration(hours: 2));
+    if (now.isBefore(gracePeriod)) {
+      return null;
+    }
+
+    // Check if a sync actually ran after the expected time
+    if (_dbRepo != null) {
+      final history = await _dbRepo!.getSyncHistory(limit: 1);
+      if (history.isNotEmpty) {
+        final lastSync = history.first;
+        final lastSyncTime = DateTime.fromMillisecondsSinceEpoch(
+          lastSync.timestamp,
+        );
+
+        // If a sync ran after the expected time, it didn't miss
+        if (lastSyncTime.isAfter(expectedTime)) {
+          // Clear the expected time since we've moved past it
+          await prefs.remove('expected_next_sync');
+          return null;
+        }
+      }
+    }
+
+    logger.w('Possible missed sync detected. Expected: $expectedTime');
+    return expectedTime;
+  }
+
+  /// Hide warning about missed sync
+  Future<void> dismissMissedSyncWarning() async {
+    _missedSyncTime = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('expected_next_sync');
+    notifyListeners();
+  }
+
   /// Load playlists from local cache
   Future<void> _loadPlaylistsFromCache() async {
     if (_dbRepo == null) return;
@@ -406,6 +479,7 @@ class SyncProvider extends ChangeNotifier {
     }).toList();
   }
 
+  /// Save user-selected playlists to include in sync
   Future<void> _saveSelectedPlaylists() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(
@@ -450,7 +524,6 @@ class SyncProvider extends ChangeNotifier {
   }
 
   /// Start sync
-  /// Start sync (triggers background worker)
   Future<void> startSync() async {
     if (!_hasStoragePermission) {
       _lastError = 'Storage permission not granted';
@@ -487,7 +560,6 @@ class SyncProvider extends ChangeNotifier {
     }
   }
 
-  // Keep permission check methods (they open Android settings)
   Future<bool> checkEventTrackingPermission() async {
     try {
       // Just check Android settings, no EventTracker service needed
@@ -521,7 +593,6 @@ class SyncProvider extends ChangeNotifier {
     }
   }
 
-  // Simplify toggle - just save to SharedPreferences
   Future<void> setEventTracking(bool enabled) async {
     _eventTrackingEnabled = enabled;
     final prefs = await SharedPreferences.getInstance();
@@ -529,5 +600,38 @@ class SyncProvider extends ChangeNotifier {
 
     logger.i('Event tracking ${enabled ? "enabled" : "disabled"}');
     notifyListeners();
+  }
+
+  Future<bool> checkBatteryOptimization() async {
+    try {
+      const channel = MethodChannel('dev.educoder.owntone_sync/events');
+      final result = await channel.invokeMethod<bool>(
+        'isBatteryOptimizationDisabled',
+      );
+      _isBatteryOptimizationDisabled = result ?? false;
+      notifyListeners();
+      return _isBatteryOptimizationDisabled;
+    } catch (e) {
+      logger.e('Error checking battery optimization', error: e);
+      return false;
+    }
+  }
+
+  Future<void> requestBatteryOptimizationExemption() async {
+    try {
+      logger.i('Requesting battery optimization exemption');
+      const channel = MethodChannel('dev.educoder.owntone_sync/events');
+      final result = await channel.invokeMethod(
+        'requestBatteryOptimizationExemption',
+      );
+      logger.i('Battery optimization exemption result: $result');
+      _isBatteryOptimizationDisabled = true;
+    } catch (e, stackTrace) {
+      logger.e(
+        'Error requesting battery optimization exemption',
+        error: e,
+        stackTrace: stackTrace,
+      );
+    }
   }
 }

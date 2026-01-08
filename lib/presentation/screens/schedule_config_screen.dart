@@ -41,6 +41,38 @@ class _ScheduleConfigScreenState extends State<ScheduleConfigScreen> {
     }
   }
 
+  Future<void> _checkAndPromptBatteryOptimization() async {
+    final provider = context.read<SyncProvider>();
+    await provider.checkBatteryOptimization();
+
+    if (!provider.isBatteryOptimizationDisabled && mounted) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Battery Optimization'),
+          content: const Text(
+            'For reliable scheduled syncs, disable battery optimization for this app. '
+            'Otherwise, Android may skip or delay syncs to save battery, even if your battery is charging.\n\n'
+            'This is especially important for overnight syncs when your device is idle.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Later'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await provider.requestBatteryOptimizationExemption();
+              },
+              child: const Text('Open Settings'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -59,10 +91,72 @@ class _ScheduleConfigScreenState extends State<ScheduleConfigScreen> {
               setState(() {
                 _schedule = _schedule.copyWith(enabled: value);
               });
+              if (value) {
+                _checkAndPromptBatteryOptimization();
+              }
+            },
+          ),
+          Consumer<SyncProvider>(
+            builder: (context, provider, child) {
+              if (_schedule.enabled &&
+                  !provider.isBatteryOptimizationDisabled) {
+                return Container(
+                  color: Colors.orange.shade100,
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber, color: Colors.orange),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Battery optimization is enabled. Tap Fix to open settings and select "Don\'t optimize" for this app.',
+                          style: TextStyle(color: Colors.orange.shade900),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () =>
+                            provider.requestBatteryOptimizationExemption(),
+                        child: const Text('Fix'),
+                      ),
+                    ],
+                  ),
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+          Consumer<SyncProvider>(
+            builder: (context, provider, child) {
+              if (provider.missedSyncTime != null) {
+                final missed = provider.missedSyncTime!;
+                final formatted =
+                    '${missed.day}/${missed.month} at ${missed.hour.toString().padLeft(2, '0')}:${missed.minute.toString().padLeft(2, '0')}';
+                return Container(
+                  color: Colors.red.shade100,
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline, color: Colors.red),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Scheduled sync at $formatted may have been skipped. Check battery settings.',
+                          style: TextStyle(color: Colors.red.shade900),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        color: Colors.red.shade700,
+                        onPressed: () => provider.dismissMissedSyncWarning(),
+                      ),
+                    ],
+                  ),
+                );
+              }
+              return const SizedBox.shrink();
             },
           ),
           const Divider(),
-
           const Padding(
             padding: EdgeInsets.all(16.0),
             child: Text(
