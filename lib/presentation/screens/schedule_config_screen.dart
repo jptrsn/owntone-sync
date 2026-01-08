@@ -10,13 +10,29 @@ class ScheduleConfigScreen extends StatefulWidget {
   State<ScheduleConfigScreen> createState() => _ScheduleConfigScreenState();
 }
 
-class _ScheduleConfigScreenState extends State<ScheduleConfigScreen> {
+class _ScheduleConfigScreenState extends State<ScheduleConfigScreen>
+    with WidgetsBindingObserver {
   late SyncSchedule _schedule;
 
   @override
   void initState() {
     super.initState();
     _schedule = context.read<SyncProvider>().syncSchedule;
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Re-check battery optimization when returning to app
+      context.read<SyncProvider>().checkBatteryOptimization();
+    }
   }
 
   Future<void> _selectTime() async {

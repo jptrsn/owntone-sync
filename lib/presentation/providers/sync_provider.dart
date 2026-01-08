@@ -625,7 +625,6 @@ class SyncProvider extends ChangeNotifier {
         'requestBatteryOptimizationExemption',
       );
       logger.i('Battery optimization exemption result: $result');
-      _isBatteryOptimizationDisabled = true;
     } catch (e, stackTrace) {
       logger.e(
         'Error requesting battery optimization exemption',
