@@ -11,6 +11,7 @@ import androidx.work.ExistingWorkPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
 
 class BackgroundSyncWorker(
     context: Context,
@@ -160,6 +161,11 @@ class BackgroundSyncWorker(
 
                     Log.i(TAG, "Need to download ${tracksToDownload.size} tracks")
 
+                    // Count already-validated tracks as processed
+                    val alreadyValidatedCount = serverTracks.size - tracksToDownload.size
+                    tracksDownloaded += alreadyValidatedCount
+                    Log.i(TAG, "${alreadyValidatedCount} tracks already on device")
+
                     // Download tracks
                     for (track in tracksToDownload) {
                         // Check if work is cancelled
@@ -301,22 +307,42 @@ class BackgroundSyncWorker(
 
                 Log.i(TAG, "Found ${orphanedTracks.size} orphaned tracks")
 
-                for (track in orphanedTracks) {
-                    if (isStopped) {
-                        syncCancelled = true
-                        break
-                    }
-                    try {
-                        // Delete the file
-                        val deleted = fileOps.deleteFile(track.localPath)
-                        if (deleted) {
-                            // Remove from database
-                            dbHelper.deleteTrack(track.id)
-                            tracksDeleted++
-                            Log.i(TAG, "Deleted orphaned track: ${track.title}")
+                // Batch delete orphaned files
+                val orphanedPaths = orphanedTracks.map { it.localPath }
+                val deleteResult = fileOps.deleteFiles(
+                    filePaths = orphanedPaths,
+                    onProgress = { deleted, total ->
+                        // Update progress during deletion
+                        runBlocking {
+                            SyncProgressBroadcaster.updateProgress(
+                                applicationContext, worker,
+                                "Deleting orphaned files",
+                                playlistIds.size, playlistIds.size,
+                                deleted, total,
+                                "Deleted $deleted of $total files",
+                                deleted.toDouble() / total
+                            )
                         }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error deleting orphaned track ${track.id}", e)
+                    },
+                    isCancelled = { isStopped }
+                )
+
+                // Remove successfully deleted tracks from database
+                val successfullyDeletedPaths = orphanedPaths.toSet() - deleteResult.failedPaths.toSet()
+                for (track in orphanedTracks) {
+                    if (successfullyDeletedPaths.contains(track.localPath)) {
+                        dbHelper.deleteTrack(track.id)
+                        tracksDeleted++
+                    }
+                }
+
+                if (deleteResult.failedPaths.isNotEmpty()) {
+                    Log.w(TAG, "Failed to delete ${deleteResult.failedPaths.size} orphaned files")
+                    deleteResult.failedPaths.take(10).forEach { path ->
+                        Log.w(TAG, "  Failed: $path")
+                    }
+                    if (deleteResult.failedPaths.size > 10) {
+                        Log.w(TAG, "  ... and ${deleteResult.failedPaths.size - 10} more")
                     }
                 }
 

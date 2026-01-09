@@ -345,7 +345,7 @@ class SyncScreen extends StatelessWidget {
           const SizedBox(height: 8),
           if (progress.currentTrackTitle != null)
             Text(
-              'Downloading: ${progress.currentTrackTitle}',
+              '${progress.currentTrackTitle}',
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onPrimaryContainer,
               ),

@@ -2,10 +2,19 @@ package dev.educoder.owntone_sync
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import java.io.OutputStream
+import kotlinx.coroutines.*
+import java.util.concurrent.atomic.AtomicInteger
 
 class FileOperations(private val context: Context) {
+
+    data class BatchDeleteResult(
+        val totalFiles: Int,
+        val successCount: Int,
+        val failedPaths: List<String>
+    )
 
     fun getMusicFolderUri(): String? {
         return context.getSharedPreferences("storage_prefs", Context.MODE_PRIVATE)
@@ -178,4 +187,64 @@ class FileOperations(private val context: Context) {
             false
         }
     }
+
+    suspend fun deleteFiles(
+        filePaths: List<String>,
+        onProgress: ((deleted: Int, total: Int) -> Unit)? = null,
+        isCancelled: () -> Boolean = { false }
+    ): BatchDeleteResult = withContext(Dispatchers.IO) {
+        val total = filePaths.size
+        val failures = mutableListOf<String>()
+        val deletedCount = AtomicInteger(0)
+        val concurrencyLimit = 50
+
+        Log.i("FileOperations", "Starting batch delete of $total files with concurrency limit $concurrencyLimit")
+
+        // Process files in chunks to limit concurrency
+        for (chunk in filePaths.chunked(concurrencyLimit)) {
+            // Check for cancellation before processing each chunk
+            if (isCancelled()) {
+                Log.i("FileOperations", "Batch delete cancelled after ${deletedCount.get()} deletions")
+                break
+            }
+
+            chunk.map { path ->
+                async {
+                    try {
+                        val success = deleteFile(path)
+                        if (success) {
+                            val current = deletedCount.incrementAndGet()
+                            // Report progress every 10 deletions
+                            if (current % 10 == 0 || current == total) {
+                                onProgress?.invoke(current, total)
+                            }
+                        } else {
+                            synchronized(failures) {
+                                failures.add(path)
+                            }
+                            Log.w("FileOperations", "Failed to delete file: $path")
+                        }
+                        success
+                    } catch (e: Exception) {
+                        synchronized(failures) {
+                            failures.add(path)
+                        }
+                        Log.e("FileOperations", "Exception deleting file: $path", e)
+                        false
+                    }
+                }
+            }.awaitAll()
+        }
+
+        val finalCount = deletedCount.get()
+        val wasCancelled = isCancelled()
+        Log.i("FileOperations", "Batch delete ${if (wasCancelled) "cancelled" else "completed"}: $finalCount/$total succeeded, ${failures.size} failed")
+
+        BatchDeleteResult(
+            totalFiles = total,
+            successCount = finalCount,
+            failedPaths = failures
+        )
+    }
+
 }
