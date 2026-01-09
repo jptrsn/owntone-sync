@@ -1,31 +1,8 @@
-# OwnTone Sync
-
-A Flutter-based Android application that syncs music playlists from an OwnTone (formerly forked-daapd) server to your local device storage. Designed for users who want offline access to their music library without running a full music player app.
-
-## Overview
-
-OwnTone Sync downloads and maintains a local copy of selected playlists from your OwnTone server. It creates M3U playlist files that work with any Android music player (like Auxio, Vinyl Music Player, etc.), giving you the flexibility to use your preferred player while maintaining automated sync.
-
-### Key Features
-
-- **Playlist Sync**: Select which playlists to sync and keep them updated
-- **Scheduled Sync**: Configure automatic syncs with cron-like scheduling
-  - Daily, weekday, weekend, or custom day-of-week schedules
-  - Time-of-day configuration
-  - Conditional sync (WiFi-only, charging-only)
-- **Smart File Management**:
-  - Only downloads new/missing tracks
-  - Optional cleanup of orphaned files
-  - Deduplication across playlists
-- **Offline Mode**: View cached playlists and sync when connection restored
-- **Progress Tracking**: Real-time sync progress with cancellation support
-- **M3U Playlist Generation**: Creates standard playlist files for compatibility
-
 ## User Guide
 
 ### Initial Setup
 
-1. **Grant Permissions**: On first launch, grant storage permissions to allow file downloads
+1. **Grant Permissions**: On first launch, grant storage permissions and select your Music folder when prompted
 2. **Configure Server**: Enter your OwnTone server URL (e.g., `http://192.168.1.100:3689`)
 3. **Load Playlists**: Tap "Load Playlists" to fetch available playlists from your server
 4. **Select Playlists**: Check the playlists you want to sync
@@ -37,10 +14,10 @@ OwnTone Sync downloads and maintains a local copy of selected playlists from you
 3. Optionally enable "Delete orphaned files" to remove tracks no longer in any selected playlist
 4. Tap **Sync** to start downloading
 
-#### During sync:
-- View current playlist and track being downloaded
-- See overall progress (tracks completed / total tracks)
-- Cancel anytime (current track will finish downloading first)
+During sync, you'll see:
+- Current playlist and track being processed
+- Overall progress (tracks completed / total tracks)
+- Cancel option (current track will finish downloading first)
 
 ### Scheduled Sync
 
@@ -53,7 +30,39 @@ OwnTone Sync downloads and maintains a local copy of selected playlists from you
    - **Only on WiFi**: Avoid mobile data usage
 6. Save schedule
 
-The app checks hourly if it's time to sync. Syncs occur within 1 hour following the scheduled time.
+Background syncs run at the scheduled time you set (e.g., 2:00 AM daily). After each sync completes, the app automatically schedules the next occurrence.
+
+**Note on battery optimization**: Android may delay or skip background syncs if battery optimization is enabled for the app. The app will prompt you to disable this when setting up scheduled syncs.
+
+### Event Tracking
+
+The app can track your music playback from other Android music players and sync play/skip statistics back to your OwnTone server.
+
+To enable:
+1. Navigate to **Sync** tab, then **Server Configuration**
+2. Enable "Track Playback Events"
+3. Grant notification listener permission when prompted
+
+The app uses Android's NotificationListener to detect when tracks are played or skipped in music players like PowerAmp, Auxio, Vinyl Music Player, etc. Events are synced to your OwnTone server during the next sync.
+
+### Browse
+
+The **Browse** tab lets you view your synced music library by:
+- Playlists
+- Artists
+- Albums
+- Tracks
+
+**Note**: This shows only the music synced from OwnTone, not all music files on your device. Other music players may have additional tracks that weren't synced by this app.
+
+### History
+
+The **History** tab shows a log of past sync operations including:
+- Sync timestamp and duration
+- Number of playlists synced
+- Tracks downloaded and deleted
+- Success/failure status
+- Error messages (if any)
 
 ### File Locations
 
@@ -76,7 +85,6 @@ After syncing, open your preferred music player app and:
 ### Architecture
 
 The app follows a three-layer architecture:
-
 ```
 lib/
 ├── data/                                    # Data Layer
@@ -84,17 +92,28 @@ lib/
 │   ├── repositories/                        # Data access
 │   │   ├── owntone_api_repository.dart      # OwnTone API client
 │   │   ├── local_database_repository.dart   # SQLite operations
-│   │   └── file_system_repository.dart      # File I/O
+│   │   └── file_system_repository.dart      # File I/O coordination
 │   └── database/
 │       └── database_helper.dart             # SQLite schema
 ├── domain/                                  # Business Logic Layer
 │   └── services/
-│       ├── sync_service.dart                # Sync orchestration
 │       └── permissions_service.dart         # Android permissions
 └── presentation/                            # UI Layer
     ├── screens/                             # Full-page views
     ├── widgets/                             # Reusable UI components
     └── providers/                           # State management (Provider pattern)
+```
+
+**Android (Kotlin) components:**
+```
+android/app/src/main/kotlin/dev/educoder/owntone_sync/
+├── MainActivity.kt                    # Main activity, handles permissions and method channels
+├── BackgroundSyncWorker.kt            # WorkManager worker for background sync
+├── MediaNotificationListener.kt       # NotificationListener for tracking playback events
+├── OwnToneApiClient.kt               # HTTP client for OwnTone API
+├── DatabaseHelper.kt                  # SQLite operations (Kotlin side)
+├── FileOperations.kt                  # SAF file operations
+└── SyncProgressBroadcaster.kt        # Progress notifications and EventChannel bridge
 ```
 
 ### Database Schema
@@ -116,8 +135,14 @@ lib/
 - Caches playlist metadata for offline viewing
 
 **pending_events**
-- Stores playback events to sync back to server
-- Future feature: track play/skip counts
+- Stores playback events (play/skip) to sync back to server
+- Includes retry_count for failed sync attempts (max 5 retries)
+
+**sync_history**
+- Records of past sync operations with statistics
+
+**sync_history_playlists**
+- Details of which playlists were included in each sync
 
 ### Key Technologies
 
@@ -125,9 +150,10 @@ lib/
 - **Provider**: State management
 - **sqflite**: SQLite database
 - **Dio**: HTTP client with download progress
-- **workmanager**: Background task scheduling
+- **workmanager**: Background task scheduling (Android WorkManager wrapper)
 - **path_provider**: File system access
 - **permission_handler**: Android permissions
+- **Storage Access Framework (SAF)**: Android's secure file access system
 
 ### OwnTone API
 
@@ -137,6 +163,7 @@ The app uses OwnTone's REST API and DAAP protocol:
 - `GET /api/library/playlists` - List playlists
 - `GET /api/library/playlists/{id}/tracks` - List tracks in playlist
 - `GET /api/library/tracks/{id}` - Get track metadata
+- `PUT /api/library/tracks/{id}` - Update track statistics (play count, skip count)
 
 **DAAP Downloads:**
 - `GET /databases/1/items/{id}.dat` - Download track file
@@ -146,6 +173,17 @@ File extensions determined from `Content-Type` header via HEAD request.
 
 ### Sync Logic
 
+**Event Sync (runs first, if enabled):**
+1. Fetch unsynced events from local database
+2. Group events by track_id
+3. For each track, fetch current stats from server
+4. Accumulate new play/skip counts with server counts
+5. Update timestamps (use most recent)
+6. Send PUT request to update server
+7. Delete successfully synced events
+8. Retry failed events (up to 5 times, then delete)
+
+**Playlist Sync:**
 1. **Fetch server playlists** - Load current state from OwnTone
 2. **Playlist recovery** - If playlist ID changed, recover by path
 3. **Diff calculation** - Compare server vs local to find new/missing tracks
@@ -158,17 +196,63 @@ File extensions determined from `Content-Type` header via HEAD request.
 
 Background sync uses Android WorkManager:
 
-1. **Registration** - When schedule enabled, register periodic task (hourly)
-2. **Execution** - Background isolate runs every hour
-3. **Schedule check** - `shouldSyncNow()` verifies time/day match
-4. **Sync state** - Prevents concurrent runs and duplicate syncs
-5. **Conditions** - WorkManager enforces WiFi/charging constraints
+1. **Registration** - When schedule enabled, calculate delay until next scheduled time and register one-time work request
+2. **Execution** - Work runs at scheduled time if conditions met (WiFi, charging)
+3. **Event sync** - If enabled, sync playback events first
+4. **Playlist sync** - Download new tracks, update relationships
+5. **Progress broadcasting** - Via foreground notification and EventChannel to Flutter
+6. **Schedule next** - After completion, calculate and schedule tomorrow's sync
+7. **History logging** - Record sync results in database
+
+**WorkManager ensures:**
+- Respects battery optimization settings
+- Waits for required conditions (WiFi, charging)
+- Survives app restarts and device reboots
+- Provides foreground notification during sync
+
+### Event Tracking
+
+Event tracking uses Android's NotificationListenerService:
+
+1. **Notification monitoring** - Listen for media notifications from music players
+2. **MediaController extraction** - Get playback state from notification's MediaSession
+3. **Position tracking** - Track last known position and timestamp for extrapolation
+4. **State change detection**:
+   - **Track change**: Extrapolate final position from last update, determine play vs skip
+   - **Pause**: Update position and timestamp
+   - **Stop**: Process track end with extrapolated position
+5. **Event classification**:
+   - **Play**: Track reached ≥90% completion
+   - **Skip**: Track played ≥3 seconds but <90% completion
+   - **Ignore**: Track played <3 seconds
+6. **Track matching** - Fuzzy match against local database (title, artist, duration ±5s)
+7. **Event storage** - Store in pending_events table for next sync
+
+### Storage Access Framework (SAF)
+
+All music file operations go through Android's SAF:
+
+- User grants access to Music folder via system picker
+- App stores persistent URI permission
+- File operations use DocumentFile API
+- Artwork stored in app-private storage (no SAF needed)
+- M3U playlists use relative paths for compatibility
+
+### Progress Communication
+
+Sync progress flows from Kotlin to Flutter:
+
+1. **BackgroundSyncWorker** updates progress
+2. **SyncProgressBroadcaster** creates foreground notification
+3. **EventChannel** broadcasts progress to Flutter
+4. **SyncProvider** receives updates via stream
+5. **UI** displays progress in real-time
 
 ### Building
 
 **Prerequisites:**
 - Flutter SDK 3.5 or higher
-- Android SDK (min SDK 26, target SDK 36)
+- Android SDK (min SDK 29, target SDK 34)
 - Android device or emulator
 
 **Setup:**
@@ -180,36 +264,17 @@ flutter run
 ### Testing
 
 Manual testing checklist:
-- [ ] Server configuration and validation
-- [ ] Playlist loading (online and offline)
-- [ ] Manual sync with progress tracking
-- [ ] Sync cancellation
-- [ ] Orphaned file deletion
-- [ ] Schedule configuration
-- [ ] Background sync execution
-- [ ] Playlist recovery after server DB reset
-- [ ] Permission handling
-
-### Future Enhancements
-
-**Browse Screen** (Planned)
-- View downloaded music by playlist/artist/album/track
-- Sort and filter options
-- Track detail view with metadata
-
-**History Screen** (Planned)
-- Sync history log
-- Statistics (tracks downloaded, storage used)
-- Error tracking
-
-**Event Sync** (Partially Implemented)
-- Sync playback events back to OwnTone server
-- Requires notification listener implementation
-
-**iOS Support** (Unlikely)
-- Would require adding music player functionality (blocking requirement)
-- iOS doesn't allow third-party apps to generate playlists for Apple Music
-- Repo author does not have access to appropriate hardware for testing
+- Server configuration and validation
+- Playlist loading (online and offline)
+- Manual sync with progress tracking
+- Sync cancellation
+- Orphaned file deletion
+- Schedule configuration
+- Background sync execution (check via notification)
+- Playlist recovery after server DB reset
+- Permission handling (storage, notification listener, battery optimization)
+- Event tracking (play/skip detection in various music players)
+- Event sync to server
 
 ## Configuration
 
@@ -219,14 +284,6 @@ Your OwnTone server must be:
 - Accessible on your local network
 - Running with remote access enabled
 - Not requiring authentication (or using basic auth)
-
-Example OwnTone configuration (`/etc/owntone.conf`):
-```conf
-general {
-    websocket_port = 3688
-    trusted_networks = { "any" }
-}
-```
 
 ### Storage Requirements
 
@@ -253,22 +310,16 @@ Storage usage depends on your library:
 
 **Background sync not working**
 - Verify schedule is enabled and saved
-- Check battery optimization isn't killing the app
-- Review Android logs: `adb logcat | grep Background`
+- Check battery optimization is disabled for the app
+- Review Android logs: `adb logcat | grep BackgroundSyncWorker`
 
 **Files not appearing in music player**
 - Trigger media scan: Settings → Storage → Cached data → Clear
 - Check file location: `/storage/emulated/0/Music/`
 - Verify M3U files exist in `playlists/` directory
 
-## License
-
-[Add your license here]
-
-## Contributing
-
-[Add contribution guidelines if open source]
-
-## Credits
-
-Built with Flutter. Uses the OwnTone (forked-daapd) server project.
+**Event tracking not working**
+- Verify notification listener permission is granted
+- Check the setting is enabled in Server Configuration
+- Review logs: `adb logcat | grep MediaNotificationListener`
+- Some music players may not expose MediaSession properly
