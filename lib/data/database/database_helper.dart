@@ -86,7 +86,8 @@ class DatabaseHelper {
         track_id INTEGER NOT NULL,
         event_type TEXT NOT NULL,
         timestamp INTEGER NOT NULL,
-        synced INTEGER NOT NULL DEFAULT 0
+        synced INTEGER NOT NULL DEFAULT 0,
+        retry_count INTEGER NOT NULL DEFAULT 0
       )
     ''');
 

@@ -231,6 +231,54 @@ class DatabaseHelper(private val context: Context) {
         return tracks
     }
 
+    fun getUnsyncedEvents(): List<PendingEvent> {
+        val db = openDatabase()
+        val events = mutableListOf<PendingEvent>()
+        val cursor = db.query(
+            "pending_events",
+            null,
+            "synced = ?",
+            arrayOf("0"),
+            null, null, null
+        )
+
+        while (cursor.moveToNext()) {
+            events.add(PendingEvent.fromCursor(cursor))
+        }
+
+        cursor.close()
+        db.close()
+        return events
+    }
+
+    fun incrementRetryCount(eventId: Int) {
+        val db = openDatabase()
+        db.execSQL(
+            "UPDATE pending_events SET retry_count = retry_count + 1 WHERE id = ?",
+            arrayOf(eventId)
+        )
+        db.close()
+    }
+
+    fun deleteEvent(eventId: Int) {
+        val db = openDatabase()
+        db.delete("pending_events", "id = ?", arrayOf(eventId.toString()))
+        db.close()
+    }
+
+    fun deleteEvents(eventIds: List<Int>) {
+        if (eventIds.isEmpty()) return
+
+        val db = openDatabase()
+        val placeholders = eventIds.joinToString(",") { "?" }
+        db.delete(
+            "pending_events",
+            "id IN ($placeholders)",
+            eventIds.map { it.toString() }.toTypedArray()
+        )
+        db.close()
+    }
+
     // Data classes
     data class SyncedPlaylist(
         val id: Int,
@@ -307,5 +355,25 @@ class DatabaseHelper(private val context: Context) {
         val playlistName: String,
         val tracksInPlaylist: Int
     )
+
+    data class PendingEvent(
+        val id: Int,
+        val trackId: Int,
+        val eventType: String,
+        val timestamp: Long,
+        val synced: Boolean,
+        val retryCount: Int
+    ) {
+        companion object {
+            fun fromCursor(cursor: Cursor) = PendingEvent(
+                id = cursor.getInt(cursor.getColumnIndexOrThrow("id")),
+                trackId = cursor.getInt(cursor.getColumnIndexOrThrow("track_id")),
+                eventType = cursor.getString(cursor.getColumnIndexOrThrow("event_type")),
+                timestamp = cursor.getLong(cursor.getColumnIndexOrThrow("timestamp")),
+                synced = cursor.getInt(cursor.getColumnIndexOrThrow("synced")) == 1,
+                retryCount = cursor.getInt(cursor.getColumnIndexOrThrow("retry_count"))
+            )
+        }
+    }
 
 }

@@ -54,7 +54,11 @@ class OwnToneApiClient(private val baseUrl: String) {
         @SerializedName("disc_number") val discNumber: Int,
         @SerializedName("year") val year: Int,
         @SerializedName("artwork_url") val artworkUrl: String?,
-        @SerializedName("album_id") val albumId: String
+        @SerializedName("album_id") val albumId: String,
+        @SerializedName("play_count") val playCount: Int = 0,
+        @SerializedName("skip_count") val skipCount: Int = 0,
+        @SerializedName("time_played") val timePlayed: String? = null,
+        @SerializedName("time_skipped") val timeSkipped: String? = null
     )
 
     fun getPlaylists(limit: Int = 1000): PlaylistsResponse {
@@ -127,6 +131,89 @@ class OwnToneApiClient(private val baseUrl: String) {
             return Pair(bytes, contentType)
         } finally {
             connection.disconnect()
+        }
+    }
+
+    fun updateTrackStats(
+        trackId: Int,
+        additionalPlayCount: Int = 0,
+        additionalSkipCount: Int = 0,
+        mostRecentTimePlayed: Long? = null,
+        mostRecentTimeSkipped: Long? = null
+    ) {
+        // First, fetch current track stats
+        val currentTrack = getTrack(trackId)
+
+        // Calculate new totals
+        val newPlayCount = currentTrack.playCount + additionalPlayCount
+        val newSkipCount = currentTrack.skipCount + additionalSkipCount
+
+        // Determine timestamps to use (most recent wins)
+        val currentTimePlayed = currentTrack.timePlayed?.let {
+            // Parse ISO timestamp to epoch seconds
+            try {
+                val instant = java.time.Instant.parse(it)
+                instant.epochSecond
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        val currentTimeSkipped = currentTrack.timeSkipped?.let {
+            try {
+                val instant = java.time.Instant.parse(it)
+                instant.epochSecond
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        val finalTimePlayed = when {
+            mostRecentTimePlayed == null -> currentTimePlayed
+            currentTimePlayed == null -> mostRecentTimePlayed
+            mostRecentTimePlayed > currentTimePlayed -> mostRecentTimePlayed
+            else -> currentTimePlayed
+        }
+
+        val finalTimeSkipped = when {
+            mostRecentTimeSkipped == null -> currentTimeSkipped
+            currentTimeSkipped == null -> mostRecentTimeSkipped
+            mostRecentTimeSkipped > currentTimeSkipped -> mostRecentTimeSkipped
+            else -> currentTimeSkipped
+        }
+
+        // Build query parameters
+        val url = StringBuilder("$baseUrl/api/library/tracks/$trackId?")
+        val params = mutableListOf<String>()
+
+        params.add("play_count=$newPlayCount")
+        params.add("skip_count=$newSkipCount")
+        if (finalTimePlayed != null) params.add("time_played=$finalTimePlayed")
+        if (finalTimeSkipped != null) params.add("time_skipped=$finalTimeSkipped")
+
+        url.append(params.joinToString("&"))
+
+        val request = Request.Builder()
+            .url(url.toString())
+            .put(okhttp3.RequestBody.create(null, ByteArray(0)))
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("Failed to update track stats: ${response.code} ${response.message}")
+            }
+        }
+    }
+
+    fun getTrack(trackId: Int): Track {
+        val request = Request.Builder()
+            .url("$baseUrl/api/library/tracks/$trackId")
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw IOException("Unexpected code $response")
+            val body = response.body?.string() ?: throw IOException("Empty response")
+            return gson.fromJson(body, Track::class.java)
         }
     }
 }

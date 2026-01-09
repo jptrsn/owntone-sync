@@ -51,6 +51,22 @@ class BackgroundSyncWorker(
                 throw SyncException("No server URL configured")
             }
 
+            // Initialize helpers
+            val apiClient = OwnToneApiClient(serverUrl)
+            val dbHelper = DatabaseHelper(applicationContext)
+            val fileOps = FileOperations(applicationContext)
+
+            // Sync events first (if tracking is enabled)
+            val eventTrackingEnabled = prefs.getBoolean("flutter.event_tracking_enabled", false)
+            var eventsSynced = 0
+
+            if (eventTrackingEnabled) {
+                Log.i(TAG, "Event tracking enabled, syncing events first")
+                eventsSynced = syncEvents(applicationContext, worker, apiClient, dbHelper)
+            } else {
+                Log.d(TAG, "Event tracking disabled, skipping event sync")
+            }
+
             // Get selected playlist IDs - Flutter stores StringList with special encoding
             val playlistIdsString = prefs.getString("flutter.selected_playlist_ids", null)
             if (playlistIdsString == null || playlistIdsString.isEmpty()) {
@@ -78,11 +94,6 @@ class BackgroundSyncWorker(
                 Log.i(TAG, "No playlists selected for sync")
                 throw SyncException("No playlists selected for sync")
             }
-
-            // Initialize helpers
-            val apiClient = OwnToneApiClient(serverUrl)
-            val dbHelper = DatabaseHelper(applicationContext)
-            val fileOps = FileOperations(applicationContext)
 
             var tracksDownloaded = 0
             var syncCancelled = false
@@ -492,6 +503,110 @@ class BackgroundSyncWorker(
         } catch (e: Exception) {
             Log.e(TAG, "Error scheduling next sync", e)
         }
+    }
+
+    private suspend fun syncEvents(
+        context: Context,
+        worker: CoroutineWorker,
+        apiClient: OwnToneApiClient,
+        dbHelper: DatabaseHelper
+    ): Int {
+        val unsyncedEvents = dbHelper.getUnsyncedEvents()
+
+        if (unsyncedEvents.isEmpty()) {
+            Log.d(TAG, "No events to sync")
+            return 0
+        }
+
+        Log.i(TAG, "Syncing ${unsyncedEvents.size} events")
+
+        // Group events by track_id
+        val eventsByTrack = unsyncedEvents.groupBy { it.trackId }
+        var eventsSynced = 0
+        var eventsDeleted = 0
+        var trackIndex = 0
+
+        for ((trackId, events) in eventsByTrack) {
+            trackIndex++
+
+            // Update progress
+            SyncProgressBroadcaster.updateProgress(
+                context, worker,
+                "Syncing playback events",
+                0, 1,
+                trackIndex, eventsByTrack.size,
+                "Track $trackId",
+                trackIndex.toDouble() / eventsByTrack.size
+            )
+
+            try {
+                // Accumulate counts and find most recent timestamps
+                var playCount = 0
+                var skipCount = 0
+                var mostRecentTimePlayed: Long? = null
+                var mostRecentTimeSkipped: Long? = null
+
+                for (event in events) {
+                    when (event.eventType) {
+                        "play" -> {
+                            playCount++
+                            if (mostRecentTimePlayed == null || event.timestamp > mostRecentTimePlayed) {
+                                mostRecentTimePlayed = event.timestamp
+                            }
+                        }
+                        "skip" -> {
+                            skipCount++
+                            if (mostRecentTimeSkipped == null || event.timestamp > mostRecentTimeSkipped) {
+                                mostRecentTimeSkipped = event.timestamp
+                            }
+                        }
+                    }
+                }
+
+                Log.d(TAG, "Syncing track $trackId: +$playCount plays, +$skipCount skips")
+
+                // Update track stats on server
+                apiClient.updateTrackStats(
+                    trackId,
+                    additionalPlayCount = playCount,
+                    additionalSkipCount = skipCount,
+                    mostRecentTimePlayed = mostRecentTimePlayed,
+                    mostRecentTimeSkipped = mostRecentTimeSkipped
+                )
+
+                // Success - delete these events
+                val eventIds = events.map { it.id }
+                dbHelper.deleteEvents(eventIds)
+                eventsSynced += events.size
+
+                Log.i(TAG, "Successfully synced ${events.size} events for track $trackId")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to sync events for track $trackId", e)
+
+                // Increment retry count for all events in this batch
+                for (event in events) {
+                    val newRetryCount = event.retryCount + 1
+
+                    if (newRetryCount >= 5) {
+                        // Max retries reached - delete the event
+                        dbHelper.deleteEvent(event.id)
+                        eventsDeleted++
+                        Log.w(TAG, "Deleted event ${event.id} after $newRetryCount retries")
+                    } else {
+                        // Increment retry count
+                        dbHelper.incrementRetryCount(event.id)
+                    }
+                }
+            }
+        }
+
+        if (eventsDeleted > 0) {
+            Log.i(TAG, "Deleted $eventsDeleted events after max retries")
+        }
+
+        Log.i(TAG, "Event sync completed: $eventsSynced events synced, $eventsDeleted events deleted")
+        return eventsSynced
     }
 
     data class SyncSchedule(

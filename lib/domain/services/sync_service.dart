@@ -37,7 +37,6 @@ class SyncResult {
   final int playlistsSynced;
   final int tracksDownloaded;
   final int tracksDeleted;
-  final int eventsySynced;
 
   SyncResult({
     required this.success,
@@ -45,7 +44,6 @@ class SyncResult {
     this.playlistsSynced = 0,
     this.tracksDownloaded = 0,
     this.tracksDeleted = 0,
-    this.eventsySynced = 0,
   });
 }
 
@@ -591,94 +589,5 @@ class SyncService {
     }
 
     return orphanedTracks.length;
-  }
-
-  Future<SyncResult> syncEvents() async {
-    try {
-      logger.i('Starting event sync');
-      final unsyncedEvents = await _dbRepo.getUnsyncedEvents();
-      logger.i('Found ${unsyncedEvents.length} unsynced events');
-
-      if (unsyncedEvents.isEmpty) {
-        logger.d('No events to sync');
-        return SyncResult(success: true, eventsySynced: 0);
-      }
-
-      final eventsByTrack = <int, List<PendingEvent>>{};
-      for (final event in unsyncedEvents) {
-        eventsByTrack.putIfAbsent(event.trackId, () => []).add(event);
-      }
-
-      logger.d('Events grouped into ${eventsByTrack.length} tracks');
-
-      int eventsSynced = 0;
-
-      for (final entry in eventsByTrack.entries) {
-        final trackId = entry.key;
-        final events = entry.value;
-
-        try {
-          logger.d('Syncing ${events.length} events for track $trackId');
-
-          final track = await _apiRepo.getTrack(trackId);
-          logger.d(
-            'Current server stats - plays: ${track.playCount}, skips: ${track.skipCount}',
-          );
-
-          int playCount = track.playCount;
-          int skipCount = track.skipCount;
-          int? timePlayed = track.timePlayed != null
-              ? DateTime.parse(track.timePlayed!).millisecondsSinceEpoch ~/ 1000
-              : null;
-          int? timeSkipped = track.timeSkipped != null
-              ? DateTime.parse(track.timeSkipped!).millisecondsSinceEpoch ~/
-                    1000
-              : null;
-
-          for (final event in events) {
-            if (event.eventType == 'play') {
-              playCount++;
-              if (timePlayed == null || event.timestamp > timePlayed) {
-                timePlayed = event.timestamp;
-              }
-            } else if (event.eventType == 'skip') {
-              skipCount++;
-              if (timeSkipped == null || event.timestamp > timeSkipped) {
-                timeSkipped = event.timestamp;
-              }
-            }
-          }
-
-          logger.d('New stats - plays: $playCount, skips: $skipCount');
-
-          await _apiRepo.updateTrackStats(
-            trackId,
-            playCount: playCount,
-            skipCount: skipCount,
-            timePlayed: timePlayed,
-            timeSkipped: timeSkipped,
-          );
-
-          logger.i('Successfully updated server stats for track $trackId');
-
-          for (final event in events) {
-            await _dbRepo.deleteEvent(event.id!);
-            eventsSynced++;
-          }
-        } catch (e, stackTrace) {
-          logger.e(
-            'Failed to sync events for track $trackId',
-            error: e,
-            stackTrace: stackTrace,
-          );
-        }
-      }
-
-      logger.i('Event sync completed: $eventsSynced events synced');
-      return SyncResult(success: true, eventsySynced: eventsSynced);
-    } catch (e, stackTrace) {
-      logger.e('Event sync failed', error: e, stackTrace: stackTrace);
-      return SyncResult(success: false, error: e.toString());
-    }
   }
 }

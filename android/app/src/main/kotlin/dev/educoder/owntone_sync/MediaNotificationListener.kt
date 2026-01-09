@@ -31,8 +31,8 @@ class MediaNotificationListener : NotificationListenerService() {
         val artist: String,
         val album: String,
         val durationMs: Long,
-        var startPositionMs: Long,
-        var startTime: Long
+        var lastKnownPositionMs: Long,
+        var lastPositionUpdateTime: Long
     )
 
     override fun onCreate() {
@@ -43,7 +43,6 @@ class MediaNotificationListener : NotificationListenerService() {
     private fun isTrackingEnabled(): Boolean {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val enabled = prefs.getBoolean(TRACKING_ENABLED_KEY, false)
-        Log.d(TAG, "Event tracking enabled: $enabled")
         return enabled
     }
 
@@ -67,6 +66,11 @@ class MediaNotificationListener : NotificationListenerService() {
 
             // Track this controller
             activeControllers[packageName] = controller
+
+            // Check current playback state immediately
+            controller.playbackState?.let {
+                handlePlaybackState(it, controller, packageName)
+            }
 
             // Listen for playback state changes
             controller.registerCallback(object : MediaController.Callback() {
@@ -107,6 +111,8 @@ class MediaNotificationListener : NotificationListenerService() {
             }
             Log.d(TAG, "State: $stateString | Track: $title | Position: ${state.position}ms / ${duration}ms")
 
+            val now = System.currentTimeMillis()
+
             when (state.state) {
                 PlaybackState.STATE_PLAYING -> {
                     val existingData = trackingData[packageName]
@@ -115,10 +121,25 @@ class MediaNotificationListener : NotificationListenerService() {
                                     existingData.artist != artist
 
                     if (isNewTrack) {
-                        // A different track was playing before, process it as completed
+                        // A different track started - process the previous one
                         if (existingData != null) {
-                            // Track changed naturally - assume it played to completion
-                            processTrackEnd(existingData, wasCompleted = true)
+                            // Calculate time elapsed since last position update
+                            val timeSinceLastUpdate = now - existingData.lastPositionUpdateTime
+
+                            // Extrapolate current position
+                            val estimatedPosition = existingData.lastKnownPositionMs + timeSinceLastUpdate
+
+                            // Cap at duration
+                            val finalPosition = minOf(estimatedPosition, existingData.durationMs)
+
+                            Log.d(TAG, "Track changed: lastKnown=${existingData.lastKnownPositionMs}ms at ${existingData.lastPositionUpdateTime}, " +
+                                    "elapsed=${timeSinceLastUpdate}ms, estimated=${estimatedPosition}ms, final=${finalPosition}ms")
+
+                            processTrackEnd(
+                                existingData,
+                                wasCompleted = false,
+                                currentPosition = finalPosition
+                            )
                         }
 
                         // Start tracking new track
@@ -128,25 +149,41 @@ class MediaNotificationListener : NotificationListenerService() {
                             artist = artist,
                             album = album,
                             durationMs = duration,
-                            startPositionMs = state.position,
-                            startTime = System.currentTimeMillis()
+                            lastKnownPositionMs = state.position,
+                            lastPositionUpdateTime = now
                         )
+                    } else {
+                        // Same track still playing - update position and timestamp
+                        existingData?.let {
+                            it.lastKnownPositionMs = state.position
+                            it.lastPositionUpdateTime = now
+                        }
                     }
                 }
 
                 PlaybackState.STATE_STOPPED -> {
-                    // Only process on STOPPED, not PAUSED
                     val data = trackingData[packageName]
                     if (data != null && data.title == title && data.artist == artist) {
-                        // Track stopped at current position (likely not completed)
-                        processTrackEnd(data, wasCompleted = false, currentPosition = state.position)
+                        // Track stopped - extrapolate position
+                        val timeSinceLastUpdate = now - data.lastPositionUpdateTime
+                        val estimatedPosition = data.lastKnownPositionMs + timeSinceLastUpdate
+                        val finalPosition = minOf(estimatedPosition, data.durationMs)
+
+                        processTrackEnd(data, wasCompleted = false, currentPosition = finalPosition)
                         trackingData.remove(packageName)
                     }
                 }
 
                 PlaybackState.STATE_PAUSED -> {
-                    // Don't process paused tracks
-                    Log.d(TAG, "Track paused, not processing (user might resume)")
+                    // Update position and timestamp when paused
+                    val existingData = trackingData[packageName]
+                    if (existingData != null && existingData.title == title && existingData.artist == artist) {
+                        existingData.lastKnownPositionMs = state.position
+                        existingData.lastPositionUpdateTime = now
+                        Log.d(TAG, "Track paused at ${state.position}ms, position and time saved")
+                    } else {
+                        Log.d(TAG, "Track paused, not processing (user might resume)")
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -155,24 +192,22 @@ class MediaNotificationListener : NotificationListenerService() {
     }
 
     private fun processTrackEnd(data: TrackingData, wasCompleted: Boolean, currentPosition: Long = 0) {
-        val playedDuration = System.currentTimeMillis() - data.startTime
-
         val finalPosition = if (wasCompleted) data.durationMs else currentPosition
         val completionRatio = finalPosition.toDouble() / data.durationMs.toDouble()
 
-        Log.d(TAG, "Processing track end: ${data.title} - ${completionRatio * 100}% complete (${finalPosition}ms / ${data.durationMs}ms), played ${playedDuration}ms, wasCompleted=$wasCompleted")
+        Log.d(TAG, "Processing track end: ${data.title} - ${completionRatio * 100}% complete (${finalPosition}ms / ${data.durationMs}ms)")
 
         when {
             completionRatio >= PLAY_COMPLETION_THRESHOLD -> {
                 Log.i(TAG, "Recording PLAY event for: ${data.title}")
                 insertEvent("play", data.title, data.artist, data.album, data.durationMs)
             }
-            playedDuration >= SKIP_MINIMUM_DURATION_MS -> {
+            finalPosition >= SKIP_MINIMUM_DURATION_MS -> {
                 Log.i(TAG, "Recording SKIP event for: ${data.title}")
                 insertEvent("skip", data.title, data.artist, data.album, data.durationMs)
             }
             else -> {
-                Log.d(TAG, "Ignoring event - track played for only ${playedDuration}ms")
+                Log.d(TAG, "Ignoring event - track only reached ${finalPosition}ms")
             }
         }
     }

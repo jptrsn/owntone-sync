@@ -25,7 +25,6 @@ class SyncProvider extends ChangeNotifier {
   OwnToneApiRepository? _apiRepo;
   LocalDatabaseRepository? _dbRepo;
   FileSystemRepository? _fileRepo;
-  SyncService? _syncService;
 
   String _serverUrl = '';
   bool _isConfigured = false;
@@ -117,19 +116,6 @@ class SyncProvider extends ChangeNotifier {
     _serverUrl = url;
     _isConfigured = url.isNotEmpty;
     _apiRepo = OwnToneApiRepository(baseUrl: url);
-
-    if (_dbRepo != null && _fileRepo != null) {
-      _syncService = SyncService(
-        apiRepo: _apiRepo!,
-        dbRepo: _dbRepo!,
-        fileRepo: _fileRepo!,
-      );
-
-      _syncService!.onProgress = (progress) {
-        _syncProgress = progress;
-        notifyListeners();
-      };
-    }
 
     // Save to persistent storage
     final prefs = await SharedPreferences.getInstance();
@@ -512,9 +498,6 @@ class SyncProvider extends ChangeNotifier {
   /// Toggle delete orphaned files setting
   Future<void> setDeleteOrphanedFiles(bool value) async {
     _deleteOrphanedFiles = value;
-    if (_syncService != null) {
-      _syncService!.deleteOrphanedFiles = value;
-    }
 
     // Save to preferences
     final prefs = await SharedPreferences.getInstance();
