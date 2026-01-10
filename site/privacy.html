@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy - OwnTone Sync</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <img src="assets/icon.svg" alt="OwnTone Sync" class="logo">
+                <h1>OwnTone Sync</h1>
+            </div>
+            <nav>
+                <a href="index.html">Home</a>
+                <a href="smart-playlists.html">Smart Playlists</a>
+                <a href="privacy.html">Privacy</a>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <section class="content">
+            <div class="container">
+                <h2>Privacy Policy</h2>
+                <p class="updated">Last Updated: January 3, 2026</p>
+
+                <h3>Overview</h3>
+                <p>OwnTone Sync ("the App") is committed to protecting your privacy. This policy explains how the App handles your data.</p>
+
+                <div class="privacy-highlight">
+                    <h4>Key Privacy Commitments</h4>
+                    <ul>
+                        <li><strong>No data collection:</strong> The App does not collect, transmit, or store any personal data on external servers</li>
+                        <li><strong>No third-party services:</strong> No analytics, no advertisements, no tracking services</li>
+                        <li><strong>Local storage only:</strong> All data remains on your device and your personal OwnTone server</li>
+                        <li><strong>Direct communication:</strong> The App only connects to your personal OwnTone server</li>
+                    </ul>
+                </div>
+
+                <h3>Data Stored Locally on Your Device</h3>
+                <p>The App stores the following data locally on your Android device:</p>
+                <ul>
+                    <li><strong>Server Connection Details:</strong> Your OwnTone server URL and connection settings</li>
+                    <li><strong>Music Files:</strong> Audio files downloaded from your OwnTone server to your device's Music folder</li>
+                    <li><strong>Playlist Information:</strong> Playlist names and track listings from your OwnTone server</li>
+                    <li><strong>Sync History:</strong> Local records of sync operations (date, time, tracks downloaded, errors)</li>
+                    <li><strong>App Settings:</strong> Your preferences for sync schedule, storage location, and playback tracking</li>
+                    <li><strong>Playback Events (if enabled):</strong> Play and skip events for tracks, stored locally before being sent to your OwnTone server</li>
+                </ul>
+                <p><strong>All of this data stays on your device.</strong> None of it is transmitted to the developer or any third parties.</p>
+
+                <h3>Permissions</h3>
+                <p>The App requests the following Android permissions:</p>
+
+                <h4>Required Permissions</h4>
+                <ul>
+                    <li><strong>Storage Access (SAF - Storage Access Framework):</strong> Required to save music files to a folder you choose on your device. The App uses Android's modern Storage Access Framework, which means you explicitly grant access to a specific folder.</li>
+                    <li><strong>Internet Access:</strong> Required to connect to your OwnTone server and download music files. The App only communicates with the server URL you provide.</li>
+                    <li><strong>Background Sync Permission:</strong> Allows the App to perform scheduled syncs while not actively open. You control the sync schedule (time of day, days of week, WiFi/charging requirements).</li>
+                </ul>
+
+                <h4>Optional Permissions</h4>
+                <ul>
+                    <li><strong>Notification Access:</strong> <em>Completely optional.</em> If granted, allows the App to detect when you play or skip songs in other music players. The App:
+                        <ul>
+                            <li>Only reads media-related notifications (play/pause/skip events)</li>
+                            <li>Does not access or store any other notification content</li>
+                            <li>Uses this data solely to update play/skip counts on your personal OwnTone server</li>
+                            <li>This enables OwnTone's smart playlist features based on your listening habits</li>
+                        </ul>
+                        <strong>You can disable this feature at any time without affecting other App functionality.</strong>
+                    </li>
+                </ul>
+
+                <h3>Network Communication</h3>
+                <p>The App communicates ONLY with:</p>
+                <ul>
+                    <li><strong>Your Personal OwnTone Server:</strong> Using the URL you provide in settings. All music files and playback data are exchanged directly with your server.</li>
+                    <li><strong>Google Play Services:</strong> For app updates and license verification (standard Android functionality).</li>
+                </ul>
+                <p><strong>No user data, listening habits, or personal information is transmitted to the developer or any third parties.</strong></p>
+
+                <h3>Your OwnTone Server</h3>
+                <p>The App connects directly to your personal OwnTone server. The developer has no access to your server, your music library, or your listening data. You are responsible for the security and privacy settings of your OwnTone server installation.</p>
+                <p>It is recommended that you do not expose your OwnTone server to the public internet.</p>
+
+                <h3>Data Security</h3>
+                <p>All data is stored locally on your device using Android's standard security mechanisms. The App does not implement additional encryption as all communication is with your personal server on your local network.</p>
+                <p>If you access your OwnTone server over the internet (not recommended), ensure you use HTTPS and proper security measures on your server.</p>
+
+                <h3>Data Deletion</h3>
+                <p>You can delete all App data at any time by:</p>
+                <ul>
+                    <li>Uninstalling the App (removes all app data)</li>
+                    <li>Manually deleting music and playlist files from the folder you selected for syncing</li>
+                    <li>Using Android's "Clear Data" option in App Settings → Apps → OwnTone Sync → Storage → Clear Data</li>
+                </ul>
+
+                <h3>Children's Privacy</h3>
+                <p>The App does not collect any information from anyone, including children. The App is not directed at children under 13 years of age.</p>
+
+                <h3>Changes to This Policy</h3>
+                <p>We may update this Privacy Policy from time to time. Updates will be posted on this page with a new "Last Updated" date. Continued use of the App after changes constitutes acceptance of the updated policy.</p>
+
+                <h3>Contact</h3>
+                <p>If you have questions about this Privacy Policy or the App's data practices, please contact us at: <a href="mailto:support@educoder.dev">support@educoder.dev</a></p>
+
+                <h3>Open Source and Independence</h3>
+                <p>OwnTone Sync is an independent application created for OwnTone users. The App is not affiliated with or endorsed by the OwnTone project. OwnTone is a separate open-source project available at <a href="https://owntone.github.io/owntone-server/" target="_blank">owntone.github.io</a>.</p>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2026 OwnTone Sync.</p>
+            <nav>
+                <a href="privacy.html">Privacy Policy</a>
+                <a href="mailto:support@educoder.dev">Contact</a>
+            </nav>
+        </div>
+    </footer>
+</body>
+</html>

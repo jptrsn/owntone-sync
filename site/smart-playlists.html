@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Playlists Guide - OwnTone Sync</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+    <style>
+        /* Smart Playlists page specific styles */
+        .code-block {
+            background: #1a1a2e;
+            color: #e0e0e0;
+            padding: 1.5rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            margin: 1rem 0 1.5rem 0;
+        }
+
+        .code-block code {
+            white-space: pre;
+        }
+
+        .code-block .comment {
+            color: #6a9955;
+        }
+
+        .code-block .keyword {
+            color: #569cd6;
+        }
+
+        .code-block .string {
+            color: #ce9178;
+        }
+
+        .code-block .field {
+            color: #9cdcfe;
+        }
+
+        .code-block .operator {
+            color: #d4d4d4;
+        }
+
+        .code-block .number {
+            color: #b5cea8;
+        }
+
+        .playlist-example {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .playlist-example h4 {
+            color: var(--primary);
+            margin-bottom: 0.5rem;
+            font-size: 1.25rem;
+        }
+
+        .playlist-example .description {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+
+        .playlist-example .sync-tip {
+            background: var(--background);
+            border-left: 4px solid var(--secondary);
+            padding: 1rem;
+            border-radius: 0 8px 8px 0;
+            margin-top: 1rem;
+        }
+
+        .playlist-example .sync-tip strong {
+            color: var(--primary);
+        }
+
+        details {
+            background: var(--background);
+            border-radius: 8px;
+            margin: 1rem 0;
+        }
+
+        details summary {
+            padding: 1rem 1.5rem;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--primary);
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        details summary::-webkit-details-marker {
+            display: none;
+        }
+
+        details summary::before {
+            content: "▶";
+            font-size: 0.75rem;
+            transition: transform 0.2s;
+        }
+
+        details[open] summary::before {
+            transform: rotate(90deg);
+        }
+
+        details .details-content {
+            padding: 0 1.5rem 1.5rem 1.5rem;
+        }
+
+        details .details-content p {
+            margin-bottom: 1rem;
+        }
+
+        .intro-section {
+            padding: 3rem 0;
+            background-color: var(--surface);
+        }
+
+        .intro-section p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            max-width: 800px;
+        }
+
+        .intro-section p + p {
+            margin-top: 1rem;
+        }
+
+        .examples-section {
+            padding: 3rem 0;
+            background-color: var(--background);
+        }
+
+        .examples-section > .container > h3 {
+            text-align: center;
+            font-size: 2rem;
+            margin-bottom: 2rem;
+            color: var(--primary);
+        }
+
+        .concept-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .concept-card {
+            background: var(--surface);
+            padding: 1.5rem;
+            border-radius: 12px;
+            border-top: 4px solid var(--secondary);
+        }
+
+        .concept-card h4 {
+            color: var(--primary);
+            margin-bottom: 0.5rem;
+        }
+
+        .concept-card p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .concept-card code {
+            background: var(--background);
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+
+        .tip-callout {
+            background: linear-gradient(135deg, var(--primary) 0%, #455A64 100%);
+            color: white;
+            padding: 2rem;
+            border-radius: 12px;
+            margin: 2rem 0;
+        }
+
+        .tip-callout h4 {
+            color: white;
+            margin-bottom: 1rem;
+        }
+
+        .tip-callout p {
+            color: var(--primary-light);
+            margin-bottom: 0;
+        }
+
+        .reference-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: var(--surface);
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            color: var(--secondary);
+            text-decoration: none;
+            font-weight: 600;
+            margin-top: 1rem;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .reference-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            text-decoration: none;
+        }
+
+        .operator-table {
+            width: 100%;
+            background: var(--surface);
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 1rem 0;
+        }
+
+        .operator-table th,
+        .operator-table td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .operator-table th {
+            background: var(--primary);
+            color: white;
+            font-weight: 600;
+        }
+
+        .operator-table code {
+            background: var(--background);
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <img src="assets/icon.svg" alt="OwnTone Sync" class="logo">
+                <h1>OwnTone Sync</h1>
+            </div>
+            <nav>
+                <a href="index.html">Home</a>
+                <a href="smart-playlists.html">Smart Playlists</a>
+                <a href="privacy.html">Privacy</a>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="container">
+                <h2>Smart Playlists Guide</h2>
+                <p class="subtitle">Dynamic playlists that update automatically based on your listening habits</p>
+            </div>
+        </section>
+
+        <section class="intro-section">
+            <div class="container">
+                <p>OwnTone's smart playlists are text files that define rules for automatically selecting tracks from your library. Unlike static playlists, they update dynamically—add new music that matches the criteria, and it appears automatically. Skip a song too many times, and it can drop out of rotation.</p>
+
+                <p>When combined with OwnTone Sync's <strong>playback tracking</strong> feature, smart playlists become even more powerful. The app reports your play and skip events back to OwnTone, which means your playlists can adapt to how you actually listen—prioritizing songs you love and resting ones you've heard recently.</p>
+
+                <div class="tip-callout">
+                    <h4>💡 The Sync Advantage</h4>
+                    <p>Enable playback tracking in OwnTone Sync to feed your listening data back to the server. Your smart playlists will then reflect what you play on your phone, not just what you stream at home.</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="examples-section">
+            <div class="container">
+                <h3>Key Concepts</h3>
+
+                <p style="text-align: center; color: var(--text-secondary); margin-bottom: 2rem;">Smart playlists filter your library using fields, operators, and values. Here are the most useful ones for building listening-aware playlists:</p>
+
+                <div class="concept-grid">
+                    <div class="concept-card">
+                        <h4>Rating</h4>
+                        <p>Filter by star rating. OwnTone uses a 0-100 scale: <code>rating = 0</code> (unrated), <code>rating = 20</code> (1 star), up to <code>rating = 100</code> (5 stars). Use ratings to prioritize favorites or exclude tracks you don't want in shuffle.</p>
+                    </div>
+                    <div class="concept-card">
+                        <h4>Play &amp; Skip Counts</h4>
+                        <p>Track engagement with <code>play_count</code> and <code>skip_count</code>. Surface unplayed tracks, identify overplayed ones, or exclude songs you frequently skip.</p>
+                    </div>
+                    <div class="concept-card">
+                        <h4>Time Fields</h4>
+                        <p>Use <code>time_played</code>, <code>time_skipped</code>, and <code>time_added</code> with relative dates like <code>3 days ago</code> or <code>last week</code> to create rotation and freshness rules.</p>
+                    </div>
+                    <div class="concept-card">
+                        <h4>Genre &amp; Metadata</h4>
+                        <p>Filter by <code>genre</code>, <code>artist</code>, <code>album</code>, and more. Use <code>includes</code> for partial matches or <code>is</code> for exact matches.</p>
+                    </div>
+                </div>
+
+                <p style="margin-top: 2rem;">
+                    <a href="https://owntone.github.io/owntone-server/smart-playlists/" target="_blank" class="reference-link">
+                        📖 Full syntax reference on owntone.github.io →
+                    </a>
+                </p>
+            </div>
+        </section>
+
+        <section class="examples-section" style="background-color: var(--surface);">
+            <div class="container">
+                <h3>Example Playlists</h3>
+
+                <div class="playlist-example">
+                    <h4>🔀 Smart Shuffle</h4>
+                    <p class="description">A weighted rotation system that surfaces higher-rated songs more frequently while giving everything appropriate rest periods. This replaces basic shuffle with something that respects both your preferences and listening fatigue.</p>
+
+                    <details>
+                        <summary>How it works</summary>
+                        <div class="details-content">
+                            <p>The playlist divides your library into rating tiers (5-star, 4-star, etc.) and applies different rules to each:</p>
+                            <ul>
+                                <li><strong>Higher-rated songs (4-5 stars)</strong> return to rotation sooner and tolerate more plays before needing a longer rest</li>
+                                <li><strong>Lower-rated songs (2-3 stars)</strong> need longer gaps between plays and have stricter skip limits</li>
+                                <li><strong>Unplayed tracks</strong> in any tier are always eligible, helping you discover music you haven't heard yet</li>
+                            </ul>
+                            <p>For example, a 5-star song might reappear after 3 days, while a 3-star song waits 25 days. If you skip a song repeatedly, it drops out of rotation until enough time passes.</p>
+                            <p>The result: your favorites appear often enough to enjoy but not so often they become stale, while deeper cuts still surface occasionally.</p>
+                        </div>
+                    </details>
+
+                    <details>
+                        <summary>View full playlist code</summary>
+                        <div class="details-content">
+                            <div class="code-block"><code><span class="string">"Smart Shuffle"</span> {
+  <span class="field">data_kind</span> <span class="keyword">is</span> <span class="string">file</span>
+  <span class="keyword">and</span> <span class="field">media_kind</span> <span class="keyword">is</span> <span class="string">music</span>
+  <span class="keyword">and not</span> (<span class="field">genre</span> <span class="keyword">is</span> <span class="string">"Folk"</span> <span class="keyword">or</span> <span class="field">genre</span> <span class="keyword">is</span> <span class="string">"World"</span> <span class="keyword">or</span> <span class="field">genre</span> <span class="keyword">includes</span> <span class="string">"Holiday"</span>
+           <span class="keyword">or</span> <span class="field">genre</span> <span class="keyword">is</span> <span class="string">"Children"</span> <span class="keyword">or</span> <span class="field">genre</span> <span class="keyword">is</span> <span class="string">"Speech"</span> <span class="keyword">or</span> <span class="field">genre</span> <span class="keyword">is</span> <span class="string">"Humor"</span>
+           <span class="keyword">or</span> <span class="field">genre</span> <span class="keyword">is</span> <span class="string">"Jazz"</span> <span class="keyword">or</span> <span class="field">genre</span> <span class="keyword">is</span> <span class="string">"Classical"</span>)
+  <span class="keyword">and</span> <span class="field">rating</span> <span class="operator">></span> <span class="number">20</span>
+  <span class="keyword">and</span> (
+    (<span class="field">rating</span> <span class="operator">></span> <span class="number">90</span> <span class="keyword">and</span> (<span class="field">play_count</span> <span class="operator">=</span> <span class="number">0</span>
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">10</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">3</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">3</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">5</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">20</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">6</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">13</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">15</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">30</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">10</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">18</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">20</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">15</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">20</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">25</span> <span class="keyword">days ago</span>)))
+    <span class="keyword">or</span> (<span class="field">rating</span> <span class="operator">></span> <span class="number">80</span> <span class="keyword">and</span> <span class="field">rating</span> <span class="operator">&lt;=</span> <span class="number">90</span> <span class="keyword">and</span> (<span class="field">play_count</span> <span class="operator">=</span> <span class="number">0</span>
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">10</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">5</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">8</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">10</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">20</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">8</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">15</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">17</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">30</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">12</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">21</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">23</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">20</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">30</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">35</span> <span class="keyword">days ago</span>)))
+    <span class="keyword">or</span> (<span class="field">rating</span> <span class="operator">></span> <span class="number">70</span> <span class="keyword">and</span> <span class="field">rating</span> <span class="operator">&lt;=</span> <span class="number">80</span> <span class="keyword">and</span> (<span class="field">play_count</span> <span class="operator">=</span> <span class="number">0</span>
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">10</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">5</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">13</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">15</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">20</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">10</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">18</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">20</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">30</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">15</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">23</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">25</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">25</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">45</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">50</span> <span class="keyword">days ago</span>)))
+    <span class="keyword">or</span> (<span class="field">rating</span> <span class="operator">></span> <span class="number">60</span> <span class="keyword">and</span> <span class="field">rating</span> <span class="operator">&lt;=</span> <span class="number">70</span> <span class="keyword">and</span> (<span class="field">play_count</span> <span class="operator">=</span> <span class="number">0</span>
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">10</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">7</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">15</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">17</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">20</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">12</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">21</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">23</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">30</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">18</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">25</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">27</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">30</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">60</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">65</span> <span class="keyword">days ago</span>)))
+    <span class="keyword">or</span> (<span class="field">rating</span> <span class="operator">></span> <span class="number">50</span> <span class="keyword">and</span> <span class="field">rating</span> <span class="operator">&lt;=</span> <span class="number">60</span> <span class="keyword">and</span> (<span class="field">play_count</span> <span class="operator">=</span> <span class="number">0</span>
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">10</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">8</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">21</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">25</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">20</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">15</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">28</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">32</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">30</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">20</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">33</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">37</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">35</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">45</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">55</span> <span class="keyword">days ago</span>)))
+    <span class="keyword">or</span> (<span class="field">rating</span> <span class="operator">></span> <span class="number">40</span> <span class="keyword">and</span> <span class="field">rating</span> <span class="operator">&lt;=</span> <span class="number">50</span> <span class="keyword">and</span> (<span class="field">play_count</span> <span class="operator">=</span> <span class="number">0</span>
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">10</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">10</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">25</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">30</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">25</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">18</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">35</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">40</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">30</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">22</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">38</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">43</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">40</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">45</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">55</span> <span class="keyword">days ago</span>)))
+    <span class="keyword">or</span> (<span class="field">rating</span> <span class="operator">></span> <span class="number">30</span> <span class="keyword">and</span> <span class="field">rating</span> <span class="operator">&lt;=</span> <span class="number">40</span> <span class="keyword">and</span> (<span class="field">play_count</span> <span class="operator">=</span> <span class="number">0</span>
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">10</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">12</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">25</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">30</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">20</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">20</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">35</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">40</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">30</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">25</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">43</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">48</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">45</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">50</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">65</span> <span class="keyword">days ago</span>)))
+    <span class="keyword">or</span> (<span class="field">rating</span> <span class="operator">></span> <span class="number">20</span> <span class="keyword">and</span> <span class="field">rating</span> <span class="operator">&lt;=</span> <span class="number">30</span> <span class="keyword">and</span> (<span class="field">play_count</span> <span class="operator">=</span> <span class="number">0</span>
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">10</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">15</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">25</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">30</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">20</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">25</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">35</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">40</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">play_count</span> <span class="operator">&lt;</span> <span class="number">30</span> <span class="keyword">and</span> <span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">30</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">33</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">37</span> <span class="keyword">days ago</span>)
+      <span class="keyword">or</span> (<span class="field">skip_count</span> <span class="operator">&lt;</span> <span class="number">50</span> <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">60</span> <span class="keyword">days ago</span> <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">65</span> <span class="keyword">days ago</span>)))
+  )
+}</code></div>
+                        </div>
+                    </details>
+
+                    <div class="sync-tip">
+                        <strong>📱 Sync tip:</strong> This playlist benefits most from playback tracking. Without it, only plays from your home setup count toward the rotation logic.
+                    </div>
+                </div>
+
+                <div class="playlist-example">
+                    <h4>🆕 Recently Added</h4>
+                    <p class="description">New music from the last 3 weeks, excluding tracks you've rated as "don't shuffle" (1-star). Great for evaluating new additions to your library.</p>
+
+                    <div class="code-block"><code><span class="string">"Recently Added"</span> {
+  <span class="field">media_kind</span> <span class="keyword">is</span> <span class="string">music</span>
+  <span class="keyword">and</span> <span class="field">data_kind</span> <span class="keyword">is</span> <span class="string">file</span>
+  <span class="keyword">and</span> <span class="field">time_added</span> <span class="keyword">after</span> <span class="number">21</span> <span class="keyword">days ago</span>
+  <span class="keyword">and</span> (<span class="field">rating</span> <span class="operator">=</span> <span class="number">0</span> <span class="keyword">or</span> <span class="field">rating</span> <span class="operator">></span> <span class="number">20</span>)
+  <span class="keyword">order by</span> <span class="field">time_added</span> <span class="keyword">desc</span>
+}</code></div>
+
+                    <details>
+                        <summary>Understanding the rating filter</summary>
+                        <div class="details-content">
+                            <p>The condition <code>rating = 0 or rating > 20</code> includes:</p>
+                            <ul>
+                                <li><strong>Unrated tracks</strong> (<code>rating = 0</code>) — new music you haven't evaluated yet</li>
+                                <li><strong>2-star and above</strong> (<code>rating > 20</code>) — tracks you've decided to keep in rotation</li>
+                            </ul>
+                            <p>It excludes 1-star tracks (<code>rating = 20</code>), which you can use as a "don't include in shuffle" marker without deleting the file from your library.</p>
+                        </div>
+                    </details>
+
+                    <div class="sync-tip">
+                        <strong>📱 Sync tip:</strong> Sync this playlist to quickly evaluate new music on the go, then rate tracks to sort them into your other playlists.
+                    </div>
+                </div>
+
+                <div class="playlist-example">
+                    <h4>🔁 Rediscover</h4>
+                    <p class="description">Songs you used to play but haven't heard in over 6 months. Resurface forgotten favorites from your library.</p>
+
+                    <div class="code-block"><code><span class="string">"Rediscover"</span> {
+  <span class="field">media_kind</span> <span class="keyword">is</span> <span class="string">music</span>
+  <span class="keyword">and</span> <span class="field">data_kind</span> <span class="keyword">is</span> <span class="string">file</span>
+  <span class="keyword">and</span> <span class="field">play_count</span> <span class="operator">></span> <span class="number">5</span>
+  <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">before</span> <span class="number">180</span> <span class="keyword">days ago</span>
+  <span class="keyword">and</span> <span class="field">rating</span> <span class="operator">></span> <span class="number">20</span>
+  <span class="keyword">order by</span> <span class="field">time_played</span> <span class="keyword">asc</span>
+}</code></div>
+
+                    <div class="sync-tip">
+                        <strong>📱 Sync tip:</strong> With playback tracking enabled, songs you rediscover on your phone will update their <code>time_played</code> and eventually rotate out of this list.
+                    </div>
+                </div>
+
+                <div class="playlist-example">
+                    <h4>😴 Overplayed Cool-down</h4>
+                    <p class="description">Tracks you've played heavily that might benefit from a rest. Review these periodically—if you're tired of a song, this helps you notice.</p>
+
+                    <div class="code-block"><code><span class="string">"Overplayed"</span> {
+  <span class="field">media_kind</span> <span class="keyword">is</span> <span class="string">music</span>
+  <span class="keyword">and</span> <span class="field">data_kind</span> <span class="keyword">is</span> <span class="string">file</span>
+  <span class="keyword">and</span> <span class="field">play_count</span> <span class="operator">></span> <span class="number">30</span>
+  <span class="keyword">and</span> <span class="field">time_played</span> <span class="keyword">after</span> <span class="number">14</span> <span class="keyword">days ago</span>
+  <span class="keyword">order by</span> <span class="field">play_count</span> <span class="keyword">desc</span>
+}</code></div>
+
+                    <details>
+                        <summary>Tuning the thresholds</summary>
+                        <div class="details-content">
+                            <p>Adjust these values based on your library size and listening habits:</p>
+                            <ul>
+                                <li><strong>play_count > 30</strong> — Lower this if your library is newer or you want to catch songs earlier</li>
+                                <li><strong>time_played after 14 days ago</strong> — The recency window; songs drop off this list naturally as time passes</li>
+                            </ul>
+                            <p>This playlist is diagnostic rather than for playback—use it to spot songs that might need a break or a rating adjustment.</p>
+                        </div>
+                    </details>
+                </div>
+
+                <div class="playlist-example">
+                    <h4>🎸 Genre Shuffle (Soul/R&B Example)</h4>
+                    <p class="description">A genre-focused playlist with basic rotation logic to avoid immediate repeats.</p>
+
+                    <div class="code-block"><code><span class="string">"Soul"</span> {
+  <span class="field">data_kind</span> <span class="keyword">is</span> <span class="string">file</span>
+  <span class="keyword">and</span> <span class="field">media_kind</span> <span class="keyword">is</span> <span class="string">music</span>
+  <span class="keyword">and</span> (
+    <span class="field">genre</span> <span class="keyword">includes</span> <span class="string">"Soul"</span>
+    <span class="keyword">or</span> <span class="field">genre</span> <span class="keyword">is</span> <span class="string">"R&B"</span>
+  )
+  <span class="keyword">and not</span> <span class="field">rating</span> <span class="operator">=</span> <span class="number">20</span>
+  <span class="keyword">and</span> (
+    <span class="field">play_count</span> <span class="operator">=</span> <span class="number">0</span>
+    <span class="keyword">or</span> (<span class="field">time_played</span> <span class="keyword">before</span> <span class="number">1</span> <span class="keyword">days ago</span>
+        <span class="keyword">and</span> <span class="field">time_skipped</span> <span class="keyword">before</span> <span class="number">3</span> <span class="keyword">days ago</span>)
+  )
+}</code></div>
+
+                    <details>
+                        <summary>Adapting for other genres</summary>
+                        <div class="details-content">
+                            <p>Replace the genre conditions with your own. Note the difference between operators:</p>
+                            <ul>
+                                <li><code>genre includes "Soul"</code> — matches "Soul", "Neo-Soul", "Soul/Funk", etc.</li>
+                                <li><code>genre is "R&B"</code> — matches only the exact string "R&B"</li>
+                            </ul>
+                            <p>Use <code>includes</code> for broader matching when your tags might have variations.</p>
+                        </div>
+                    </details>
+                </div>
+
+                <div class="playlist-example">
+                    <h4>🎄 Holiday Music</h4>
+                    <p class="description">A simple seasonal playlist. Enable sync only when you want holiday music on your device.</p>
+
+                    <div class="code-block"><code><span class="string">"Holiday Music"</span> {
+  <span class="field">media_kind</span> <span class="keyword">is</span> <span class="string">music</span>
+  <span class="keyword">and</span> <span class="field">genre</span> <span class="keyword">includes</span> <span class="string">"Holiday"</span>
+}</code></div>
+
+                    <div class="sync-tip">
+                        <strong>📱 Sync tip:</strong> In OwnTone Sync, you choose which playlists to sync. Add this one in December, remove it in January—your storage stays clean the rest of the year.
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <section class="examples-section">
+            <div class="container">
+                <h3>Creating Your Own</h3>
+
+                <p style="max-width: 700px; margin: 0 auto 2rem auto; text-align: center; color: var(--text-secondary);">Smart playlists are plain text files with a <code>.smartpl</code> extension, placed anywhere in your OwnTone music library folder.</p>
+
+                <div class="concept-grid">
+                    <div class="concept-card">
+                        <h4>1. Create the file</h4>
+                        <p>Create a text file like <code>my-playlist.smartpl</code> in your music library folder. The filename doesn't matter—only the playlist name inside the file.</p>
+                    </div>
+                    <div class="concept-card">
+                        <h4>2. Write the rules</h4>
+                        <p>Use the format <code>"Name" { conditions }</code>. Combine conditions with <code>and</code>, <code>or</code>, and <code>not</code>. Use parentheses to group logic.</p>
+                    </div>
+                    <div class="concept-card">
+                        <h4>3. Rescan library</h4>
+                        <p>Trigger a library rescan in OwnTone (or wait for automatic scan). Your new playlist will appear alongside your regular playlists.</p>
+                    </div>
+                </div>
+
+                <div style="text-align: center; margin-top: 2rem;">
+                    <a href="https://owntone.github.io/owntone-server/smart-playlists/" target="_blank" class="reference-link">
+                        📖 Complete syntax documentation →
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <section class="cta-final">
+            <div class="container">
+                <h3>Ready to sync smarter playlists?</h3>
+                <p style="color: var(--primary-light); margin-bottom: 2rem;">Enable playback tracking to make your smart playlists truly adaptive.</p>
+                <a href="https://play.google.com/store/apps/details?id=dev.educoder.owntone_sync" class="btn btn-primary" target="_blank">Download on Google Play</a>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2026 OwnTone Sync.</p>
+            <nav>
+                <a href="privacy.html">Privacy Policy</a>
+                <a href="mailto:support@educoder.dev">Contact</a>
+            </nav>
+        </div>
+    </footer>
+</body>
+</html>
