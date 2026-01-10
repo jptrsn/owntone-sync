@@ -1,0 +1,42 @@
+Categories:
+  - Multimedia
+  - Internet
+License: GPL-3.0-only
+AuthorName: EduCoder
+AuthorWebSite: https://educoder.dev
+WebSite: https://edu_coder.codeberg.page/owntone-sync/
+SourceCode: https://codeberg.org/edu_coder/owntone-sync
+IssueTracker: https://codeberg.org/edu_coder/owntone-sync/issues
+Changelog: https://codeberg.org/edu_coder/owntone-sync/releases
+
+AutoName: OwnTone Sync
+
+RepoType: git
+Repo: https://codeberg.org/edu_coder/owntone-sync
+
+Builds:
+  - versionName: 0.1.0
+    versionCode: 1
+    commit: v0.1.0
+    subdir: android/app
+    sudo:
+      - apt-get update
+      - apt-get install -y openjdk-17-jdk-headless
+      - update-alternatives --auto java
+    gradle:
+      - yes
+    output: build/app/outputs/flutter-apk/app-release.apk
+    srclibs:
+      - flutter@stable
+    prebuild: echo 'flutter.sdk=$$flutter$$' > ../local.properties
+    scandelete:
+      - .pub-cache
+    build:
+      - $$flutter$$/bin/flutter config --no-analytics
+      - $$flutter$$/bin/flutter packages pub get
+      - $$flutter$$/bin/flutter build apk --release
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 0.1.0
+CurrentVersionCode: 1
