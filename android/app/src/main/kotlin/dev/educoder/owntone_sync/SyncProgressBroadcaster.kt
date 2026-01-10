@@ -13,6 +13,7 @@ import io.flutter.plugin.common.EventChannel
 import java.util.UUID
 import android.util.Log
 import androidx.work.CoroutineWorker
+import android.content.pm.ServiceInfo
 
 object SyncProgressBroadcaster {
     var eventSink: EventChannel.EventSink? = null
@@ -90,7 +91,15 @@ object SyncProgressBroadcaster {
             .setSubText("Playlist ${currentPlaylistIndex + 1}/$totalPlaylists • Track $downloadedTracks/$totalTracks")
             .build()
 
-        return ForegroundInfo(NOTIFICATION_ID, notification)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            ForegroundInfo(NOTIFICATION_ID, notification)
+        }
     }
 
     suspend fun updateProgress(
