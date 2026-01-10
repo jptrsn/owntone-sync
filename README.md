@@ -252,7 +252,7 @@ Sync progress flows from Kotlin to Flutter:
 
 **Prerequisites:**
 - Flutter SDK 3.5 or higher
-- Android SDK (min SDK 29, target SDK 34)
+- Android SDK (min SDK 29, target SDK 35)
 - Android device or emulator
 
 **Setup:**
@@ -323,3 +323,7 @@ Storage usage depends on your library:
 - Check the setting is enabled in Server Configuration
 - Review logs: `adb logcat | grep MediaNotificationListener`
 - Some music players may not expose MediaSession properly
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
