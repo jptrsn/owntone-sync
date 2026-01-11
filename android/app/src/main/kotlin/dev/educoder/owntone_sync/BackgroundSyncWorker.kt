@@ -22,7 +22,24 @@ class BackgroundSyncWorker(
         private const val TAG = "BackgroundSyncWorker"
     }
 
+    private fun createInitialForegroundInfo(): ForegroundInfo {
+        return SyncProgressBroadcaster.createForegroundInfo(
+            applicationContext,
+            id,  // worker.id
+            currentPlaylist = "Initializing sync...",
+            currentPlaylistIndex = 0,
+            totalPlaylists = 1,
+            downloadedTracks = 0,
+            totalTracks = 0,
+            currentTrackTitle = null,
+            downloadProgress = null
+        )
+    }
+
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+
+        setForeground(createInitialForegroundInfo())
+
         val worker = this@BackgroundSyncWorker
         val triggerType = inputData.getString("trigger_type") ?: "scheduled"
         val startTime = System.currentTimeMillis()

@@ -80,4 +80,16 @@ class PermissionsService {
   Future<void> openAppSettings() async {
     await ph.openAppSettings();
   }
+
+  // Check if allowed to show notifications
+  Future<bool> hasNotificationPermission() async {
+    if (!Platform.isAndroid) return true;
+    return await ph.Permission.notification.isGranted;
+  }
+
+  Future<bool> requestNotificationPermission() async {
+    if (!Platform.isAndroid) return true;
+    final status = await ph.Permission.notification.request();
+    return status.isGranted;
+  }
 }

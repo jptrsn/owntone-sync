@@ -86,6 +86,11 @@ class SyncProvider extends ChangeNotifier {
     // Check permissions on startup
     _hasStoragePermission = await _permissionsService.hasStoragePermission();
 
+    // Request notification permission for background sync
+    if (!await _permissionsService.hasNotificationPermission()) {
+      await _permissionsService.requestNotificationPermission();
+    }
+
     // Load saved playlists
     await _loadSavedPlaylists();
 
