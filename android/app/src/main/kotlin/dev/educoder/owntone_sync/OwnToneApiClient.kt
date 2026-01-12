@@ -1,7 +1,8 @@
 package dev.educoder.owntone_sync
 
-import com.google.gson.Gson
-import com.google.gson.annotations.SerializedName
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.Json
+import com.squareup.moshi.JsonClass
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -16,49 +17,56 @@ class OwnToneApiClient(private val baseUrl: String) {
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    private val gson = Gson()
+    private val moshi = Moshi.Builder().build()
+    private val playlistsAdapter = moshi.adapter(PlaylistsResponse::class.java)
+    private val tracksAdapter = moshi.adapter(TracksResponse::class.java)
+    private val trackAdapter = moshi.adapter(Track::class.java)
 
     // Data classes matching API responses
+    @JsonClass(generateAdapter = true)
     data class PlaylistsResponse(
-        @SerializedName("items") val items: List<Playlist>,
-        @SerializedName("total") val total: Int,
-        @SerializedName("offset") val offset: Int,
-        @SerializedName("limit") val limit: Int
+        val items: List<Playlist>,
+        val total: Int,
+        val offset: Int,
+        val limit: Int
     )
 
+    @JsonClass(generateAdapter = true)
     data class Playlist(
-        @SerializedName("id") val id: Int,
-        @SerializedName("name") val name: String,
-        @SerializedName("path") val path: String,
-        @SerializedName("type") val type: String
+        val id: Int,
+        val name: String,
+        val path: String,
+        val type: String
     )
 
+    @JsonClass(generateAdapter = true)
     data class TracksResponse(
-        @SerializedName("items") val items: List<Track>,
-        @SerializedName("total") val total: Int,
-        @SerializedName("offset") val offset: Int,
-        @SerializedName("limit") val limit: Int
+        val items: List<Track>,
+        val total: Int,
+        val offset: Int,
+        val limit: Int
     )
 
+    @JsonClass(generateAdapter = true)
     data class Track(
-        @SerializedName("id") val id: Int,
-        @SerializedName("title") val title: String,
-        @SerializedName("artist") val artist: String,
-        @SerializedName("album") val album: String,
-        @SerializedName("album_artist") val albumArtist: String,
-        @SerializedName("path") val path: String,
-        @SerializedName("type") val type: String,
-        @SerializedName("genre") val genre: String?,
-        @SerializedName("length_ms") val lengthMs: Int,
-        @SerializedName("track_number") val trackNumber: Int,
-        @SerializedName("disc_number") val discNumber: Int,
-        @SerializedName("year") val year: Int,
-        @SerializedName("artwork_url") val artworkUrl: String?,
-        @SerializedName("album_id") val albumId: String,
-        @SerializedName("play_count") val playCount: Int = 0,
-        @SerializedName("skip_count") val skipCount: Int = 0,
-        @SerializedName("time_played") val timePlayed: String? = null,
-        @SerializedName("time_skipped") val timeSkipped: String? = null
+        val id: Int,
+        val title: String,
+        val artist: String,
+        val album: String,
+        @Json(name = "album_artist") val albumArtist: String,
+        val path: String,
+        val type: String,
+        val genre: String?,
+        @Json(name = "length_ms") val lengthMs: Int,
+        @Json(name = "track_number") val trackNumber: Int,
+        @Json(name = "disc_number") val discNumber: Int,
+        val year: Int,
+        @Json(name = "artwork_url") val artworkUrl: String?,
+        @Json(name = "album_id") val albumId: String,
+        @Json(name = "play_count") val playCount: Int = 0,
+        @Json(name = "skip_count") val skipCount: Int = 0,
+        @Json(name = "time_played") val timePlayed: String? = null,
+        @Json(name = "time_skipped") val timeSkipped: String? = null
     )
 
     fun getPlaylists(limit: Int = 1000): PlaylistsResponse {
@@ -69,7 +77,8 @@ class OwnToneApiClient(private val baseUrl: String) {
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("Unexpected code $response")
             val body = response.body?.string() ?: throw IOException("Empty response")
-            return gson.fromJson(body, PlaylistsResponse::class.java)
+            return playlistsAdapter.fromJson(body)
+                ?: throw IOException("Failed to parse playlists response")
         }
     }
 
@@ -81,7 +90,8 @@ class OwnToneApiClient(private val baseUrl: String) {
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("Unexpected code $response")
             val body = response.body?.string() ?: throw IOException("Empty response")
-            return gson.fromJson(body, TracksResponse::class.java)
+            return tracksAdapter.fromJson(body)
+                ?: throw IOException("Failed to parse tracks response")
         }
     }
 
@@ -213,7 +223,8 @@ class OwnToneApiClient(private val baseUrl: String) {
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("Unexpected code $response")
             val body = response.body?.string() ?: throw IOException("Empty response")
-            return gson.fromJson(body, Track::class.java)
+            return trackAdapter.fromJson(body)
+                ?: throw IOException("Failed to parse track response")
         }
     }
 }

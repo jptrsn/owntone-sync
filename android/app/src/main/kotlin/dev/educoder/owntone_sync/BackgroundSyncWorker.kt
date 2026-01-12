@@ -12,6 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.JsonClass
 
 class BackgroundSyncWorker(
     context: Context,
@@ -100,8 +102,9 @@ class BackgroundSyncWorker(
                     playlistIdsString
                 }
 
-                val gson = com.google.gson.Gson()
-                val list = gson.fromJson(jsonPart, Array<String>::class.java)
+                val moshi = Moshi.Builder().build()
+                val adapter = moshi.adapter<Array<String>>(Array<String>::class.java)
+                val list = adapter.fromJson(jsonPart) ?: emptyArray()
                 list.map { it.toInt() }
             } catch (e: Exception) {
                 Log.e(TAG, "Error parsing playlist IDs: $playlistIdsString", e)
@@ -500,8 +503,9 @@ class BackgroundSyncWorker(
         val syncScheduleJson = prefs.getString("flutter.sync_schedule", null) ?: return
 
         try {
-            val gson = com.google.gson.Gson()
-            val schedule = gson.fromJson(syncScheduleJson, SyncSchedule::class.java)
+            val moshi = Moshi.Builder().build()
+            val adapter = moshi.adapter(SyncSchedule::class.java)
+            val schedule = adapter.fromJson(syncScheduleJson) ?: return
 
             if (!schedule.enabled) return
 
@@ -652,6 +656,7 @@ class BackgroundSyncWorker(
         return eventsSynced
     }
 
+    @com.squareup.moshi.JsonClass(generateAdapter = true)
     data class SyncSchedule(
         val enabled: Boolean,
         val hour: Int,

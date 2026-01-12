@@ -22,7 +22,6 @@ import android.os.PowerManager
 import java.util.concurrent.TimeUnit
 import androidx.work.ExistingPeriodicWorkPolicy
 import android.util.Log
-import com.google.gson.Gson
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.ExistingWorkPolicy
@@ -30,6 +29,8 @@ import androidx.work.WorkInfo
 import androidx.work.Data
 import io.flutter.plugin.common.EventChannel
 import android.content.Context
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.JsonClass
 
 class MainActivity: FlutterActivity() {
     private val EVENTS_CHANNEL = "dev.educoder.owntone_sync/events"
@@ -481,8 +482,9 @@ class MainActivity: FlutterActivity() {
         }
 
         try {
-            val gson = com.google.gson.Gson()
-            val schedule = gson.fromJson(syncScheduleJson, SyncSchedule::class.java)
+            val moshi = Moshi.Builder().build()
+            val adapter = moshi.adapter(SyncSchedule::class.java)
+            val schedule = adapter.fromJson(syncScheduleJson) ?: return
 
             if (!schedule.enabled) {
                 // Cancel all work if sync is disabled
@@ -539,6 +541,7 @@ class MainActivity: FlutterActivity() {
         }
     }
 
+    @com.squareup.moshi.JsonClass(generateAdapter = true)
     data class SyncSchedule(
         val enabled: Boolean,
         val scheduleType: String,

@@ -16,7 +16,7 @@ Repo: https://codeberg.org/edu_coder/owntone-sync
 
 Builds:
   - versionName: 0.1.1
-    versionCode: 3
+    versionCode: 4
     commit: v0.1.1
     subdir: android/app
     sudo:
@@ -39,4 +39,4 @@ Builds:
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
 CurrentVersion: 0.1.1
-CurrentVersionCode: 3
+CurrentVersionCode: 4

@@ -16,6 +16,58 @@ class FileOperations(private val context: Context) {
         val failedPaths: List<String>
     )
 
+    // Cache commonly used folders
+    private var cachedTracksFolder: DocumentFile? = null
+    private var cachedPlaylistsFolder: DocumentFile? = null
+
+    // Cache invalidation
+    fun invalidateCache() {
+        cachedTracksFolder = null
+        cachedPlaylistsFolder = null
+    }
+
+    // Get or create tracks folder once
+    private fun getTracksFolder(): DocumentFile? {
+        if (cachedTracksFolder != null && cachedTracksFolder!!.exists()) {
+            return cachedTracksFolder
+        }
+
+        val musicFolder = getMusicFolderDocumentFile() ?: return null
+
+        var tracksFolder = musicFolder.findFile("tracks")
+        if (tracksFolder == null) {
+            tracksFolder = musicFolder.createDirectory("tracks")
+        } else if (!tracksFolder.isDirectory) {
+            Log.w("FileOperations", "tracks exists as file, deleting")
+            tracksFolder.delete()
+            tracksFolder = musicFolder.createDirectory("tracks")
+        }
+
+        cachedTracksFolder = tracksFolder
+        return tracksFolder
+    }
+
+    // Get or create playlists folder once
+    private fun getPlaylistsFolder(): DocumentFile? {
+        if (cachedPlaylistsFolder != null && cachedPlaylistsFolder!!.exists()) {
+            return cachedPlaylistsFolder
+        }
+
+        val musicFolder = getMusicFolderDocumentFile() ?: return null
+
+        var playlistsFolder = musicFolder.findFile("playlists")
+        if (playlistsFolder == null) {
+            playlistsFolder = musicFolder.createDirectory("playlists")
+        } else if (!playlistsFolder.isDirectory) {
+            Log.w("FileOperations", "playlists exists as file, deleting")
+            playlistsFolder.delete()
+            playlistsFolder = musicFolder.createDirectory("playlists")
+        }
+
+        cachedPlaylistsFolder = playlistsFolder
+        return playlistsFolder
+    }
+
     fun getMusicFolderUri(): String? {
         return context.getSharedPreferences("storage_prefs", Context.MODE_PRIVATE)
             .getString("music_folder_uri", null)
@@ -66,10 +118,25 @@ class FileOperations(private val context: Context) {
 
     fun writeFile(filePath: String, data: ByteArray): Boolean {
         try {
-            val musicFolder = getMusicFolderDocumentFile() ?: return false
+            // Determine which folder this file goes in
+            val pathParts = filePath.split("/")
+            if (pathParts.size < 2) return false
+
+            val folderType = pathParts[0] // "tracks" or "playlists"
+            val fileName = pathParts.last()
+
+            // Get the appropriate cached folder
+            val parentFolder = when (folderType) {
+                "tracks" -> getTracksFolder()
+                "playlists" -> getPlaylistsFolder()
+                else -> {
+                    Log.e("FileOperations", "Unknown folder type: $folderType")
+                    return false
+                }
+            } ?: return false
 
             // Determine MIME type from extension
-            val extension = filePath.substringAfterLast('.', "")
+            val extension = fileName.substringAfterLast('.', "")
             val mimeType = when (extension) {
                 "mp3" -> "audio/mpeg"
                 "flac" -> "audio/flac"
@@ -82,37 +149,18 @@ class FileOperations(private val context: Context) {
                 else -> "application/octet-stream"
             }
 
-            // Path is already relative
-            val pathParts = filePath.split("/")
-            var currentFolder: DocumentFile = musicFolder
-
-            // Navigate/create parent folders
-            for (i in 0 until pathParts.size - 1) {
-                val folderName = pathParts[i]
-                var folder = currentFolder.findFile(folderName)
-
-                if (folder == null || !folder.isDirectory) {
-                    folder = currentFolder.createDirectory(folderName) ?: return false
-                }
-
-                currentFolder = folder
-            }
-
-            val fileName = pathParts.last()
-            val existingFile = currentFolder.findFile(fileName)
+            // Check if file already exists
+            val existingFile = parentFolder.findFile(fileName)
 
             val outputStream: OutputStream? = if (existingFile?.exists() == true) {
                 context.contentResolver.openOutputStream(existingFile.uri, "wt")
             } else {
-                val newFile = currentFolder.createFile(mimeType, fileName) ?: return false
+                val newFile = parentFolder.createFile(mimeType, fileName) ?: return false
                 context.contentResolver.openOutputStream(newFile.uri)
             }
 
             outputStream?.use { output ->
-                // Use BufferedOutputStream for better performance
-                java.io.BufferedOutputStream(output, 262144).use { buffered ->  // 256KB buffer
-                    val totalBytes = data.size.toLong()
-                    // Write entire array at once - fastest method
+                java.io.BufferedOutputStream(output, 262144).use { buffered ->
                     buffered.write(data)
                     buffered.flush()
                 }
@@ -126,25 +174,19 @@ class FileOperations(private val context: Context) {
     }
 
     private fun getDocumentFileFromPath(filePath: String): DocumentFile? {
-        val musicFolder = getMusicFolderDocumentFile() ?: return null
-
         val pathParts = filePath.split("/")
-        var currentFolder = musicFolder
+        if (pathParts.size < 2) return null
 
-        // Navigate to parent folders
-        for (i in 0 until pathParts.size - 1) {
-            val folderName = pathParts[i]
-            var folder = currentFolder.findFile(folderName)
-
-            if (folder == null || !folder.isDirectory) {
-                folder = currentFolder.createDirectory(folderName) ?: return null
-            }
-
-            currentFolder = folder
-        }
-
+        val folderType = pathParts[0]
         val fileName = pathParts.last()
-        return currentFolder.findFile(fileName)
+
+        val parentFolder = when (folderType) {
+            "tracks" -> getTracksFolder()
+            "playlists" -> getPlaylistsFolder()
+            else -> return null
+        } ?: return null
+
+        return parentFolder.findFile(fileName)
     }
 
     fun getExtensionFromContentType(contentType: String): String {
@@ -171,11 +213,12 @@ class FileOperations(private val context: Context) {
     }
 
     fun generateTrackFilename(track: OwnToneApiClient.Track, extension: String): String {
+        val title = sanitizeFilename(track.title)
         val artist = sanitizeFilename(track.artist)
         val album = sanitizeFilename(track.album)
         val trackId = track.id
 
-        return "${artist}_${album}_$trackId.$extension"
+        return "${artist}_${title}_${album}_$trackId.$extension"
     }
 
     fun deleteFile(filePath: String): Boolean {
