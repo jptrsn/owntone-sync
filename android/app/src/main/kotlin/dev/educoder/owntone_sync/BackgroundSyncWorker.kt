@@ -139,6 +139,8 @@ class BackgroundSyncWorker(
                 }
             }
 
+            var tracksProcessed = 0;
+
             // Sync each playlist
             for ((playlistIndex, playlistId) in playlistIds.withIndex()) {
                 // Check if work is cancelled
@@ -184,6 +186,7 @@ class BackgroundSyncWorker(
 
                     // Count already-validated tracks as processed
                     val alreadyValidatedCount = serverTracks.size - tracksToDownload.size
+                    tracksProcessed += alreadyValidatedCount;
                     Log.i(TAG, "${alreadyValidatedCount} tracks already on device")
 
                     // Download tracks
@@ -197,28 +200,32 @@ class BackgroundSyncWorker(
                         }
                         try {
                             // Download track with streaming (downloads and writes in one operation)
-                            val downloadResult = apiClient.downloadTrack(track) { bytesRead, totalBytes ->
-                                if (!isStopped) {
-                                    try {
-                                        val downloadProgress = if (totalBytes > 0) {
-                                            (bytesRead.toDouble() / totalBytes.toDouble())
-                                        } else {
-                                            0.0
-                                        }
+                            val downloadResult = apiClient.downloadTrack(
+                                track,
+                                onProgress = { bytesRead, totalBytes ->
+                                    if (!isStopped) {
+                                        try {
+                                            val downloadProgress = if (totalBytes > 0) {
+                                                (bytesRead.toDouble() / totalBytes.toDouble())
+                                            } else {
+                                                0.0
+                                            }
 
-                                        kotlinx.coroutines.runBlocking {
-                                            SyncProgressBroadcaster.updateProgress(
-                                                applicationContext, worker, playlist.name,
-                                                playlistIndex, playlistIds.size,
-                                                (tracksDownloaded + alreadyValidatedCount), totalTracks,
-                                                "Downloading ${track.title}", downloadProgress
-                                            )
+                                            kotlinx.coroutines.runBlocking {
+                                                SyncProgressBroadcaster.updateProgress(
+                                                    applicationContext, worker, playlist.name,
+                                                    playlistIndex, playlistIds.size,
+                                                    tracksProcessed, totalTracks,
+                                                    "Downloading ${track.title}", downloadProgress
+                                                )
+                                            }
+                                        } catch (e: Exception) {
+                                            Log.d(TAG, "Ignoring progress update error: ${e.message}")
                                         }
-                                    } catch (e: Exception) {
-                                        Log.d(TAG, "Ignoring progress update error: ${e.message}")
                                     }
-                                }
-                            }
+                                },
+                                isCancelled = { isStopped }
+                            )
 
                             // Save to database
                             dbHelper.insertOrUpdateTrack(
@@ -243,8 +250,14 @@ class BackgroundSyncWorker(
                             )
 
                             tracksDownloaded++
+                            tracksProcessed++
                             Log.i(TAG, "Downloaded track: ${track.title} (${downloadResult.bytesWritten} bytes)")
 
+                        } catch (e: java.io.InterruptedIOException) {
+                            Log.i(TAG, "Download cancelled by user")
+                            syncCancelled = true
+                            cancellationReason = "Cancelled by user"
+                            break
                         } catch (e: StorageFullException) {
                             Log.e(TAG, "Storage full - cancelling sync", e)
                             syncCancelled = true

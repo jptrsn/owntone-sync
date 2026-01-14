@@ -106,7 +106,8 @@ class OwnToneApiClient(
 
     fun downloadTrack(
         track: Track,
-        onProgress: (bytesRead: Long, totalBytes: Long) -> Unit
+        onProgress: (bytesRead: Long, totalBytes: Long) -> Unit,
+        isCancelled: () -> Boolean
     ): DownloadResult {
         val url = "$baseUrl/databases/1/items/${track.id}.dat?no_register_playback=1"
         Log.d("OwnToneApiClient", "Downloading track ${track.id} from: $url")
@@ -149,7 +150,8 @@ class OwnToneApiClient(
             inputStream,
             contentType,
             contentLength,
-            onProgress
+            onProgress,
+            isCancelled
         )
 
         Log.d("OwnToneApiClient", "Download completed: $bytesWritten bytes written")

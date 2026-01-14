@@ -199,7 +199,8 @@ class FileOperations(private val context: Context) {
         inputStream: InputStream,
         contentType: String,
         expectedSize: Long,
-        onProgress: (written: Long, total: Long) -> Unit
+        onProgress: (written: Long, total: Long) -> Unit,
+        isCancelled: () -> Boolean
     ): Long {
         var bytesWritten = 0L
         var outputStream: OutputStream? = null
@@ -246,6 +247,12 @@ class FileOperations(private val context: Context) {
             inputStream.use { input ->
                 java.io.BufferedOutputStream(outputStream, STREAM_BUFFER_SIZE).use { output ->
                     while (input.read(buffer).also { bytesRead = it } != -1) {
+                        // Check for cancellation
+                        if (isCancelled()) {
+                            Log.i("FileOperations", "Download cancelled by user, stopping stream")
+                            throw java.io.InterruptedIOException("Download cancelled by user")
+                        }
+
                         output.write(buffer, 0, bytesRead)
                         bytesWritten += bytesRead
 
