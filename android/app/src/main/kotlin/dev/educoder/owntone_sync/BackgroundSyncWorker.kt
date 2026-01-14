@@ -72,9 +72,9 @@ class BackgroundSyncWorker(
             }
 
             // Initialize helpers
-            val apiClient = OwnToneApiClient(serverUrl)
             val dbHelper = DatabaseHelper(applicationContext)
             val fileOps = FileOperations(applicationContext)
+            val apiClient = OwnToneApiClient(serverUrl, fileOps)
 
             // Sync events first (if tracking is enabled)
             val eventTrackingEnabled = prefs.getBoolean("flutter.event_tracking_enabled", false)
@@ -118,6 +118,7 @@ class BackgroundSyncWorker(
 
             var tracksDownloaded = 0
             var syncCancelled = false
+            var cancellationReason: String? = null
 
             SyncProgressBroadcaster.updateProgress(
                 applicationContext, worker, "Reading existing tracks", 0, playlistIds.size, 0, 0
@@ -183,7 +184,6 @@ class BackgroundSyncWorker(
 
                     // Count already-validated tracks as processed
                     val alreadyValidatedCount = serverTracks.size - tracksToDownload.size
-                    tracksDownloaded += alreadyValidatedCount
                     Log.i(TAG, "${alreadyValidatedCount} tracks already on device")
 
                     // Download tracks
@@ -192,92 +192,67 @@ class BackgroundSyncWorker(
                         if (isStopped) {
                             Log.i(TAG, "Sync cancelled, stopping downloads")
                             syncCancelled = true
+                            cancellationReason = "Sync cancelled by user"
                             break
                         }
                         try {
-                            // Update notification for current track
-                            SyncProgressBroadcaster.updateProgress(
-                                applicationContext, worker, playlist.name, playlistIndex, playlistIds.size, tracksDownloaded, totalTracks,
-                                track.title, 0.0
-                            )
-
-                            // Download track data and get content type with progress tracking
-                            val downloadStart = System.currentTimeMillis()
-                            val (trackData, contentType) = apiClient.downloadTrack(track.id) { bytesRead, totalBytes ->
+                            // Download track with streaming (downloads and writes in one operation)
+                            val downloadResult = apiClient.downloadTrack(track) { bytesRead, totalBytes ->
                                 if (!isStopped) {
                                     try {
-                                        val downloadProgress = if (totalBytes > 0) (bytesRead.toDouble() / totalBytes.toDouble()) else 0.0
+                                        val downloadProgress = if (totalBytes > 0) {
+                                            (bytesRead.toDouble() / totalBytes.toDouble())
+                                        } else {
+                                            0.0
+                                        }
 
                                         kotlinx.coroutines.runBlocking {
                                             SyncProgressBroadcaster.updateProgress(
-                                                applicationContext, worker, playlist.name, playlistIndex, playlistIds.size,
-                                                tracksDownloaded, totalTracks,
+                                                applicationContext, worker, playlist.name,
+                                                playlistIndex, playlistIds.size,
+                                                (tracksDownloaded + alreadyValidatedCount), totalTracks,
                                                 "Downloading ${track.title}", downloadProgress
                                             )
                                         }
                                     } catch (e: Exception) {
-                                        Log.d(TAG, "Ignoring progress update error during cancellation: ${e.message}")
+                                        Log.d(TAG, "Ignoring progress update error: ${e.message}")
                                     }
                                 }
                             }
 
-                            val downloadTime = System.currentTimeMillis() - downloadStart
-                            Log.i(TAG, "Download took ${downloadTime}ms for ${trackData.size} bytes (${track.title})")
-
-
-                            val extension = fileOps.getExtensionFromContentType(contentType)
-
-                            // Generate file path
-                            val filename = fileOps.generateTrackFilename(track, extension)
-                            val filePath = "tracks/$filename"
-
-                            val jobProgress = if (totalTracks > 0) (tracksDownloaded.toDouble() / totalTracks.toDouble()) else 0.0
-
-                            kotlinx.coroutines.runBlocking {
-                                            SyncProgressBroadcaster.updateProgress(
-                                                applicationContext, worker, playlist.name, playlistIndex, playlistIds.size,
-                                                tracksDownloaded, totalTracks,
-                                                "Saving ${track.title}", jobProgress
-                                            )
-                                        }
-                            val writeStart = System.currentTimeMillis()
-                            val success = fileOps.writeFile(filePath, trackData)
-
-                            val writeTime = System.currentTimeMillis() - writeStart
-                            Log.i(TAG, "File write took ${writeTime}ms for ${trackData.size} bytes (${track.title})")
-
-                            val totalTime = downloadTime + writeTime
-                            Log.i(TAG, "Total time: ${totalTime}ms (download: ${downloadTime}ms / ${(downloadTime.toFloat()/totalTime*100).toInt()}%, write: ${writeTime}ms / ${(writeTime.toFloat()/totalTime*100).toInt()}%)")
-
-
-                            if (success) {
-                                // Save to database
-                                dbHelper.insertOrUpdateTrack(
-                                    DatabaseHelper.SyncedTrack(
-                                        id = track.id,
-                                        title = track.title,
-                                        artist = track.artist,
-                                        album = track.album,
-                                        albumArtist = track.albumArtist,
-                                        localPath = filePath,
-                                        serverPath = track.path,
-                                        downloadTimestamp = System.currentTimeMillis(),
-                                        fileSize = trackData.size.toLong(),
-                                        genre = track.genre ?: "",
-                                        lengthMs = track.lengthMs,
-                                        trackNumber = track.trackNumber,
-                                        discNumber = track.discNumber,
-                                        year = track.year,
-                                        artworkUrl = track.artworkUrl ?: "",
-                                        artworkPath = null
-                                    )
+                            // Save to database
+                            dbHelper.insertOrUpdateTrack(
+                                DatabaseHelper.SyncedTrack(
+                                    id = track.id,
+                                    title = track.title,
+                                    artist = track.artist,
+                                    album = track.album,
+                                    albumArtist = track.albumArtist,
+                                    localPath = downloadResult.filePath,
+                                    serverPath = track.path,
+                                    downloadTimestamp = System.currentTimeMillis(),
+                                    fileSize = downloadResult.bytesWritten,
+                                    genre = track.genre ?: "",
+                                    lengthMs = track.lengthMs,
+                                    trackNumber = track.trackNumber,
+                                    discNumber = track.discNumber,
+                                    year = track.year,
+                                    artworkUrl = track.artworkUrl ?: "",
+                                    artworkPath = null
                                 )
+                            )
 
-                                tracksDownloaded++
-                                Log.i(TAG, "Downloaded track: ${track.title}")
-                            }
+                            tracksDownloaded++
+                            Log.i(TAG, "Downloaded track: ${track.title} (${downloadResult.bytesWritten} bytes)")
+
+                        } catch (e: StorageFullException) {
+                            Log.e(TAG, "Storage full - cancelling sync", e)
+                            syncCancelled = true
+                            cancellationReason = e.message ?: "Storage full - not enough space to continue sync"
+                            break  // Exit track loop immediately
                         } catch (e: Exception) {
-                            Log.e(TAG, "Error downloading track ${track.id}", e)
+                            Log.e(TAG, "Error downloading track ${track.id} (${track.title})", e)
+                            // Continue to next track
                         }
                     }
 
@@ -397,7 +372,7 @@ class BackgroundSyncWorker(
                     playlistsSynced = playlistIds.size,
                     tracksDownloaded = tracksDownloaded,
                     tracksDeleted = tracksDeleted,
-                    errorMessage = if (syncCancelled) "Cancelled by user" else null,
+                    errorMessage = if (syncCancelled) cancellationReason else null,
                     durationMs = duration,
                     triggerType = triggerType
                 )
@@ -420,7 +395,10 @@ class BackgroundSyncWorker(
 
             Log.i(TAG, "Background sync completed: $tracksDownloaded tracks downloaded in ${duration}ms")
             if (syncCancelled) {
-                SyncProgressBroadcaster.broadcastSyncComplete("cancelled", "Cancelled by user")
+                SyncProgressBroadcaster.broadcastSyncComplete(
+                    "cancelled",
+                    cancellationReason ?: "Sync cancelled"
+                )
             } else {
                 SyncProgressBroadcaster.broadcastSyncComplete("success")
             }

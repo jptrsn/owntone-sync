@@ -61,6 +61,10 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
   }
 
   bool _isLocalAddress(String host) {
+    if (host.endsWith('.local')) {
+      return true;
+    }
+
     if (host == 'localhost' || host == '127.0.0.1' || host == '::1') {
       return true;
     }

@@ -28,7 +28,7 @@ class SyncSchedule {
   Map<String, dynamic> toJson() {
     return {
       'enabled': enabled,
-      'scheduleType': scheduleType.toString(),
+      'scheduleType': scheduleType.name,
       'hour': hour,
       'minute': minute,
       'daysOfWeek': daysOfWeek.toList(),

@@ -10,7 +10,16 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 import android.util.Log
 
-class OwnToneApiClient(private val baseUrl: String) {
+class OwnToneApiClient(
+        private val baseUrl: String,
+        private val fileOps: FileOperations
+    ) {
+
+    data class DownloadResult(
+        val contentType: String,
+        val bytesWritten: Long,
+        val filePath: String
+    )
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -95,9 +104,12 @@ class OwnToneApiClient(private val baseUrl: String) {
         }
     }
 
-    fun downloadTrack(trackId: Int, onProgress: ((bytesRead: Long, totalBytes: Long) -> Unit)? = null): Pair<ByteArray, String> {
-        val url = "$baseUrl/databases/1/items/$trackId.dat?no_register_playback=1"
-        Log.d("OwnToneApiClient", "Downloading track $trackId from: $url")
+    fun downloadTrack(
+        track: Track,
+        onProgress: (bytesRead: Long, totalBytes: Long) -> Unit
+    ): DownloadResult {
+        val url = "$baseUrl/databases/1/items/${track.id}.dat?no_register_playback=1"
+        Log.d("OwnToneApiClient", "Downloading track ${track.id} from: $url")
 
         val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
         connection.requestMethod = "GET"
@@ -107,38 +119,47 @@ class OwnToneApiClient(private val baseUrl: String) {
 
         try {
             connection.connect()
-            Log.d("OwnToneApiClient", "Connected, response code: ${connection.responseCode}")
+            val responseCode = connection.responseCode
 
-            val contentType = connection.getHeaderField("Content-Type") ?: "audio/mpeg"
-            val contentLength = connection.contentLength.toLong()
-            val inputStream = connection.inputStream
-
-            // Read with progress tracking
-            val buffer = ByteArray(8192)
-            val output = java.io.ByteArrayOutputStream()
-            var bytesRead = 0L
-            var read: Int
-            var lastProgressUpdate = 0L
-
-            while (inputStream.read(buffer).also { read = it } != -1) {
-                output.write(buffer, 0, read)
-                bytesRead += read
-
-                // Throttle progress callbacks to every 500ms
-                val now = System.currentTimeMillis()
-                if (now - lastProgressUpdate >= 500) {
-                    lastProgressUpdate = now
-                    onProgress?.invoke(bytesRead, contentLength)
-                }
+            if (responseCode != 200) {
+                throw IOException("GET request failed with code $responseCode for track ${track.id}")
             }
 
-            // Final progress update at 100%
-            onProgress?.invoke(bytesRead, contentLength)
+            Log.d("OwnToneApiClient", "GET request successful, starting stream to storage")
 
-            val bytes = output.toByteArray()
+            // Get content type and length from GET response
+        val contentType = connection.getHeaderField("Content-Type") ?: "audio/mpeg"
+        val contentLength = connection.contentLengthLong
 
-            Log.d("OwnToneApiClient", "Downloaded ${bytes.size} bytes, type: $contentType")
-            return Pair(bytes, contentType)
+        if (contentLength <= 0) {
+            throw IOException("Invalid Content-Length from GET request: $contentLength")
+        }
+
+        Log.d("OwnToneApiClient", "GET request successful: type=$contentType, size=$contentLength bytes")
+
+        // Generate filename from content type
+        val extension = fileOps.getExtensionFromContentType(contentType)
+        val filename = fileOps.generateTrackFilename(track, extension)
+        val filePath = "tracks/$filename"
+
+        // Stream directly to storage
+        val inputStream = connection.inputStream
+        val bytesWritten = fileOps.writeFileStreaming(
+            filePath,
+            inputStream,
+            contentType,
+            contentLength,
+            onProgress
+        )
+
+        Log.d("OwnToneApiClient", "Download completed: $bytesWritten bytes written")
+
+        return DownloadResult(
+            contentType = contentType,
+            bytesWritten = bytesWritten,
+            filePath = filePath
+        )
+
         } finally {
             connection.disconnect()
         }

@@ -481,10 +481,13 @@ class SyncProvider extends ChangeNotifier {
 
   /// Load saved playlists from database
   Future<void> _loadSavedPlaylists() async {
-    if (_dbRepo == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    final savedIds = prefs.getStringList('selected_playlist_ids');
 
-    final savedPlaylists = await _dbRepo!.getAllPlaylists();
-    _selectedPlaylistIds = savedPlaylists.map((p) => p.id).toSet();
+    if (savedIds != null) {
+      _selectedPlaylistIds = savedIds.map((id) => int.parse(id)).toSet();
+    }
+
     notifyListeners();
   }
 

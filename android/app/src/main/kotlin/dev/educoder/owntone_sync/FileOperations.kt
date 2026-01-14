@@ -7,8 +7,16 @@ import androidx.documentfile.provider.DocumentFile
 import java.io.OutputStream
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicInteger
+import android.system.ErrnoException
+import android.system.OsConstants
+import java.io.IOException
+import java.io.InputStream
 
 class FileOperations(private val context: Context) {
+
+    companion object {
+        private const val STREAM_BUFFER_SIZE = 262144 // 256KB
+    }
 
     data class BatchDeleteResult(
         val totalFiles: Int,
@@ -173,6 +181,121 @@ class FileOperations(private val context: Context) {
         }
     }
 
+    /**
+     * Writes a file by streaming from an InputStream directly to SAF storage.
+     * This avoids loading the entire file into memory.
+     *
+     * @param filePath Relative path (e.g., "tracks/filename.flac")
+     * @param inputStream Source stream to read from
+     * @param contentType MIME type for the file
+     * @param expectedSize Expected number of bytes (from Content-Length)
+     * @param onProgress Called after each chunk is written
+     * @return Number of bytes actually written
+     * @throws StorageFullException if storage is full
+     * @throws IOException for other I/O errors
+     */
+    fun writeFileStreaming(
+        filePath: String,
+        inputStream: InputStream,
+        contentType: String,
+        expectedSize: Long,
+        onProgress: (written: Long, total: Long) -> Unit
+    ): Long {
+        var bytesWritten = 0L
+        var outputStream: OutputStream? = null
+
+        try {
+            // Determine which folder this file goes in
+            val pathParts = filePath.split("/")
+            if (pathParts.size < 2) {
+                throw IOException("Invalid file path: $filePath")
+            }
+
+            val folderType = pathParts[0] // "tracks" or "playlists"
+            val fileName = pathParts.last()
+
+            // Get the appropriate cached folder
+            val parentFolder = when (folderType) {
+                "tracks" -> getTracksFolder()
+                "playlists" -> getPlaylistsFolder()
+                else -> throw IOException("Unknown folder type: $folderType")
+            } ?: throw IOException("Unable to access parent folder")
+
+            // Determine MIME type from content type
+            val mimeType = contentType.split(";").first().trim()
+
+            // Check if file already exists and delete it (we're rewriting)
+            val existingFile = parentFolder.findFile(fileName)
+            if (existingFile?.exists() == true) {
+                existingFile.delete()
+            }
+
+            // Create new file
+            val newFile = parentFolder.createFile(mimeType, fileName)
+                ?: throw IOException("Unable to create file: $fileName")
+
+            // Open output stream
+            outputStream = context.contentResolver.openOutputStream(newFile.uri)
+                ?: throw IOException("Unable to open output stream for: $fileName")
+
+            // Stream data with buffering
+            val buffer = ByteArray(STREAM_BUFFER_SIZE)
+            var bytesRead: Int
+            var lastProgressUpdate = 0L
+
+            inputStream.use { input ->
+                java.io.BufferedOutputStream(outputStream, STREAM_BUFFER_SIZE).use { output ->
+                    while (input.read(buffer).also { bytesRead = it } != -1) {
+                        output.write(buffer, 0, bytesRead)
+                        bytesWritten += bytesRead
+
+                        val now = System.currentTimeMillis()
+                        if (now - lastProgressUpdate >= 50) {
+                            lastProgressUpdate = now
+                            onProgress(bytesWritten, expectedSize)
+                        }
+                    }
+                    output.flush()
+                }
+            }
+
+            // Validate file size
+            if (bytesWritten != expectedSize) {
+                // Size mismatch - delete the file
+                deleteFile(filePath)
+                throw IOException(
+                    "Download failed: file size mismatch (expected $expectedSize, got $bytesWritten)"
+                )
+            }
+
+            Log.i("FileOperations", "Successfully streamed $bytesWritten bytes to $filePath")
+            return bytesWritten
+
+        } catch (e: IOException) {
+            // Clean up partial file
+            try {
+                deleteFile(filePath)
+                Log.w("FileOperations", "Deleted partial file after error: $filePath")
+            } catch (deleteError: Exception) {
+                Log.e("FileOperations", "Failed to delete partial file: $filePath", deleteError)
+            }
+
+            // Check if storage is full
+            if (isStorageFull(e)) {
+                throw StorageFullException(
+                    "Storage full - unable to write file (wrote $bytesWritten of $expectedSize bytes)",
+                    e
+                )
+            }
+
+            // Rethrow original exception
+            throw e
+        } finally {
+            // Ensure output stream is closed
+            outputStream?.close()
+        }
+    }
+
     private fun getDocumentFileFromPath(filePath: String): DocumentFile? {
         val pathParts = filePath.split("/")
         if (pathParts.size < 2) return null
@@ -290,4 +413,29 @@ class FileOperations(private val context: Context) {
         )
     }
 
+    /**
+     * Detects if an IOException is due to storage being full
+     */
+    private fun isStorageFull(e: IOException): Boolean {
+        // Check message for common "no space" patterns
+        val msg = e.message?.lowercase() ?: ""
+        if (msg.contains("no space left on device") || msg.contains("enospc")) {
+            return true
+        }
+
+        // Check for ENOSPC errno (more reliable on modern Android)
+        val cause = e.cause
+        if (cause is ErrnoException && cause.errno == OsConstants.ENOSPC) {
+            return true
+        }
+
+        return false
+    }
+
 }
+
+/**
+ * Exception thrown when storage is full during file operations
+ */
+class StorageFullException(message: String, cause: Throwable? = null)
+    : IOException(message, cause)
