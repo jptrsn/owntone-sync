@@ -37,6 +37,7 @@ class SyncProvider extends ChangeNotifier {
   String? _lastError;
   bool _isOnline = true;
   bool _isCancelling = false;
+  bool _isLoadingPlaylists = false;
   SyncSchedule _syncSchedule = SyncSchedule();
   bool _eventTrackingEnabled = false;
   bool _isBatteryOptimizationDisabled = false;
@@ -54,6 +55,7 @@ class SyncProvider extends ChangeNotifier {
   bool get isConfigured => _isConfigured;
   bool get isOnline => _isOnline;
   bool get isCancelling => _isCancelling;
+  bool get isLoadingPlaylists => _isLoadingPlaylists;
   SyncSchedule get syncSchedule => _syncSchedule;
   bool get eventTrackingEnabled => _eventTrackingEnabled;
   bool get isBatteryOptimizationDisabled => _isBatteryOptimizationDisabled;
@@ -307,8 +309,17 @@ class SyncProvider extends ChangeNotifier {
       return;
     }
 
+    // Prevent concurrent fetches
+    if (_isLoadingPlaylists) {
+      logger.d('Already fetching playlists, ignoring request');
+      return;
+    }
+
     try {
+      _isLoadingPlaylists = true;
       _lastError = null;
+      notifyListeners();
+
       final response = await _apiRepo!.getPlaylists(limit: 1000);
       _availablePlaylists = response.items;
       _isOnline = true;
@@ -320,8 +331,6 @@ class SyncProvider extends ChangeNotifier {
       for (final playlist in _availablePlaylists) {
         await _dbRepo!.cachePlaylist(playlist);
       }
-
-      notifyListeners();
     } catch (e) {
       _lastError = 'Failed to fetch playlists: $e';
       _isOnline = false;
@@ -330,6 +339,8 @@ class SyncProvider extends ChangeNotifier {
 
       // Load from cache if server is unreachable
       await _loadPlaylistsFromCache();
+    } finally {
+      _isLoadingPlaylists = false;
       notifyListeners();
     }
   }

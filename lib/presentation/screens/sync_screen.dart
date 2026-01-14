@@ -5,8 +5,27 @@ import '../../domain/services/sync_service.dart';
 import 'server_config_screen.dart';
 import 'schedule_config_screen.dart';
 
-class SyncScreen extends StatelessWidget {
+class SyncScreen extends StatefulWidget {
   const SyncScreen({super.key});
+
+  @override
+  State<SyncScreen> createState() => _SyncScreenState();
+}
+
+class _SyncScreenState extends State<SyncScreen> {
+  Future<void> _handleRefresh(SyncProvider provider) async {
+    await provider.fetchPlaylists();
+
+    // Show error snackbar if refresh failed
+    if (provider.lastError != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(provider.lastError!),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -257,40 +276,53 @@ class SyncScreen extends StatelessWidget {
         ),
         const Divider(),
         Expanded(
-          child: ListView.builder(
-            itemCount: provider.availablePlaylists.length,
-            itemBuilder: (context, index) {
-              final playlist = provider.availablePlaylists[index];
-              final isSelected = provider.selectedPlaylistIds.contains(
-                playlist.id,
-              );
+          child: RefreshIndicator(
+            onRefresh: () => _handleRefresh(provider),
+            child: Stack(
+              children: [
+                ListView.builder(
+                  itemCount: provider.availablePlaylists.length,
+                  itemBuilder: (context, index) {
+                    final playlist = provider.availablePlaylists[index];
+                    final isSelected = provider.selectedPlaylistIds.contains(
+                      playlist.id,
+                    );
 
-              return CheckboxListTile(
-                title: Text(
-                  playlist.name,
-                  style: provider.isOnline
-                      ? null
-                      : const TextStyle(
-                          fontStyle: FontStyle.italic,
-                          color: Colors.grey,
-                        ),
+                    return CheckboxListTile(
+                      title: Text(
+                        playlist.name,
+                        style: provider.isOnline
+                            ? null
+                            : const TextStyle(
+                                fontStyle: FontStyle.italic,
+                                color: Colors.grey,
+                              ),
+                      ),
+                      subtitle: Text(
+                        provider.isOnline
+                            ? '${playlist.itemCount} tracks'
+                            : '${playlist.itemCount} tracks (offline)',
+                        style: provider.isOnline
+                            ? null
+                            : const TextStyle(color: Colors.grey),
+                      ),
+                      value: isSelected,
+                      onChanged: provider.isSyncing
+                          ? null
+                          : (_) {
+                              provider.togglePlaylistSelection(playlist.id);
+                            },
+                    );
+                  },
                 ),
-                subtitle: Text(
-                  provider.isOnline
-                      ? '${playlist.itemCount} tracks'
-                      : '${playlist.itemCount} tracks (offline)',
-                  style: provider.isOnline
-                      ? null
-                      : const TextStyle(color: Colors.grey),
-                ),
-                value: isSelected,
-                onChanged: provider.isSyncing
-                    ? null
-                    : (_) {
-                        provider.togglePlaylistSelection(playlist.id);
-                      },
-              );
-            },
+                if (provider.isLoadingPlaylists)
+                  Container(
+                    alignment: Alignment.topCenter,
+                    padding: const EdgeInsets.only(top: 16),
+                    child: const CircularProgressIndicator(),
+                  ),
+              ],
+            ),
           ),
         ),
         if (provider.lastError != null)
