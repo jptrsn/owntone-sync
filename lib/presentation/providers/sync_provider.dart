@@ -255,7 +255,7 @@ class SyncProvider extends ChangeNotifier {
 
     _progressSubscription = _progressChannel.receiveBroadcastStream().listen(
       (dynamic event) {
-        logger.d('Received progress event: $event');
+        // logger.d('Received progress event: $event');
         if (event is Map) {
           // Check if this is a completion event
           if (event['syncComplete'] == true) {
@@ -503,15 +503,46 @@ class SyncProvider extends ChangeNotifier {
   }
 
   /// Toggle playlist selection
-  Future<void> togglePlaylistSelection(int playlistId) async {
-    if (_selectedPlaylistIds.contains(playlistId)) {
+  /// Returns true if a playlist file was deleted, false otherwise
+  Future<bool> togglePlaylistSelection(int playlistId) async {
+    final wasSelected = _selectedPlaylistIds.contains(playlistId);
+    bool fileWasDeleted = false;
+
+    if (wasSelected) {
+      // User is UNCHECKING - clean up playlist file and database
       _selectedPlaylistIds.remove(playlistId);
+
+      // Get playlist info from database - only proceed if it exists
+      final playlist = await _dbRepo?.getPlaylistById(playlistId);
+      if (playlist != null) {
+        try {
+          // Delete playlist file
+          if (_fileRepo != null) {
+            await _fileRepo!.deletePlaylistFile(playlist.name);
+            logger.i('Deleted playlist file for: ${playlist.name}');
+            fileWasDeleted = true;
+          }
+
+          // Clear playlist-track relationships
+          await _dbRepo!.clearPlaylistTracks(playlistId);
+
+          // Delete from synced_playlists table
+          await _dbRepo!.deletePlaylist(playlistId);
+          logger.i('Removed playlist from database: ${playlist.name}');
+        } catch (e) {
+          logger.e('Error cleaning up playlist: ${playlist.name}', error: e);
+          // Continue anyway - we've still deselected it
+        }
+      }
     } else {
+      // User is CHECKING - just add to selection
       _selectedPlaylistIds.add(playlistId);
     }
 
     await _saveSelectedPlaylists();
     notifyListeners();
+
+    return fileWasDeleted;
   }
 
   /// Toggle delete orphaned files setting

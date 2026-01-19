@@ -309,8 +309,21 @@ class _SyncScreenState extends State<SyncScreen> {
                       value: isSelected,
                       onChanged: provider.isSyncing
                           ? null
-                          : (_) {
-                              provider.togglePlaylistSelection(playlist.id);
+                          : (_) async {
+                              final fileWasDeleted = await provider
+                                  .togglePlaylistSelection(playlist.id);
+
+                              // Only show snackbar if a file was actually deleted
+                              if (fileWasDeleted && context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Removed "${playlist.name}" playlist file',
+                                    ),
+                                    duration: const Duration(seconds: 2),
+                                  ),
+                                );
+                              }
                             },
                     );
                   },
