@@ -17,7 +17,12 @@ class DatabaseHelper {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
 
-    return await openDatabase(path, version: 1, onCreate: _createDB);
+    return await openDatabase(
+      path,
+      version: 2,
+      onCreate: _createDB,
+      onUpgrade: _onUpgrade,
+    );
   }
 
   Future<void> _createDB(Database db, int version) async {
@@ -114,6 +119,7 @@ class DatabaseHelper {
         playlist_id INTEGER NOT NULL,
         playlist_name TEXT NOT NULL,
         tracks_in_playlist INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT,
         FOREIGN KEY (sync_id) REFERENCES sync_history (id) ON DELETE CASCADE
       )
     ''');
@@ -142,6 +148,16 @@ class DatabaseHelper {
     await db.execute(
       'CREATE INDEX idx_synced_tracks_genre ON synced_tracks(genre)',
     );
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // Add error_message column to sync_history_playlists
+      await db.execute('''
+        ALTER TABLE sync_history_playlists
+        ADD COLUMN error_message TEXT
+      ''');
+    }
   }
 
   Future<void> close() async {

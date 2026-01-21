@@ -276,15 +276,51 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   ...record.playlists!.map(
                     (playlist) => Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(Icons.queue_music, size: 16),
-                          const SizedBox(width: 8),
-                          Expanded(child: Text(playlist.playlistName)),
-                          Text(
-                            '${playlist.tracksInPlaylist} tracks',
-                            style: Theme.of(context).textTheme.bodySmall,
+                          Row(
+                            children: [
+                              Icon(
+                                playlist.errorMessage != null
+                                    ? Icons.error_outline
+                                    : Icons.queue_music,
+                                size: 16,
+                                color: playlist.errorMessage != null
+                                    ? Colors.red[700]
+                                    : null,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  playlist.playlistName,
+                                  style: TextStyle(
+                                    color: playlist.errorMessage != null
+                                        ? Colors.red[700]
+                                        : null,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                '${playlist.tracksInPlaylist} tracks',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
                           ),
+                          if (playlist.errorMessage != null) ...[
+                            const SizedBox(height: 4),
+                            Padding(
+                              padding: const EdgeInsets.only(left: 24),
+                              child: Text(
+                                playlist.errorMessage!,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.red[600],
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),

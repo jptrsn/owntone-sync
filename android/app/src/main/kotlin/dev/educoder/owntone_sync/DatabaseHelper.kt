@@ -172,6 +172,7 @@ class DatabaseHelper(private val context: Context) {
             put("playlist_id", playlist.playlistId)
             put("playlist_name", playlist.playlistName)
             put("tracks_in_playlist", playlist.tracksInPlaylist)
+            put("error_message", playlist.errorMessage)
         }
         db.insert("sync_history_playlists", null, values)
         db.close()
@@ -353,7 +354,8 @@ class DatabaseHelper(private val context: Context) {
         val syncId: Int,
         val playlistId: Int,
         val playlistName: String,
-        val tracksInPlaylist: Int
+        val tracksInPlaylist: Int,
+        val errorMessage: String? = null
     )
 
     data class PendingEvent(

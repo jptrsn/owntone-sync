@@ -58,6 +58,7 @@ class SyncHistoryPlaylist {
   final int playlistId;
   final String playlistName;
   final int tracksInPlaylist;
+  final String? errorMessage;
 
   SyncHistoryPlaylist({
     this.id,
@@ -65,6 +66,7 @@ class SyncHistoryPlaylist {
     required this.playlistId,
     required this.playlistName,
     this.tracksInPlaylist = 0,
+    this.errorMessage,
   });
 
   Map<String, dynamic> toMap() {
@@ -74,6 +76,7 @@ class SyncHistoryPlaylist {
       'playlist_id': playlistId,
       'playlist_name': playlistName,
       'tracks_in_playlist': tracksInPlaylist,
+      'error_message': errorMessage,
     };
   }
 
@@ -84,6 +87,7 @@ class SyncHistoryPlaylist {
       playlistId: map['playlist_id'] as int,
       playlistName: map['playlist_name'] as String,
       tracksInPlaylist: map['tracks_in_playlist'] as int? ?? 0,
+      errorMessage: map['error_message'] as String?,
     );
   }
 }

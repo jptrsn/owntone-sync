@@ -24,6 +24,22 @@ class BackgroundSyncWorker(
         private const val TAG = "BackgroundSyncWorker"
     }
 
+    private suspend fun <T> withTimeout(
+        timeoutMs: Long,
+        operationName: String,
+        block: suspend () -> T
+    ): T {
+        return withContext(Dispatchers.IO) {
+            try {
+                kotlinx.coroutines.withTimeout(timeoutMs) {
+                    block()
+                }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                throw SyncException("Timeout after ${timeoutMs}ms: $operationName")
+            }
+        }
+    }
+
     private fun createInitialForegroundInfo(): ForegroundInfo {
         return SyncProgressBroadcaster.createForegroundInfo(
             applicationContext,
@@ -125,7 +141,7 @@ class BackgroundSyncWorker(
             )
 
             // Get all existing files in tracks directory (one SAF call)
-            val existingFiles = fileOps.getExistingFiles("tracks")
+            val existingFiles = fileOps.getExistingFiles("tracks").toMutableSet()
             Log.d(TAG, "Found ${existingFiles.size} existing files in tracks directory")
 
             // Count total tracks first
@@ -140,6 +156,7 @@ class BackgroundSyncWorker(
             }
 
             var tracksProcessed = 0;
+            val playlistDetails = mutableListOf<Map<String, Any?>>()
 
             // Sync each playlist
             for ((playlistIndex, playlistId) in playlistIds.withIndex()) {
@@ -149,35 +166,56 @@ class BackgroundSyncWorker(
                     syncCancelled = true
                     break
                 }
+
+                var playlistError: String? = null
+                var playlistName = "Playlist $playlistId"
+                var tracksInPlaylist = 0
+
                 try {
                     Log.i(TAG, "Syncing playlist $playlistId")
 
-                    // Fetch playlist metadata
-                    val playlistsResponse = apiClient.getPlaylists()
-                    val playlist = playlistsResponse.items.find { it.id == playlistId }
-
-                    if (playlist == null) {
-                        Log.w(TAG, "Playlist $playlistId not found on server")
-                        continue
+                    // Fetch playlist metadata with timeout
+                    val playlist = withTimeout(60000, "Fetching playlist metadata") {
+                        val playlistsResponse = apiClient.getPlaylists()
+                        playlistsResponse.items.find { it.id == playlistId }
+                            ?: throw SyncException("Playlist $playlistId not found on server")
                     }
+
+                    playlistName = playlist.name
 
                     // Update notification with playlist name
                     SyncProgressBroadcaster.updateProgress(
-                        applicationContext, worker, "Validating playlist ${playlist.name}", playlistIndex, playlistIds.size, tracksDownloaded, totalTracks
+                        applicationContext, worker, "Validating playlist ${playlist.name}",
+                        playlistIndex, playlistIds.size, tracksProcessed, totalTracks
                     )
 
-                    // Fetch tracks for this playlist
-                    val tracksResponse = apiClient.getPlaylistTracks(playlistId)
-                    val serverTracks = tracksResponse.items
+                    // Fetch tracks for this playlist with timeout
+                    val serverTracks = withTimeout(60000, "Fetching tracks for playlist ${playlist.name}") {
+                        val tracksResponse = apiClient.getPlaylistTracks(playlistId)
+                        tracksResponse.items
+                    }
 
                     Log.i(TAG, "Playlist ${playlist.name} has ${serverTracks.size} tracks")
 
-                    // Get existing tracks from database
-                    val serverTrackIds = serverTracks.map { it.id }
-                    val existingTracks = dbHelper.getTracksByIds(serverTrackIds)
+                    // Deduplicate tracks by ID (but keep original list for playlist_tracks table)
+                    val uniqueTrackIds = serverTracks.map { it.id }.distinct()
+                    val uniqueTracks = uniqueTrackIds.mapNotNull { trackId ->
+                        serverTracks.find { it.id == trackId }
+                    }
+
+                    if (uniqueTracks.size < serverTracks.size) {
+                        Log.d(TAG, "Deduplicated ${serverTracks.size} tracks to ${uniqueTracks.size} unique tracks")
+                    }
+
+                    tracksInPlaylist = serverTracks.size  // Original count for history
+
+                    // Get existing tracks from database with timeout
+                    val existingTracks = withTimeout(30000, "Querying database for existing tracks") {
+                        dbHelper.getTracksByIds(uniqueTrackIds)
+                    }
 
                     // Determine which tracks to download
-                    val tracksToDownload = serverTracks.filter { track ->
+                    val tracksToDownload = uniqueTracks.filter { track ->
                         val localTrack = existingTracks[track.id]
                         localTrack == null || !existingFiles.contains(localTrack.localPath)
                     }
@@ -185,8 +223,8 @@ class BackgroundSyncWorker(
                     Log.i(TAG, "Need to download ${tracksToDownload.size} tracks")
 
                     // Count already-validated tracks as processed
-                    val alreadyValidatedCount = serverTracks.size - tracksToDownload.size
-                    tracksProcessed += alreadyValidatedCount;
+                    val alreadyValidatedCount = uniqueTracks.size - tracksToDownload.size
+                    tracksProcessed += alreadyValidatedCount
                     Log.i(TAG, "${alreadyValidatedCount} tracks already on device")
 
                     // Download tracks
@@ -198,8 +236,9 @@ class BackgroundSyncWorker(
                             cancellationReason = "Sync cancelled by user"
                             break
                         }
+
                         try {
-                            // Download track with streaming (downloads and writes in one operation)
+                            // Download track with streaming
                             val downloadResult = apiClient.downloadTrack(
                                 track,
                                 onProgress = { bytesRead, totalBytes ->
@@ -249,6 +288,9 @@ class BackgroundSyncWorker(
                                 )
                             )
 
+                            // Add to existingFiles set to prevent duplicate downloads
+                            existingFiles.add(downloadResult.filePath)
+
                             tracksDownloaded++
                             tracksProcessed++
                             Log.i(TAG, "Downloaded track: ${track.title} (${downloadResult.bytesWritten} bytes)")
@@ -262,17 +304,17 @@ class BackgroundSyncWorker(
                             Log.e(TAG, "Storage full - cancelling sync", e)
                             syncCancelled = true
                             cancellationReason = e.message ?: "Storage full - not enough space to continue sync"
-                            break  // Exit track loop immediately
+                            break
                         } catch (e: Exception) {
                             Log.e(TAG, "Error downloading track ${track.id} (${track.title})", e)
                             // Continue to next track
                         }
                     }
 
-                    // Add all tracks to playlist relationship
+                    // Add all tracks to playlist relationship (including duplicates from original list)
                     dbHelper.clearPlaylistTracks(playlistId)
-                    for (trackId in serverTrackIds) {
-                        dbHelper.addTrackToPlaylist(playlistId, trackId)
+                    for (track in serverTracks) {  // Use original list with duplicates
+                        dbHelper.addTrackToPlaylist(playlistId, track.id)
                     }
 
                     // Update playlist metadata
@@ -289,9 +331,21 @@ class BackgroundSyncWorker(
                     // Generate playlist file
                     generatePlaylistFile(playlist, serverTracks, dbHelper, fileOps)
 
+                } catch (e: SyncException) {
+                    Log.e(TAG, "Error syncing playlist $playlistId: ${e.message}", e)
+                    playlistError = e.message
                 } catch (e: Exception) {
                     Log.e(TAG, "Error syncing playlist $playlistId", e)
+                    playlistError = "Unexpected error: ${e.message ?: e.javaClass.simpleName}"
                 }
+
+                // Record playlist in history (success or failure)
+                playlistDetails.add(mapOf<String, Any?>(
+                    "playlist_id" to playlistId,
+                    "playlist_name" to playlistName,
+                    "tracks_in_playlist" to tracksInPlaylist,
+                    "error_message" to playlistError
+                ))
             }
 
             var tracksDeleted = 0
@@ -359,24 +413,6 @@ class BackgroundSyncWorker(
 
             val duration = System.currentTimeMillis() - startTime
 
-            // Prepare playlist details for history
-            val playlistDetails = mutableListOf<Map<String, Any>>()
-            for (playlistId in playlistIds) {
-                try {
-                    val playlist = dbHelper.getPlaylistById(playlistId)
-                    if (playlist != null) {
-                        val trackCount = dbHelper.getTracksForPlaylist(playlistId).size
-                        playlistDetails.add(mapOf(
-                            "playlist_id" to playlistId,
-                            "playlist_name" to playlist.name,
-                            "tracks_in_playlist" to trackCount
-                        ))
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error getting playlist details for history", e)
-                }
-            }
-
             // Log sync history
             val syncId = dbHelper.insertSyncHistory(
                 DatabaseHelper.SyncHistoryRecord(
@@ -398,7 +434,8 @@ class BackgroundSyncWorker(
                         syncId = syncId.toInt(),
                         playlistId = detail["playlist_id"] as Int,
                         playlistName = detail["playlist_name"] as String,
-                        tracksInPlaylist = detail["tracks_in_playlist"] as Int
+                        tracksInPlaylist = detail["tracks_in_playlist"] as Int,
+                        errorMessage = detail["error_message"] as String?
                     )
                 )
             }
