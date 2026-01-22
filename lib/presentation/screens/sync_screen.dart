@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../data/models/sync_progress.dart';
 import '../providers/sync_provider.dart';
-import '../../domain/services/sync_service.dart';
 import 'server_config_screen.dart';
 import 'schedule_config_screen.dart';
 

@@ -5,12 +5,13 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/models/playlist.dart';
+import '../../data/models/sync_progress.dart';
 import '../../data/models/sync_schedule.dart';
 import '../../data/repositories/file_system_repository.dart';
 import '../../data/repositories/local_database_repository.dart';
 import '../../data/repositories/owntone_api_repository.dart';
 import '../../domain/services/permissions_service.dart';
-import '../../domain/services/sync_service.dart';
+
 import '../../utils/logger.dart';
 import 'dart:async';
 
