@@ -31,6 +31,7 @@ import io.flutter.plugin.common.EventChannel
 import android.content.Context
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.JsonClass
+import androidx.work.OutOfQuotaPolicy
 
 class MainActivity: FlutterActivity() {
     private val EVENTS_CHANNEL = "dev.educoder.owntone_sync/events"
@@ -160,7 +161,7 @@ class MainActivity: FlutterActivity() {
                             return@setMethodCallHandler
                         }
 
-                        // Build the work request
+                        // Build the work request with expedited flag
                         val workRequest = OneTimeWorkRequestBuilder<BackgroundSyncWorker>()
                             .addTag("sync-task")
                             .setInputData(
@@ -168,6 +169,7 @@ class MainActivity: FlutterActivity() {
                                     .putString("trigger_type", "manual")
                                     .build()
                             )
+                            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                             .build()
 
                         // Replace any scheduled (but not running) sync with this immediate one
@@ -178,7 +180,7 @@ class MainActivity: FlutterActivity() {
                                 workRequest
                             )
 
-                        Log.d("MainActivity", "Manual sync triggered")
+                        Log.d("MainActivity", "Manual sync triggered (expedited)")
                         result.success(true)
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Error triggering sync", e)
@@ -517,11 +519,12 @@ class MainActivity: FlutterActivity() {
                 .setRequiresCharging(schedule.requiresCharging)
                 .build()
 
-            // Use OneTimeWorkRequest with calculated delay
+            // Use OneTimeWorkRequest with calculated delay and expedited flag
             val syncWorkRequest = OneTimeWorkRequestBuilder<BackgroundSyncWorker>()
                 .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
                 .setConstraints(constraints)
                 .addTag("sync-task")
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build()
 
             WorkManager.getInstance(applicationContext)

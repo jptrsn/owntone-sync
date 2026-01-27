@@ -151,6 +151,16 @@ object SyncProgressBroadcaster {
         }
     }
 
+    fun dismissNotification(context: Context) {
+        try {
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.cancel(NOTIFICATION_ID)
+            Log.d(TAG, "Notification dismissed")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to dismiss notification", e)
+        }
+    }
+
     fun broadcastSyncComplete(status: String, message: String? = null) {
         val completionData = mapOf(
             "syncComplete" to true,

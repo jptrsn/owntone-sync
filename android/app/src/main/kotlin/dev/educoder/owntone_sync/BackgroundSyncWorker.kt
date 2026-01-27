@@ -14,6 +14,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.JsonClass
+import java.io.IOException
 
 class BackgroundSyncWorker(
     context: Context,
@@ -22,6 +23,21 @@ class BackgroundSyncWorker(
 
     companion object {
         private const val TAG = "BackgroundSyncWorker"
+    }
+
+    private suspend fun <T> loggedOperation(
+        operation: String,
+        block: suspend () -> T
+    ): T {
+        Log.d(TAG, "Starting: $operation")
+        return try {
+            val result = block()
+            Log.d(TAG, "Completed: $operation")
+            result
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed: $operation", e)
+            throw SyncException("$operation failed: ${e.message}", e)
+        }
     }
 
     private suspend fun <T> withTimeout(
@@ -54,24 +70,65 @@ class BackgroundSyncWorker(
         )
     }
 
-    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-
-        setForeground(createInitialForegroundInfo())
-
+    override suspend fun doWork(): Result {
         val worker = this@BackgroundSyncWorker
         val triggerType = inputData.getString("trigger_type") ?: "scheduled"
         val startTime = System.currentTimeMillis()
 
+        // CRITICAL: Call setForeground IMMEDIATELY before any other work
+        // This prevents WorkManager from killing the job on Android 12+
         try {
+            setForeground(createInitialForegroundInfo())
+            Log.i(TAG, "Foreground service started successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start foreground service - sync cannot proceed", e)
 
-            Log.i(TAG, "=== SYNC WORKER STARTED ===")
-            Log.i(TAG, "Worker ID: ${worker.id}")
-            Log.i(TAG, "Run attempt: ${worker.runAttemptCount}")
-            Log.i(TAG, "Tags: ${worker.tags}")
+            // If we can't start foreground service, we must fail immediately
+            val errorMsg = when (e) {
+                is android.app.ForegroundServiceStartNotAllowedException ->
+                    "Cannot start sync: Foreground service not allowed (check app permissions and battery settings)"
+                else ->
+                    "Cannot start sync: ${e.message}"
+            }
 
-            SyncProgressBroadcaster.updateProgress(
-                applicationContext, worker, "Starting sync...", 0, 0, 0, 0
-            )
+            // Log failure to history
+            try {
+                val dbHelper = DatabaseHelper(applicationContext)
+                dbHelper.insertSyncHistory(
+                    DatabaseHelper.SyncHistoryRecord(
+                        timestamp = System.currentTimeMillis(),
+                        status = "failed",
+                        playlistsSynced = 0,
+                        tracksDownloaded = 0,
+                        tracksDeleted = 0,
+                        errorMessage = errorMsg,
+                        durationMs = System.currentTimeMillis() - startTime,
+                        triggerType = triggerType
+                    )
+                )
+            } catch (dbError: Exception) {
+                Log.e(TAG, "Failed to log foreground service failure", dbError)
+            }
+
+            SyncProgressBroadcaster.dismissNotification(applicationContext)
+            SyncProgressBroadcaster.broadcastSyncComplete("failed", errorMsg)
+            return Result.failure()
+        }
+
+        // Flag to track if we've already written history (prevent duplicates)
+        var historyWritten = false
+
+        return withContext(Dispatchers.IO) {
+            try {
+                Log.i(TAG, "=== SYNC WORKER STARTED ===")
+                Log.i(TAG, "Worker ID: ${worker.id}")
+                Log.i(TAG, "Run attempt: ${worker.runAttemptCount}")
+                Log.i(TAG, "Tags: ${worker.tags}")
+                Log.i(TAG, "Trigger type: $triggerType")
+
+                SyncProgressBroadcaster.updateProgress(
+                    applicationContext, worker, "Starting sync...", 0, 0, 0, 0
+                )
 
             Log.i(TAG, "Starting background sync")
 
@@ -426,6 +483,7 @@ class BackgroundSyncWorker(
                     triggerType = triggerType
                 )
             )
+            historyWritten = true
 
             // Insert playlist details
             for (detail in playlistDetails) {
@@ -445,45 +503,93 @@ class BackgroundSyncWorker(
 
             Log.i(TAG, "Background sync completed: $tracksDownloaded tracks downloaded in ${duration}ms")
             if (syncCancelled) {
+                SyncProgressBroadcaster.dismissNotification(applicationContext)
                 SyncProgressBroadcaster.broadcastSyncComplete(
                     "cancelled",
-                    cancellationReason ?: "Sync cancelled"
+                    cancellationReason ?: "Sync cancelled by user"
                 )
             } else {
+                SyncProgressBroadcaster.dismissNotification(applicationContext)
                 SyncProgressBroadcaster.broadcastSyncComplete("success")
             }
 
             Result.success()
 
         } catch (e: CancellationException) {
-            Log.i(TAG, "Sync cancelled")
-            SyncProgressBroadcaster.broadcastSyncComplete("cancelled")
-            Result.success()
-        } catch (e: Exception) {
-            Log.e(TAG, "Background sync failed", e)
-            val duration = System.currentTimeMillis() - startTime
+                val duration = System.currentTimeMillis() - startTime
 
-            try {
-                val dbHelper = DatabaseHelper(applicationContext)
-                dbHelper.insertSyncHistory(
-                    DatabaseHelper.SyncHistoryRecord(
-                        timestamp = System.currentTimeMillis(),
-                        status = "failed",
-                        playlistsSynced = 0,
-                        tracksDownloaded = 0,
-                        tracksDeleted = 0,
-                        errorMessage = e.message ?: e.javaClass.simpleName,
-                        durationMs = duration,
-                        triggerType = triggerType
-                    )
-                )
-            } catch (dbError: Exception) {
-                Log.e(TAG, "Failed to log sync failure to database", dbError)
+                val wasUserCancelled = isStopped
+                val status = if (wasUserCancelled) "cancelled" else "failed"
+                val errorMessage = if (wasUserCancelled) {
+                    "Cancelled by user"
+                } else {
+                    "Sync interrupted by system: ${e.message ?: "Job was cancelled"}"
+                }
+
+                Log.w(TAG, "Sync $status: $errorMessage", e)
+
+                if (!historyWritten) {
+                    try {
+                        val dbHelper = DatabaseHelper(applicationContext)
+                        dbHelper.insertSyncHistory(
+                            DatabaseHelper.SyncHistoryRecord(
+                                timestamp = System.currentTimeMillis(),
+                                status = status,
+                                playlistsSynced = 0,
+                                tracksDownloaded = 0,
+                                tracksDeleted = 0,
+                                errorMessage = errorMessage,
+                                durationMs = duration,
+                                triggerType = triggerType
+                            )
+                        )
+                        historyWritten = true
+                    } catch (dbError: Exception) {
+                        Log.e(TAG, "Failed to log cancellation to database", dbError)
+                    }
+                }
+
+                SyncProgressBroadcaster.dismissNotification(applicationContext)
+                SyncProgressBroadcaster.broadcastSyncComplete(status, errorMessage)
+
+                if (wasUserCancelled) Result.success() else Result.failure()
+
+            } catch (e: Exception) {
+                val duration = System.currentTimeMillis() - startTime
+                Log.e(TAG, "Background sync failed with exception", e)
+
+                val errorMessage = when (e) {
+                    is SyncException -> e.message ?: "Sync error"
+                    is StorageFullException -> e.message ?: "Storage full"
+                    is IOException -> "Network or I/O error: ${e.message}"
+                    else -> "Unexpected error: ${e.message ?: e.javaClass.simpleName}"
+                }
+
+                if (!historyWritten) {
+                    try {
+                        val dbHelper = DatabaseHelper(applicationContext)
+                        dbHelper.insertSyncHistory(
+                            DatabaseHelper.SyncHistoryRecord(
+                                timestamp = System.currentTimeMillis(),
+                                status = "failed",
+                                playlistsSynced = 0,
+                                tracksDownloaded = 0,
+                                tracksDeleted = 0,
+                                errorMessage = errorMessage,
+                                durationMs = duration,
+                                triggerType = triggerType
+                            )
+                        )
+                        historyWritten = true
+                    } catch (dbError: Exception) {
+                        Log.e(TAG, "Failed to log sync failure to database", dbError)
+                    }
+                }
+
+                SyncProgressBroadcaster.dismissNotification(applicationContext)
+                SyncProgressBroadcaster.broadcastSyncComplete("failed", errorMessage)
+                Result.failure()
             }
-
-            SyncProgressBroadcaster.broadcastSyncComplete("failed", e.message)
-
-            Result.failure()
         }
     }
 
