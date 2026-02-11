@@ -498,18 +498,22 @@ class LocalDatabaseRepository {
     if (ids.isEmpty) return {};
 
     final db = await _dbHelper.database;
-    final placeholders = ids.map((_) => '?').join(',');
-    final results = await db.query(
-      'synced_tracks',
-      where: 'id IN ($placeholders)',
-      whereArgs: ids,
-    );
-
     final tracks = <int, SyncedTrack>{};
-    for (final map in results) {
-      final track = SyncedTrack.fromMap(map);
-      tracks[track.id] = track;
+
+    for (var i = 0; i < ids.length; i += 999) {
+      final chunk = ids.sublist(i, (i + 999).clamp(0, ids.length));
+      final placeholders = chunk.map((_) => '?').join(',');
+      final results = await db.query(
+        'synced_tracks',
+        where: 'id IN ($placeholders)',
+        whereArgs: chunk,
+      );
+      for (final map in results) {
+        final track = SyncedTrack.fromMap(map);
+        tracks[track.id] = track;
+      }
     }
+
     return tracks;
   }
 

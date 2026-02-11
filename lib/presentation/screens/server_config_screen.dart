@@ -194,118 +194,121 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
         backgroundColor: Theme.of(context).colorScheme.surface,
         foregroundColor: Theme.of(context).colorScheme.onSurface,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Icon(Icons.dns, size: 64),
-              const SizedBox(height: 24),
-              const Text(
-                'OwnTone Server',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Enter your OwnTone server URL',
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 32),
-              TextFormField(
-                controller: _urlController,
-                decoration: const InputDecoration(
-                  labelText: 'Server URL',
-                  hintText: 'http://192.168.1.100:3689',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.link),
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Icon(Icons.dns, size: 64),
+                const SizedBox(height: 24),
+                const Text(
+                  'OwnTone Server',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
                 ),
-                keyboardType: TextInputType.url,
-                validator: _validateServerUrl,
-              ),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              Consumer<SyncProvider>(
-                builder: (context, provider, child) {
-                  return SwitchListTile(
-                    title: const Text('Track Playback Events'),
-                    subtitle: const Text(
-                      'Send play/skip data to your OwnTone server',
-                    ),
-                    value: provider.eventTrackingEnabled,
-                    onChanged: (value) async {
-                      if (value) {
-                        final hasPermission = await provider
-                            .checkEventTrackingPermission();
-                        if (!hasPermission && context.mounted) {
-                          final shouldRequest = await showDialog<bool>(
-                            context: context,
-                            builder: (context) => AlertDialog(
-                              title: const Text('Notification Access Required'),
-                              content: Text(
-                                'To track your playback statistics, OwnTone Sync needs notification access.\n\n'
-                                'What data is collected:\n'
-                                '• Song titles, artists, and album names from media notifications\n'
-                                '• Play and skip events\n\n'
-                                'Where it goes:\n'
-                                '• Only to YOUR OwnTone server (${provider.serverUrl})\n'
-                                '• Never sent to the developer or third parties\n\n'
-                                'What we DON\'T collect:\n'
-                                '• Other app notifications\n'
-                                '• Messages, emails, or personal notifications\n\n'
-                                'You can revoke this permission anytime in Settings.',
+                const SizedBox(height: 8),
+                const Text(
+                  'Enter your OwnTone server URL',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 32),
+                TextFormField(
+                  controller: _urlController,
+                  decoration: const InputDecoration(
+                    labelText: 'Server URL',
+                    hintText: 'http://192.168.1.100:3689',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.link),
+                  ),
+                  keyboardType: TextInputType.url,
+                  validator: _validateServerUrl,
+                ),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 16),
+                Consumer<SyncProvider>(
+                  builder: (context, provider, child) {
+                    return SwitchListTile(
+                      title: const Text('Track Playback Events'),
+                      subtitle: const Text(
+                        'Send play/skip data to your OwnTone server',
+                      ),
+                      value: provider.eventTrackingEnabled,
+                      onChanged: (value) async {
+                        if (value) {
+                          final hasPermission = await provider
+                              .checkEventTrackingPermission();
+                          if (!hasPermission && context.mounted) {
+                            final shouldRequest = await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: const Text(
+                                  'Notification Access Required',
+                                ),
+                                content: Text(
+                                  'To track your playback statistics, OwnTone Sync needs notification access.\n\n'
+                                  'What data is collected:\n'
+                                  '• Song titles, artists, and album names from media notifications\n'
+                                  '• Play and skip events\n\n'
+                                  'Where it goes:\n'
+                                  '• Only to YOUR OwnTone server (${provider.serverUrl})\n'
+                                  '• Never sent to the developer or third parties\n\n'
+                                  'What we DON\'T collect:\n'
+                                  '• Other app notifications\n'
+                                  '• Messages, emails, or personal notifications\n\n'
+                                  'You can revoke this permission anytime in Settings.',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(true),
+                                    child: const Text('Grant Access'),
+                                  ),
+                                ],
                               ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () =>
-                                      Navigator.of(context).pop(false),
-                                  child: const Text('Cancel'),
-                                ),
-                                ElevatedButton(
-                                  onPressed: () =>
-                                      Navigator.of(context).pop(true),
-                                  child: const Text('Grant Access'),
-                                ),
-                              ],
-                            ),
-                          );
+                            );
 
-                          if (shouldRequest == true) {
-                            await provider.requestEventTrackingPermission();
-                            await Future.delayed(const Duration(seconds: 1));
-                            final granted = await provider
-                                .checkEventTrackingPermission();
-                            if (granted) {
-                              await provider.setEventTracking(true);
+                            if (shouldRequest == true) {
+                              await provider.requestEventTrackingPermission();
+                              await Future.delayed(const Duration(seconds: 1));
+                              final granted = await provider
+                                  .checkEventTrackingPermission();
+                              if (granted) {
+                                await provider.setEventTracking(true);
+                              }
                             }
+                          } else {
+                            await provider.setEventTracking(true);
                           }
                         } else {
-                          await provider.setEventTracking(true);
+                          await provider.setEventTracking(false);
                         }
-                      } else {
-                        await provider.setEventTracking(false);
-                      }
-                    },
-                  );
-                },
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: () async {
-                  if (_formKey.currentState!.validate()) {
-                    await _handleServerChange();
-                  }
-                },
-                child: const Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: Text('Save', style: TextStyle(fontSize: 16)),
+                      },
+                    );
+                  },
                 ),
-              ),
-            ],
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: () async {
+                    if (_formKey.currentState!.validate()) {
+                      await _handleServerChange();
+                    }
+                  },
+                  child: const Padding(
+                    padding: EdgeInsets.all(16.0),
+                    child: Text('Save', style: TextStyle(fontSize: 16)),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

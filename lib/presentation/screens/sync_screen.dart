@@ -231,16 +231,13 @@ class _SyncScreenState extends State<SyncScreen> {
         // Sync options section
         Card(
           margin: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: ExpansionTile(
+            title: const Text(
+              'Sync Options',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            initiallyExpanded: false,
             children: [
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text(
-                  'Sync Options',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-              ),
               CheckboxListTile(
                 title: const Text('Delete orphaned files'),
                 subtitle: const Text('Remove files not in any synced playlist'),
@@ -266,7 +263,6 @@ class _SyncScreenState extends State<SyncScreen> {
             ],
           ),
         ),
-
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 16),
           child: Text(

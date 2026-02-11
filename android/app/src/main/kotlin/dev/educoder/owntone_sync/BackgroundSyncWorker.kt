@@ -84,11 +84,13 @@ class BackgroundSyncWorker(
             Log.e(TAG, "Failed to start foreground service - sync cannot proceed", e)
 
             // If we can't start foreground service, we must fail immediately
-            val errorMsg = when (e) {
-                is android.app.ForegroundServiceStartNotAllowedException ->
-                    "Cannot start sync: Foreground service not allowed (check app permissions and battery settings)"
-                else ->
-                    "Cannot start sync: ${e.message}"
+            val errorMsg = if (
+                android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S &&
+                e is android.app.ForegroundServiceStartNotAllowedException
+            ) {
+                "Cannot start sync: Foreground service not allowed (check app permissions and battery settings)"
+            } else {
+                "Cannot start sync: ${e.message}"
             }
 
             // Log failure to history

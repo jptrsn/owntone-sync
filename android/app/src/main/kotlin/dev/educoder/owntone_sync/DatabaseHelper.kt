@@ -104,22 +104,24 @@ class DatabaseHelper(private val context: Context) {
         if (ids.isEmpty()) return emptyMap()
 
         val db = openDatabase()
-        val placeholders = ids.joinToString(",") { "?" }
-        val cursor = db.query(
-            "synced_tracks",
-            null,
-            "id IN ($placeholders)",
-            ids.map { it.toString() }.toTypedArray(),
-            null, null, null
-        )
-
         val tracks = mutableMapOf<Int, SyncedTrack>()
-        while (cursor.moveToNext()) {
-            val track = SyncedTrack.fromCursor(cursor)
-            tracks[track.id] = track
+
+        ids.chunked(999).forEach { chunk ->
+            val placeholders = chunk.joinToString(",") { "?" }
+            val cursor = db.query(
+                "synced_tracks",
+                null,
+                "id IN ($placeholders)",
+                chunk.map { it.toString() }.toTypedArray(),
+                null, null, null
+            )
+            while (cursor.moveToNext()) {
+                val track = SyncedTrack.fromCursor(cursor)
+                tracks[track.id] = track
+            }
+            cursor.close()
         }
 
-        cursor.close()
         db.close()
         return tracks
     }
@@ -271,12 +273,14 @@ class DatabaseHelper(private val context: Context) {
         if (eventIds.isEmpty()) return
 
         val db = openDatabase()
-        val placeholders = eventIds.joinToString(",") { "?" }
-        db.delete(
-            "pending_events",
-            "id IN ($placeholders)",
-            eventIds.map { it.toString() }.toTypedArray()
-        )
+        eventIds.chunked(999).forEach { chunk ->
+            val placeholders = chunk.joinToString(",") { "?" }
+            db.delete(
+                "pending_events",
+                "id IN ($placeholders)",
+                chunk.map { it.toString() }.toTypedArray()
+            )
+        }
         db.close()
     }
 

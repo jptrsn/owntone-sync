@@ -31,7 +31,7 @@ android {
 
     defaultConfig {
         applicationId = "dev.educoder.owntone_sync"
-        minSdk = 29
+        minSdk = 27
         targetSdk = 35
         versionCode = flutter.versionCode
         versionName = flutter.versionName
