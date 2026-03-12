@@ -60,13 +60,12 @@ Required scope: write:repository"
 VERSION=$(grep '^version:' pubspec.yaml | head -1 | sed 's/version: *//;s/+.*//')
 VERSION_FULL=$(grep '^version:' pubspec.yaml | head -1 | sed 's/version: *//')
 TAG="v${VERSION}"
-APK_NAME="${APK_PREFIX}-${TAG}.apk"
 
 [[ -n "$VERSION" ]] || die "Could not parse version from pubspec.yaml."
 
 bold "Version:  ${VERSION_FULL}"
 bold "Tag:      ${TAG}"
-bold "APK name: ${APK_NAME}"
+bold "APKs:     ${APK_PREFIX}-${TAG}-{arm64-v8a,armeabi-v7a,x86_64}.apk"
 echo
 
 # ── Check git is clean ───────────────────────────────────────────────────────
@@ -101,7 +100,9 @@ echo "────────────────────────�
 bold "Release summary:"
 echo "  Tag:     ${TAG}"
 echo "  Version: ${VERSION_FULL}"
-echo "  APK:     ${APK_NAME}"
+echo "  APKs:    ${APK_PREFIX}-${TAG}-arm64-v8a.apk"
+echo "           ${APK_PREFIX}-${TAG}-armeabi-v7a.apk"
+echo "           ${APK_PREFIX}-${TAG}-x86_64.apk"
 echo
 bold "Release notes:"
 echo "$RELEASE_NOTES"
@@ -111,18 +112,31 @@ read -rp "Proceed with build and release? [y/N] " confirm
 [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
 echo
 
-# ── Build APK ────────────────────────────────────────────────────────────────
-bold "Building release APK..."
-flutter build apk --release
+# ── Build APKs ───────────────────────────────────────────────────────────────
+bold "Building release APKs (split per ABI)..."
+flutter build apk --release --split-per-abi
 
-# Flutter outputs to a known location
-FLUTTER_APK="build/app/outputs/flutter-apk/app-release.apk"
-[[ -f "$FLUTTER_APK" ]] || die "Expected APK not found at ${FLUTTER_APK}. Build may have failed."
+# Flutter outputs per-abi APKs to a known location
+FLUTTER_APK_DIR="build/app/outputs/flutter-apk"
 
-# Copy with versioned name
-cp "$FLUTTER_APK" "$APK_NAME"
-APK_SIZE=$(du -h "$APK_NAME" | cut -f1)
-green "✓ APK built: ${APK_NAME} (${APK_SIZE})"
+# Map Flutter output names to our release names
+declare -A ABI_MAP=(
+    ["app-arm64-v8a-release.apk"]="${APK_PREFIX}-${TAG}-arm64-v8a.apk"
+    ["app-armeabi-v7a-release.apk"]="${APK_PREFIX}-${TAG}-armeabi-v7a.apk"
+    ["app-x86_64-release.apk"]="${APK_PREFIX}-${TAG}-x86_64.apk"
+)
+
+APK_FILES=()
+for flutter_name in "${!ABI_MAP[@]}"; do
+    src="${FLUTTER_APK_DIR}/${flutter_name}"
+    dest="${ABI_MAP[$flutter_name]}"
+    [[ -f "$src" ]] || die "Expected APK not found: ${src}"
+    cp "$src" "$dest"
+    APK_FILES+=("$dest")
+    APK_SIZE=$(du -h "$dest" | cut -f1)
+    echo "  ${dest} (${APK_SIZE})"
+done
+green "✓ ${#APK_FILES[@]} APKs built."
 echo
 
 # ── Create and push git tag ──────────────────────────────────────────────────
@@ -180,30 +194,34 @@ RELEASE_URL=$(echo "$RELEASE_BODY" | jq -r '.html_url')
 green "✓ Release created: ${RELEASE_URL}"
 echo
 
-# ── Upload APK attachment ────────────────────────────────────────────────────
-bold "Uploading ${APK_NAME}..."
+# ── Upload APK attachments ───────────────────────────────────────────────────
+bold "Uploading APKs..."
 
-UPLOAD_RESPONSE=$(curl -s -w "\n%{http_code}" \
-    -X POST \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
-    -H "Content-Type: application/octet-stream" \
-    --data-binary "@${APK_NAME}" \
-    "${CODEBERG_API}/repos/${REPO_OWNER}/${REPO_NAME}/releases/${RELEASE_ID}/assets?name=${APK_NAME}")
+for apk in "${APK_FILES[@]}"; do
+    echo "  Uploading ${apk}..."
 
-HTTP_CODE=$(echo "$UPLOAD_RESPONSE" | tail -1)
-UPLOAD_BODY=$(echo "$UPLOAD_RESPONSE" | sed '$d')
+    UPLOAD_RESPONSE=$(curl -s -w "\n%{http_code}" \
+        -X POST \
+        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Content-Type: application/octet-stream" \
+        --data-binary "@${apk}" \
+        "${CODEBERG_API}/repos/${REPO_OWNER}/${REPO_NAME}/releases/${RELEASE_ID}/assets?name=${apk}")
 
-if [[ "$HTTP_CODE" -ne 201 ]]; then
-    red "Failed to upload APK (HTTP ${HTTP_CODE}):"
-    echo "$UPLOAD_BODY" | jq . 2>/dev/null || echo "$UPLOAD_BODY"
-    die "APK upload failed. Release was created — upload the APK manually at: ${RELEASE_URL}"
-fi
+    HTTP_CODE=$(echo "$UPLOAD_RESPONSE" | tail -1)
+    UPLOAD_BODY=$(echo "$UPLOAD_RESPONSE" | sed '$d')
 
-DOWNLOAD_URL=$(echo "$UPLOAD_BODY" | jq -r '.browser_download_url')
-green "✓ APK uploaded: ${DOWNLOAD_URL}"
+    if [[ "$HTTP_CODE" -ne 201 ]]; then
+        red "Failed to upload ${apk} (HTTP ${HTTP_CODE}):"
+        echo "$UPLOAD_BODY" | jq . 2>/dev/null || echo "$UPLOAD_BODY"
+        die "APK upload failed. Release was created — upload remaining APKs manually at: ${RELEASE_URL}"
+    fi
 
-# ── Clean up local APK copy ──────────────────────────────────────────────────
-rm -f "$APK_NAME"
+    DOWNLOAD_URL=$(echo "$UPLOAD_BODY" | jq -r '.browser_download_url')
+    green "  ✓ ${DOWNLOAD_URL}"
+done
+
+# ── Clean up local APK copies ────────────────────────────────────────────────
+rm -f "${APK_FILES[@]}"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 echo
