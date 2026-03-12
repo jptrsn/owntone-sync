@@ -119,24 +119,18 @@ flutter build apk --release --split-per-abi
 # Flutter outputs per-abi APKs to a known location
 FLUTTER_APK_DIR="build/app/outputs/flutter-apk"
 
-# Map Flutter output names to our release names
-declare -A ABI_MAP=(
-    ["app-arm64-v8a-release.apk"]="${APK_PREFIX}-${TAG}-arm64-v8a.apk"
-    ["app-armeabi-v7a-release.apk"]="${APK_PREFIX}-${TAG}-armeabi-v7a.apk"
-    ["app-x86_64-release.apk"]="${APK_PREFIX}-${TAG}-x86_64.apk"
-)
-
-APK_FILES=()
-for flutter_name in "${!ABI_MAP[@]}"; do
-    src="${FLUTTER_APK_DIR}/${flutter_name}"
-    dest="${ABI_MAP[$flutter_name]}"
+# Rename and collect APKs (bash 3.2 compatible — no associative arrays)
+APK_FILES=""
+for abi in arm64-v8a armeabi-v7a x86_64; do
+    src="${FLUTTER_APK_DIR}/app-${abi}-release.apk"
+    dest="${APK_PREFIX}-${TAG}-${abi}.apk"
     [[ -f "$src" ]] || die "Expected APK not found: ${src}"
     cp "$src" "$dest"
-    APK_FILES+=("$dest")
+    APK_FILES="${APK_FILES} ${dest}"
     APK_SIZE=$(du -h "$dest" | cut -f1)
     echo "  ${dest} (${APK_SIZE})"
 done
-green "✓ ${#APK_FILES[@]} APKs built."
+green "✓ APKs built."
 echo
 
 # ── Create and push git tag ──────────────────────────────────────────────────
@@ -197,7 +191,7 @@ echo
 # ── Upload APK attachments ───────────────────────────────────────────────────
 bold "Uploading APKs..."
 
-for apk in "${APK_FILES[@]}"; do
+for apk in $APK_FILES; do
     echo "  Uploading ${apk}..."
 
     UPLOAD_RESPONSE=$(curl -s -w "\n%{http_code}" \
@@ -221,7 +215,7 @@ for apk in "${APK_FILES[@]}"; do
 done
 
 # ── Clean up local APK copies ────────────────────────────────────────────────
-rm -f "${APK_FILES[@]}"
+rm -f $APK_FILES
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 echo
