@@ -148,22 +148,31 @@ RELEASE_PAYLOAD=$(jq -n \
         prerelease: false
     }')
 
-RELEASE_RESPONSE=$(curl -s -w "\n%{http_code}" \
-    -X POST \
-    -H "Authorization: token ${CODEBERG_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d "$RELEASE_PAYLOAD" \
-    "${CODEBERG_API}/repos/${REPO_OWNER}/${REPO_NAME}/releases")
+MAX_RETRIES=3
+for attempt in $(seq 1 $MAX_RETRIES); do
+    RELEASE_RESPONSE=$(curl -s -w "\n%{http_code}" \
+        -X POST \
+        -H "Authorization: token ${CODEBERG_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "$RELEASE_PAYLOAD" \
+        "${CODEBERG_API}/repos/${REPO_OWNER}/${REPO_NAME}/releases")
 
-# Split response body and HTTP status code
-HTTP_CODE=$(echo "$RELEASE_RESPONSE" | tail -1)
-RELEASE_BODY=$(echo "$RELEASE_RESPONSE" | sed '$d')
+    HTTP_CODE=$(echo "$RELEASE_RESPONSE" | tail -1)
+    RELEASE_BODY=$(echo "$RELEASE_RESPONSE" | sed '$d')
 
-if [[ "$HTTP_CODE" -ne 201 ]]; then
-    red "Failed to create release (HTTP ${HTTP_CODE}):"
-    echo "$RELEASE_BODY" | jq . 2>/dev/null || echo "$RELEASE_BODY"
-    die "Release creation failed. The tag has been pushed — you may need to create the release manually on Codeberg."
-fi
+    if [[ "$HTTP_CODE" -eq 201 ]]; then
+        break
+    fi
+
+    if [[ "$attempt" -lt "$MAX_RETRIES" ]]; then
+        yellow "Attempt ${attempt}/${MAX_RETRIES} failed (HTTP ${HTTP_CODE}). Retrying in 5s..."
+        sleep 5
+    else
+        red "Failed to create release after ${MAX_RETRIES} attempts (HTTP ${HTTP_CODE}):"
+        echo "$RELEASE_BODY" | jq . 2>/dev/null || echo "$RELEASE_BODY"
+        die "Release creation failed. The tag has been pushed — you may need to create the release manually on Codeberg."
+    fi
+done
 
 RELEASE_ID=$(echo "$RELEASE_BODY" | jq -r '.id')
 RELEASE_URL=$(echo "$RELEASE_BODY" | jq -r '.html_url')
