@@ -1,26 +1,23 @@
 #!/usr/bin/env bash
 #
-# release.sh — Build, tag, and publish OwnTone Sync to Codeberg releases.
+# release.sh — Build, tag, and publish OwnTone Sync to GitHub releases.
 #
 # Prerequisites:
-#   - CODEBERG_TOKEN env var set (generate at https://codeberg.org/user/settings/applications)
-#     Required scope: write:repository
-#   - flutter, jq, curl on PATH
+#   - gh CLI installed and authenticated (gh auth login) with access to
+#     jptrsn/owntone-sync
+#   - flutter, git on PATH
 #   - Clean git working tree
 #   - Version already bumped in pubspec.yaml
 #
 # Usage:
-#   export CODEBERG_TOKEN="your-token-here"
 #   ./release.sh
 #
-# Obtainium users can then add: https://codeberg.org/Edu_Coder/owntone-sync
+# Obtainium users can then add: https://github.com/jptrsn/owntone-sync
 
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────────────
-CODEBERG_API="https://codeberg.org/api/v1"
-REPO_OWNER="Edu_Coder"
-REPO_NAME="owntone-sync"
+GH_REPO="jptrsn/owntone-sync"
 APK_PREFIX="owntone-sync"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -36,21 +33,12 @@ bold "=== OwnTone Sync Release ==="
 echo
 
 # Check dependencies
-for cmd in flutter jq curl git; do
+for cmd in flutter gh git; do
     command -v "$cmd" &>/dev/null || die "'$cmd' is required but not found on PATH."
 done
 
-# Load .env if present (won't override existing env vars)
-if [[ -f ".env" ]]; then
-    set -a
-    source .env
-    set +a
-fi
-
-# Check token
-[[ -n "${CODEBERG_TOKEN:-}" ]] || die "CODEBERG_TOKEN environment variable is not set.
-Generate one at: https://codeberg.org/user/settings/applications
-Required scope: write:repository"
+# Check gh auth
+gh auth status &>/dev/null || die "gh CLI is not authenticated. Run: gh auth login"
 
 # Must be run from project root (where pubspec.yaml lives)
 [[ -f "pubspec.yaml" ]] || die "pubspec.yaml not found. Run this script from the project root."
@@ -140,79 +128,26 @@ git push origin "$TAG"
 green "✓ Tag ${TAG} pushed to origin."
 echo
 
-# ── Create Codeberg release ──────────────────────────────────────────────────
-bold "Creating release on Codeberg..."
+# ── Create GitHub release ────────────────────────────────────────────────────
+bold "Creating release on GitHub..."
 
-# Build the JSON payload — jq handles escaping the release notes safely
-RELEASE_PAYLOAD=$(jq -n \
-    --arg tag "$TAG" \
-    --arg name "OwnTone Sync ${TAG}" \
-    --arg body "$RELEASE_NOTES" \
-    '{
-        tag_name: $tag,
-        name: $name,
-        body: $body,
-        draft: false,
-        prerelease: false
-    }')
+# gh release create in one call: creates the release from the tag we just
+# pushed (--verify-tag makes it fail loudly instead of inventing its own tag
+# if that push somehow didn't land) and uploads all the APKs as release
+# assets. --notes-file - reads the release notes straight from stdin, so no
+# temp file is needed.
+gh release create "$TAG" \
+    --repo "$GH_REPO" \
+    --title "OwnTone Sync ${TAG}" \
+    --notes-file - \
+    --verify-tag \
+    $APK_FILES <<< "$RELEASE_NOTES" \
+    || die "Release creation/upload failed. The tag has been pushed — you may need to create the release manually on GitHub."
 
-MAX_RETRIES=3
-for attempt in $(seq 1 $MAX_RETRIES); do
-    RELEASE_RESPONSE=$(curl -s -w "\n%{http_code}" \
-        -X POST \
-        -H "Authorization: token ${CODEBERG_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -d "$RELEASE_PAYLOAD" \
-        "${CODEBERG_API}/repos/${REPO_OWNER}/${REPO_NAME}/releases")
-
-    HTTP_CODE=$(echo "$RELEASE_RESPONSE" | tail -1)
-    RELEASE_BODY=$(echo "$RELEASE_RESPONSE" | sed '$d')
-
-    if [[ "$HTTP_CODE" -eq 201 ]]; then
-        break
-    fi
-
-    if [[ "$attempt" -lt "$MAX_RETRIES" ]]; then
-        yellow "Attempt ${attempt}/${MAX_RETRIES} failed (HTTP ${HTTP_CODE}). Retrying in 5s..."
-        sleep 5
-    else
-        red "Failed to create release after ${MAX_RETRIES} attempts (HTTP ${HTTP_CODE}):"
-        echo "$RELEASE_BODY" | jq . 2>/dev/null || echo "$RELEASE_BODY"
-        die "Release creation failed. The tag has been pushed — you may need to create the release manually on Codeberg."
-    fi
-done
-
-RELEASE_ID=$(echo "$RELEASE_BODY" | jq -r '.id')
-RELEASE_URL=$(echo "$RELEASE_BODY" | jq -r '.html_url')
+RELEASE_URL=$(gh release view "$TAG" --repo "$GH_REPO" --json url --jq '.url')
 
 green "✓ Release created: ${RELEASE_URL}"
 echo
-
-# ── Upload APK attachments ───────────────────────────────────────────────────
-bold "Uploading APKs..."
-
-for apk in $APK_FILES; do
-    echo "  Uploading ${apk}..."
-
-    UPLOAD_RESPONSE=$(curl -s -w "\n%{http_code}" \
-        -X POST \
-        -H "Authorization: token ${CODEBERG_TOKEN}" \
-        -H "Content-Type: application/octet-stream" \
-        --data-binary "@${apk}" \
-        "${CODEBERG_API}/repos/${REPO_OWNER}/${REPO_NAME}/releases/${RELEASE_ID}/assets?name=${apk}")
-
-    HTTP_CODE=$(echo "$UPLOAD_RESPONSE" | tail -1)
-    UPLOAD_BODY=$(echo "$UPLOAD_RESPONSE" | sed '$d')
-
-    if [[ "$HTTP_CODE" -ne 201 ]]; then
-        red "Failed to upload ${apk} (HTTP ${HTTP_CODE}):"
-        echo "$UPLOAD_BODY" | jq . 2>/dev/null || echo "$UPLOAD_BODY"
-        die "APK upload failed. Release was created — upload remaining APKs manually at: ${RELEASE_URL}"
-    fi
-
-    DOWNLOAD_URL=$(echo "$UPLOAD_BODY" | jq -r '.browser_download_url')
-    green "  ✓ ${DOWNLOAD_URL}"
-done
 
 # ── Clean up local APK copies ────────────────────────────────────────────────
 rm -f $APK_FILES
@@ -226,5 +161,5 @@ bold "Release page:"
 echo "  ${RELEASE_URL}"
 echo
 bold "Obtainium URL (give this to users):"
-echo "  https://codeberg.org/${REPO_OWNER}/${REPO_NAME}"
+echo "  https://github.com/${GH_REPO}"
 echo "═══════════════════════════════════════════════════════════════"

@@ -4,15 +4,15 @@ Categories:
 License: GPL-3.0-only
 AuthorName: EduCoder
 AuthorWebSite: https://educoder.dev
-WebSite: https://edu_coder.codeberg.page/owntone-sync/
-SourceCode: https://codeberg.org/edu_coder/owntone-sync
-IssueTracker: https://codeberg.org/edu_coder/owntone-sync/issues
-Changelog: https://codeberg.org/edu_coder/owntone-sync/releases
+WebSite: https://jptrsn.github.io/owntone-sync/
+SourceCode: https://github.com/jptrsn/owntone-sync
+IssueTracker: https://github.com/jptrsn/owntone-sync/issues
+Changelog: https://github.com/jptrsn/owntone-sync/releases
 
 AutoName: OwnTone Sync
 
 RepoType: git
-Repo: https://codeberg.org/edu_coder/owntone-sync
+Repo: https://github.com/jptrsn/owntone-sync
 
 Builds:
   - versionName: 0.1.3
