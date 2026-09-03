@@ -1,9 +1,13 @@
 package dev.educoder.owntone_sync
 
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.OneTimeWorkRequestBuilder
@@ -23,6 +27,101 @@ class BackgroundSyncWorker(
 
     companion object {
         private const val TAG = "BackgroundSyncWorker"
+    }
+
+    /**
+     * Handles a CancellationException thrown while doWork() was running, from
+     * wherever it originated (setForeground(), a suspend call inside the sync
+     * loop, etc). WorkManager stops a worker's coroutine for two very
+     * different reasons and we need to tell them apart:
+     *
+     *  - The user tapped "Cancel" (stopReason == STOP_REASON_CANCELLED_BY_APP):
+     *    a real, terminal cancellation - log it to sync history.
+     *  - Anything else (charging/Wi-Fi constraint no longer met, Doze,
+     *    background execution limits, timeout, ...): WorkManager itself
+     *    re-enqueues and automatically re-runs this same work once the
+     *    condition is met again. This can happen many times in a row (e.g.
+     *    a battery trickle-charging near 100% flips the "charging" signal on
+     *    and off repeatedly overnight), so it must NOT be logged as a
+     *    cancellation or a failure each time - that's what was flooding sync
+     *    history with dozens of spurious "Cancelled"/"Failed" entries.
+     */
+    private suspend fun handleInterruption(
+        startTime: Long,
+        triggerType: String,
+        cause: CancellationException
+    ): Result {
+        val duration = System.currentTimeMillis() - startTime
+
+        if (stopReason == WorkInfo.STOP_REASON_CANCELLED_BY_APP) {
+            Log.i(TAG, "Sync cancelled by user")
+            try {
+                DatabaseHelper(applicationContext).insertSyncHistory(
+                    DatabaseHelper.SyncHistoryRecord(
+                        timestamp = System.currentTimeMillis(),
+                        status = "cancelled",
+                        playlistsSynced = 0,
+                        tracksDownloaded = 0,
+                        tracksDeleted = 0,
+                        errorMessage = "Cancelled by user",
+                        durationMs = duration,
+                        triggerType = triggerType
+                    )
+                )
+            } catch (dbError: Exception) {
+                Log.e(TAG, "Failed to log cancellation to database", dbError)
+            }
+
+            SyncProgressBroadcaster.dismissNotification(applicationContext)
+            SyncProgressBroadcaster.broadcastSyncComplete("cancelled", "Cancelled by user")
+            return Result.success()
+        }
+
+        Log.w(
+            TAG,
+            "Sync interrupted by system (stopReason=$stopReason), " +
+                "WorkManager will retry automatically once conditions are met",
+            cause
+        )
+        SyncProgressBroadcaster.dismissNotification(applicationContext)
+        SyncProgressBroadcaster.broadcastSyncComplete(
+            "interrupted",
+            "Sync paused - will resume automatically once charging/Wi-Fi conditions are met"
+        )
+        // The Result we return here is moot when WorkManager itself stopped the
+        // job for a constraint it's still tracking (it controls the outcome),
+        // but failure() is the safe choice for any other stop reason.
+        return Result.failure()
+    }
+
+    /**
+     * Is the device connected to any power source (AC, USB, or wireless
+     * charger) right now? Deliberately NOT "is the battery actively
+     * charging" (BatteryManager.EXTRA_STATUS / isCharging) - once a battery
+     * is near-full, Android trickle-charges it, flipping the "charging"
+     * signal on and off every few minutes to avoid overcharging while still
+     * being plugged in the whole time. EXTRA_PLUGGED reflects the physical
+     * connection instead, so it stays stable across those trickle cycles.
+     */
+    private fun isPluggedIn(context: Context): Boolean {
+        val batteryStatus = context.registerReceiver(
+            null,
+            IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        )
+        val plugged = batteryStatus?.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1) ?: -1
+        return plugged > 0
+    }
+
+    /** Reads the user's saved sync schedule, or null if unset/unparseable. */
+    private fun readSyncSchedule(context: Context): SyncSchedule? {
+        val prefs = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        val syncScheduleJson = prefs.getString("flutter.sync_schedule", null) ?: return null
+        return try {
+            Moshi.Builder().build().adapter(SyncSchedule::class.java).fromJson(syncScheduleJson)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing sync schedule", e)
+            null
+        }
     }
 
     private suspend fun <T> loggedOperation(
@@ -75,11 +174,57 @@ class BackgroundSyncWorker(
         val triggerType = inputData.getString("trigger_type") ?: "scheduled"
         val startTime = System.currentTimeMillis()
 
+        // Charging is checked here, once, at the moment the sync is about to
+        // start - NOT as a WorkManager Constraint (which re-checks Android's
+        // "actively charging" signal continuously and stops the job the
+        // instant it flips, which trickle-charging near 100% does over and
+        // over all night). "Plugged into power" is what actually matters -
+        // the device can top up the battery whenever needed for as long as
+        // it stays plugged in, whether or not the charging chip happens to
+        // be active at this exact moment. A manual sync always proceeds
+        // regardless, same as it always has.
+        if (triggerType != "manual") {
+            val schedule = readSyncSchedule(applicationContext)
+            if (schedule?.requiresCharging == true && !isPluggedIn(applicationContext)) {
+                Log.i(TAG, "Skipping scheduled sync - device is not plugged in")
+                try {
+                    DatabaseHelper(applicationContext).insertSyncHistory(
+                        DatabaseHelper.SyncHistoryRecord(
+                            timestamp = System.currentTimeMillis(),
+                            status = "skipped",
+                            playlistsSynced = 0,
+                            tracksDownloaded = 0,
+                            tracksDeleted = 0,
+                            errorMessage = "Device not plugged into power",
+                            durationMs = System.currentTimeMillis() - startTime,
+                            triggerType = triggerType
+                        )
+                    )
+                } catch (dbError: Exception) {
+                    Log.e(TAG, "Failed to log skipped sync to database", dbError)
+                }
+                SyncProgressBroadcaster.broadcastSyncComplete(
+                    "skipped",
+                    "Device not plugged into power"
+                )
+                // Still queue up tomorrow's attempt - skipping today must not
+                // break the recurring schedule.
+                scheduleNextSync()
+                return Result.success()
+            }
+        }
+
         // CRITICAL: Call setForeground IMMEDIATELY before any other work
         // This prevents WorkManager from killing the job on Android 12+
         try {
             setForeground(createInitialForegroundInfo())
             Log.i(TAG, "Foreground service started successfully")
+        } catch (e: CancellationException) {
+            // WorkManager stopped us before we even got going - e.g. the
+            // charging/Wi-Fi constraint was already unmet again by the time
+            // this restart attempt began. Not a real failure - see
+            // handleInterruption().
+            return handleInterruption(startTime, triggerType, e)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start foreground service - sync cannot proceed", e)
 
@@ -472,91 +617,77 @@ class BackgroundSyncWorker(
 
             val duration = System.currentTimeMillis() - startTime
 
-            // Log sync history
-            val syncId = dbHelper.insertSyncHistory(
-                DatabaseHelper.SyncHistoryRecord(
-                    timestamp = System.currentTimeMillis(),
-                    status = if (syncCancelled) "cancelled" else "success",
-                    playlistsSynced = playlistIds.size,
-                    tracksDownloaded = tracksDownloaded,
-                    tracksDeleted = tracksDeleted,
-                    errorMessage = if (syncCancelled) cancellationReason else null,
-                    durationMs = duration,
-                    triggerType = triggerType
+            // syncCancelled can be set either by a genuine user cancellation or
+            // by WorkManager stopping us mid-run because a constraint (charging,
+            // Wi-Fi, ...) is no longer met - it retries automatically once the
+            // condition returns, so that case must not be logged as a
+            // cancellation (see handleInterruption() for the full rationale).
+            val stoppedBySystem = syncCancelled && isStopped &&
+                stopReason != WorkInfo.STOP_REASON_CANCELLED_BY_APP
+
+            if (stoppedBySystem) {
+                Log.w(
+                    TAG,
+                    "Sync interrupted by system mid-run (stopReason=$stopReason), " +
+                        "WorkManager will retry automatically once conditions are met"
                 )
-            )
-            historyWritten = true
-
-            // Insert playlist details
-            for (detail in playlistDetails) {
-                dbHelper.insertSyncHistoryPlaylist(
-                    DatabaseHelper.SyncHistoryPlaylist(
-                        syncId = syncId.toInt(),
-                        playlistId = detail["playlist_id"] as Int,
-                        playlistName = detail["playlist_name"] as String,
-                        tracksInPlaylist = detail["tracks_in_playlist"] as Int,
-                        errorMessage = detail["error_message"] as String?
-                    )
-                )
-            }
-
-            // Schedule next sync
-            scheduleNextSync()
-
-            Log.i(TAG, "Background sync completed: $tracksDownloaded tracks downloaded in ${duration}ms")
-            if (syncCancelled) {
                 SyncProgressBroadcaster.dismissNotification(applicationContext)
                 SyncProgressBroadcaster.broadcastSyncComplete(
-                    "cancelled",
-                    cancellationReason ?: "Sync cancelled by user"
+                    "interrupted",
+                    "Sync paused - will resume automatically once charging/Wi-Fi conditions are met"
                 )
+                Result.failure()
             } else {
-                SyncProgressBroadcaster.dismissNotification(applicationContext)
-                SyncProgressBroadcaster.broadcastSyncComplete("success")
+                // Log sync history
+                val syncId = dbHelper.insertSyncHistory(
+                    DatabaseHelper.SyncHistoryRecord(
+                        timestamp = System.currentTimeMillis(),
+                        status = if (syncCancelled) "cancelled" else "success",
+                        playlistsSynced = playlistIds.size,
+                        tracksDownloaded = tracksDownloaded,
+                        tracksDeleted = tracksDeleted,
+                        errorMessage = if (syncCancelled) cancellationReason else null,
+                        durationMs = duration,
+                        triggerType = triggerType
+                    )
+                )
+                historyWritten = true
+
+                // Insert playlist details
+                for (detail in playlistDetails) {
+                    dbHelper.insertSyncHistoryPlaylist(
+                        DatabaseHelper.SyncHistoryPlaylist(
+                            syncId = syncId.toInt(),
+                            playlistId = detail["playlist_id"] as Int,
+                            playlistName = detail["playlist_name"] as String,
+                            tracksInPlaylist = detail["tracks_in_playlist"] as Int,
+                            errorMessage = detail["error_message"] as String?
+                        )
+                    )
+                }
+
+                // Schedule next sync
+                scheduleNextSync()
+
+                Log.i(TAG, "Background sync completed: $tracksDownloaded tracks downloaded in ${duration}ms")
+                if (syncCancelled) {
+                    SyncProgressBroadcaster.dismissNotification(applicationContext)
+                    SyncProgressBroadcaster.broadcastSyncComplete(
+                        "cancelled",
+                        cancellationReason ?: "Sync cancelled by user"
+                    )
+                } else {
+                    SyncProgressBroadcaster.dismissNotification(applicationContext)
+                    SyncProgressBroadcaster.broadcastSyncComplete("success")
+                }
+
+                Result.success()
             }
 
-            Result.success()
-
         } catch (e: CancellationException) {
-                val duration = System.currentTimeMillis() - startTime
+            handleInterruption(startTime, triggerType, e)
 
-                val wasUserCancelled = isStopped
-                val status = if (wasUserCancelled) "cancelled" else "failed"
-                val errorMessage = if (wasUserCancelled) {
-                    "Cancelled by user"
-                } else {
-                    "Sync interrupted by system: ${e.message ?: "Job was cancelled"}"
-                }
-
-                Log.w(TAG, "Sync $status: $errorMessage", e)
-
-                if (!historyWritten) {
-                    try {
-                        val dbHelper = DatabaseHelper(applicationContext)
-                        dbHelper.insertSyncHistory(
-                            DatabaseHelper.SyncHistoryRecord(
-                                timestamp = System.currentTimeMillis(),
-                                status = status,
-                                playlistsSynced = 0,
-                                tracksDownloaded = 0,
-                                tracksDeleted = 0,
-                                errorMessage = errorMessage,
-                                durationMs = duration,
-                                triggerType = triggerType
-                            )
-                        )
-                        historyWritten = true
-                    } catch (dbError: Exception) {
-                        Log.e(TAG, "Failed to log cancellation to database", dbError)
-                    }
-                }
-
-                SyncProgressBroadcaster.dismissNotification(applicationContext)
-                SyncProgressBroadcaster.broadcastSyncComplete(status, errorMessage)
-
-                if (wasUserCancelled) Result.success() else Result.failure()
-
-            } catch (e: Exception) {
+        } catch (e: Exception) {
                 val duration = System.currentTimeMillis() - startTime
                 Log.e(TAG, "Background sync failed with exception", e)
 
@@ -657,12 +788,16 @@ class BackgroundSyncWorker(
 
             val delayMillis = scheduledTime.timeInMillis - now.timeInMillis
 
+            // Charging is intentionally NOT a WorkManager constraint here - see
+            // the comment at the top of doWork() for why. It's re-checked
+            // (once) when the worker actually starts instead. The network
+            // constraint stays, since falling back to cellular mid-download
+            // would actually violate what "Only on Wi-Fi" promises.
             val constraints = androidx.work.Constraints.Builder()
                 .setRequiredNetworkType(
                     if (schedule.requiresWifi) androidx.work.NetworkType.UNMETERED
                     else androidx.work.NetworkType.CONNECTED
                 )
-                .setRequiresCharging(schedule.requiresCharging)
                 .build()
 
             val syncWorkRequest = androidx.work.OneTimeWorkRequestBuilder<BackgroundSyncWorker>()

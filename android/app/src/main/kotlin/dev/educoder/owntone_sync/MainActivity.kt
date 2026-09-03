@@ -515,12 +515,17 @@ class MainActivity: FlutterActivity() {
 
             val delayMillis = scheduledTime.timeInMillis - now.timeInMillis
 
-            // Build constraints
+            // Build constraints. Charging is deliberately NOT enforced here as
+            // a WorkManager Constraint - see the comment at the top of
+            // BackgroundSyncWorker.doWork() for why (trickle-charging near
+            // 100% flips the OS "charging" signal on/off all night, which
+            // would repeatedly stop/restart the worker). It's checked once,
+            // "plugged in" rather than "actively charging", when the worker
+            // starts instead.
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(
                     if (schedule.requiresWifi) NetworkType.UNMETERED else NetworkType.CONNECTED
                 )
-                .setRequiresCharging(schedule.requiresCharging)
                 .build()
 
             // Use OneTimeWorkRequest with calculated delay and expedited flag
