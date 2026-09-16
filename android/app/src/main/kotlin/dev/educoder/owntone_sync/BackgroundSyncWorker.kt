@@ -49,7 +49,9 @@ class BackgroundSyncWorker(
     private suspend fun handleInterruption(
         startTime: Long,
         triggerType: String,
-        cause: CancellationException
+        cause: CancellationException,
+        eventTrackingEnabled: Boolean,
+        eventSyncResult: EventSyncResult
     ): Result {
         val duration = System.currentTimeMillis() - startTime
 
@@ -197,6 +199,8 @@ class BackgroundSyncWorker(
                             playlistsSynced = 0,
                             tracksDownloaded = 0,
                             tracksDeleted = 0,
+                            playsSynced = null,
+                            skipsSynced = null,
                             errorMessage = "Device not plugged into power",
                             durationMs = System.currentTimeMillis() - startTime,
                             triggerType = triggerType
@@ -226,12 +230,12 @@ class BackgroundSyncWorker(
             // charging/Wi-Fi constraint was already unmet again by the time
             // this restart attempt began. Not a real failure - see
             // handleInterruption().
-            return handleInterruption(startTime, triggerType, e)
+            return handleInterruption(startTime, triggerType, e, false, EventSyncResult(0, 0, 0))
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start foreground service - sync cannot proceed", e)
 
             // If we can't start foreground service, we must fail immediately
-            val errorMsg = if (
+                        val errorMsg = if (
                 android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S &&
                 e is android.app.ForegroundServiceStartNotAllowedException
             ) {
@@ -250,6 +254,8 @@ class BackgroundSyncWorker(
                         playlistsSynced = 0,
                         tracksDownloaded = 0,
                         tracksDeleted = 0,
+                        playsSynced = null,
+                        skipsSynced = null,
                         errorMessage = errorMsg,
                         durationMs = System.currentTimeMillis() - startTime,
                         triggerType = triggerType
@@ -266,6 +272,10 @@ class BackgroundSyncWorker(
 
         // Flag to track if we've already written history (prevent duplicates)
         var historyWritten = false
+
+        // Declare before the try block so catch handlers can capture them
+        var eventTrackingEnabled = false
+        var eventSyncResult = EventSyncResult(0, 0, 0)
 
         return withContext(Dispatchers.IO) {
             try {
@@ -299,8 +309,8 @@ class BackgroundSyncWorker(
             val apiClient = OwnToneApiClient(serverUrl, fileOps)
 
             // Sync events first (if tracking is enabled)
-            val eventTrackingEnabled = prefs.getBoolean("flutter.event_tracking_enabled", false)
-            var eventSyncResult: EventSyncResult = EventSyncResult(0, 0, 0)
+            eventTrackingEnabled = prefs.getBoolean("flutter.event_tracking_enabled", false)
+            eventSyncResult = EventSyncResult(0, 0, 0)
             if (eventTrackingEnabled) {
                 Log.i(TAG, "Event tracking enabled, syncing events first")
                 eventSyncResult = syncEvents(applicationContext, worker, apiClient, dbHelper)
@@ -687,10 +697,11 @@ class BackgroundSyncWorker(
                 Result.success()
             }
 
-        } catch (e: CancellationException) {
-            handleInterruption(startTime, triggerType, e)
+                return@withContext Result.success()
+            } catch (e: CancellationException) {
+                handleInterruption(startTime, triggerType, e, eventTrackingEnabled, eventSyncResult)
 
-        } catch (e: Exception) {
+            } catch (e: Exception) {
                 val duration = System.currentTimeMillis() - startTime
                 Log.e(TAG, "Background sync failed with exception", e)
 
