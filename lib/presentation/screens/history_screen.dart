@@ -233,6 +233,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     _buildStat('Downloaded', '${record.tracksDownloaded}'),
                     if (record.tracksDeleted > 0)
                       _buildStat('Deleted', '${record.tracksDeleted}'),
+                    if (record.playsSynced != null) ...[
+                      _buildStat('Plays', '${record.playsSynced}'),
+                      _buildStat('Skips', '${record.skipsSynced}'),
+                    ],
                   ],
                 ),
 

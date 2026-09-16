@@ -63,6 +63,8 @@ class BackgroundSyncWorker(
                         playlistsSynced = 0,
                         tracksDownloaded = 0,
                         tracksDeleted = 0,
+                        playsSynced = if (eventTrackingEnabled) eventSyncResult.playsSynced else null,
+                        skipsSynced = if (eventTrackingEnabled) eventSyncResult.skipsSynced else null,
                         errorMessage = "Cancelled by user",
                         durationMs = duration,
                         triggerType = triggerType
@@ -298,11 +300,10 @@ class BackgroundSyncWorker(
 
             // Sync events first (if tracking is enabled)
             val eventTrackingEnabled = prefs.getBoolean("flutter.event_tracking_enabled", false)
-            var eventsSynced = 0
-
+            var eventSyncResult: EventSyncResult = EventSyncResult(0, 0, 0)
             if (eventTrackingEnabled) {
                 Log.i(TAG, "Event tracking enabled, syncing events first")
-                eventsSynced = syncEvents(applicationContext, worker, apiClient, dbHelper)
+                eventSyncResult = syncEvents(applicationContext, worker, apiClient, dbHelper)
             } else {
                 Log.d(TAG, "Event tracking disabled, skipping event sync")
             }
@@ -646,6 +647,8 @@ class BackgroundSyncWorker(
                         playlistsSynced = playlistIds.size,
                         tracksDownloaded = tracksDownloaded,
                         tracksDeleted = tracksDeleted,
+                        playsSynced = if (eventTrackingEnabled) eventSyncResult.playsSynced else null,
+                        skipsSynced = if (eventTrackingEnabled) eventSyncResult.skipsSynced else null,
                         errorMessage = if (syncCancelled) cancellationReason else null,
                         durationMs = duration,
                         triggerType = triggerType
@@ -708,6 +711,8 @@ class BackgroundSyncWorker(
                                 playlistsSynced = 0,
                                 tracksDownloaded = 0,
                                 tracksDeleted = 0,
+                                playsSynced = if (eventTrackingEnabled) eventSyncResult.playsSynced else null,
+                                skipsSynced = if (eventTrackingEnabled) eventSyncResult.skipsSynced else null,
                                 errorMessage = errorMessage,
                                 durationMs = duration,
                                 triggerType = triggerType
@@ -828,19 +833,21 @@ class BackgroundSyncWorker(
         worker: CoroutineWorker,
         apiClient: OwnToneApiClient,
         dbHelper: DatabaseHelper
-    ): Int {
+    ): EventSyncResult {
         val unsyncedEvents = dbHelper.getUnsyncedEvents()
 
         if (unsyncedEvents.isEmpty()) {
             Log.d(TAG, "No events to sync")
-            return 0
+            return EventSyncResult(0, 0, 0)
         }
 
         Log.i(TAG, "Syncing ${unsyncedEvents.size} events")
 
         // Group events by track_id
         val eventsByTrack = unsyncedEvents.groupBy { it.trackId }
-        var eventsSynced = 0
+        var totalEventsSynced = 0
+        var totalPlaysSynced = 0
+        var totalSkipsSynced = 0
         var eventsDeleted = 0
         var trackIndex = 0
 
@@ -895,7 +902,9 @@ class BackgroundSyncWorker(
                 // Success - delete these events
                 val eventIds = events.map { it.id }
                 dbHelper.deleteEvents(eventIds)
-                eventsSynced += events.size
+                totalEventsSynced += events.size
+                totalPlaysSynced += playCount
+                totalSkipsSynced += skipCount
 
                 Log.i(TAG, "Successfully synced ${events.size} events for track $trackId")
 
@@ -923,8 +932,8 @@ class BackgroundSyncWorker(
             Log.i(TAG, "Deleted $eventsDeleted events after max retries")
         }
 
-        Log.i(TAG, "Event sync completed: $eventsSynced events synced, $eventsDeleted events deleted")
-        return eventsSynced
+        Log.i(TAG, "Event sync completed: $totalEventsSynced events synced, $eventsDeleted events deleted")
+        return EventSyncResult(totalEventsSynced, totalPlaysSynced, totalSkipsSynced)
     }
 
     @com.squareup.moshi.JsonClass(generateAdapter = true)
@@ -936,6 +945,11 @@ class BackgroundSyncWorker(
         val requiresWifi: Boolean
     )
 
+    data class EventSyncResult(
+        val eventsSynced: Int,
+        val playsSynced: Int,
+        val skipsSynced: Int
+    )
 }
 
 class SyncException(message: String, cause: Throwable? = null) : Exception(message, cause)

@@ -19,7 +19,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -157,6 +157,15 @@ class DatabaseHelper {
         ALTER TABLE sync_history_playlists
         ADD COLUMN error_message TEXT
       ''');
+    }
+    if (oldVersion < 3) {
+      // Add event sync columns to sync_history
+      await db.execute(
+        'ALTER TABLE sync_history ADD COLUMN plays_synced INTEGER DEFAULT NULL',
+      );
+      await db.execute(
+        'ALTER TABLE sync_history ADD COLUMN skips_synced INTEGER DEFAULT NULL',
+      );
     }
   }
 

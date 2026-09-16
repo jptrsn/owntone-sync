@@ -5,6 +5,8 @@ class SyncHistoryRecord {
   final int playlistsSynced;
   final int tracksDownloaded;
   final int tracksDeleted;
+  final int? playsSynced;
+  final int? skipsSynced;
   final String? errorMessage;
   final int? durationMs;
   final String triggerType; // 'manual', 'scheduled'
@@ -17,6 +19,8 @@ class SyncHistoryRecord {
     this.playlistsSynced = 0,
     this.tracksDownloaded = 0,
     this.tracksDeleted = 0,
+    this.playsSynced,
+    this.skipsSynced,
     this.errorMessage,
     this.durationMs,
     required this.triggerType,
@@ -31,6 +35,8 @@ class SyncHistoryRecord {
       'playlists_synced': playlistsSynced,
       'tracks_downloaded': tracksDownloaded,
       'tracks_deleted': tracksDeleted,
+      if (playsSynced != null) 'plays_synced': playsSynced,
+      if (skipsSynced != null) 'skips_synced': skipsSynced,
       'error_message': errorMessage,
       'duration_ms': durationMs,
       'trigger_type': triggerType,
@@ -45,6 +51,8 @@ class SyncHistoryRecord {
       playlistsSynced: map['playlists_synced'] as int? ?? 0,
       tracksDownloaded: map['tracks_downloaded'] as int? ?? 0,
       tracksDeleted: map['tracks_deleted'] as int? ?? 0,
+      playsSynced: map['plays_synced'] as int?,
+      skipsSynced: map['skips_synced'] as int?,
       errorMessage: map['error_message'] as String?,
       durationMs: map['duration_ms'] as int?,
       triggerType: map['trigger_type'] as String,

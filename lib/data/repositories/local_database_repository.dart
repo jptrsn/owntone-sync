@@ -567,6 +567,8 @@ class LocalDatabaseRepository {
           playlistsSynced: record.playlistsSynced,
           tracksDownloaded: record.tracksDownloaded,
           tracksDeleted: record.tracksDeleted,
+          playsSynced: record.playsSynced,
+          skipsSynced: record.skipsSynced,
           errorMessage: record.errorMessage,
           durationMs: record.durationMs,
           triggerType: record.triggerType,

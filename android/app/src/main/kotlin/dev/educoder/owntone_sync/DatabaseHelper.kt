@@ -158,6 +158,8 @@ class DatabaseHelper(private val context: Context) {
             put("playlists_synced", record.playlistsSynced)
             put("tracks_downloaded", record.tracksDownloaded)
             put("tracks_deleted", record.tracksDeleted)
+            if (record.playsSynced != null) put("plays_synced", record.playsSynced!!)
+            if (record.skipsSynced != null) put("skips_synced", record.skipsSynced!!)
             put("error_message", record.errorMessage)
             put("duration_ms", record.durationMs)
             put("trigger_type", record.triggerType)
@@ -349,6 +351,8 @@ class DatabaseHelper(private val context: Context) {
         val playlistsSynced: Int,
         val tracksDownloaded: Int,
         val tracksDeleted: Int,
+        val playsSynced: Int?,
+        val skipsSynced: Int?,
         val errorMessage: String?,
         val durationMs: Long,
         val triggerType: String
