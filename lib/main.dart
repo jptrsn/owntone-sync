@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:audio_service/audio_service.dart';
 
 import 'presentation/providers/sync_provider.dart';
+import 'presentation/providers/player_provider.dart';
 import 'presentation/services/audio_handler.dart';
 import 'presentation/screens/main_navigation_screen.dart';
 
@@ -24,8 +25,11 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => SyncProvider(),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => SyncProvider()),
+        ChangeNotifierProvider(create: (_) => PlayerProvider()),
+      ],
       child: MaterialApp(
         title: 'OwnTone Sync',
         theme: ThemeData(

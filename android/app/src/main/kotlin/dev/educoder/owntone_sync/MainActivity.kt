@@ -38,6 +38,7 @@ class MainActivity: FlutterActivity() {
     private val STORAGE_CHANNEL = "dev.educoder.owntone_sync/storage"
     private val PROGRESS_CHANNEL = "dev.educoder.owntone_sync/sync_progress"
     private val SYNC_CHANNEL = "dev.educoder.owntone_sync/sync"
+    private val PLAYER_CHANNEL = "dev.educoder.owntone_sync/player"
     private val REQUEST_CODE_MUSIC_FOLDER = 1001
 
     private var pendingMusicFolderResult: MethodChannel.Result? = null
@@ -214,6 +215,24 @@ class MainActivity: FlutterActivity() {
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Error checking sync state", e)
                         result.success(false)
+                    }
+                }
+                else -> {
+                    result.notImplemented()
+                }
+            }
+        }
+
+        // Player channel
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PLAYER_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "queueRebuild" -> {
+                    try {
+                        Log.d("MainActivity", "Received queue rebuild notification from sync worker")
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Error handling queue rebuild", e)
+                        result.error("REBUILD_FAILED", e.message, null)
                     }
                 }
                 else -> {

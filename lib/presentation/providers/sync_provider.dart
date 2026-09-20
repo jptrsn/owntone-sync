@@ -667,4 +667,20 @@ class SyncProvider extends ChangeNotifier {
       );
     }
   }
+
+  Future<List<SyncedTrack>?> getTracksForPlaylist(int playlistId) async {
+    await _initializeIfNeeded();
+    return _dbRepo?.getTracksForPlaylist(playlistId);
+  }
+
+  Future<List<SyncedTrack>?> getAllTracks() async {
+    await _initializeIfNeeded();
+    return _dbRepo?.getAllTracks();
+  }
+
+  Future<void> _initializeIfNeeded() async {
+    if (_dbRepo == null) {
+      _dbRepo = LocalDatabaseRepository();
+    }
+  }
 }
