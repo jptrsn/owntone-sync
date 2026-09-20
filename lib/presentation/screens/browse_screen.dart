@@ -5,6 +5,7 @@ import '../widgets/playlist_list_view.dart';
 import '../widgets/artist_list_view.dart';
 import '../widgets/album_list_view.dart';
 import '../widgets/track_list_view.dart';
+import '../widgets/mini_player.dart';
 
 class BrowseScreen extends StatefulWidget {
   const BrowseScreen({super.key});
@@ -50,31 +51,34 @@ class _BrowseScreenState extends State<BrowseScreen>
             return _buildEmptyState(context);
           }
 
-          return Column(
-            children: [
-              TabBar(
-                controller: _tabController,
-                tabs: const [
-                  Tab(text: 'Playlists'),
-                  Tab(text: 'Artists'),
-                  Tab(text: 'Albums'),
-                  Tab(text: 'Tracks'),
-                ],
-              ),
-              Expanded(
-                child: provider.isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : TabBarView(
-                        controller: _tabController,
-                        children: const [
-                          PlaylistListView(),
-                          ArtistListView(),
-                          AlbumListView(),
-                          TrackListView(),
-                        ],
-                      ),
-              ),
-            ],
+          return Scaffold(
+            body: Column(
+              children: [
+                TabBar(
+                  controller: _tabController,
+                  tabs: const [
+                    Tab(text: 'Playlists'),
+                    Tab(text: 'Artists'),
+                    Tab(text: 'Albums'),
+                    Tab(text: 'Tracks'),
+                  ],
+                ),
+                Expanded(
+                  child: provider.isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : TabBarView(
+                          controller: _tabController,
+                          children: const [
+                            PlaylistListView(),
+                            ArtistListView(),
+                            AlbumListView(),
+                            TrackListView(),
+                          ],
+                        ),
+                ),
+              ],
+            ),
+            bottomSheet: const MiniPlayer(),
           );
         },
       ),
