@@ -129,6 +129,7 @@ class PendingEvent {
   final String eventType; // 'play' or 'skip'
   final int timestamp;
   final bool synced;
+  final int retryCount;
 
   PendingEvent({
     this.id,
@@ -136,6 +137,7 @@ class PendingEvent {
     required this.eventType,
     required this.timestamp,
     this.synced = false,
+    this.retryCount = 0,
   });
 
   Map<String, dynamic> toMap() {
@@ -145,6 +147,7 @@ class PendingEvent {
       'event_type': eventType,
       'timestamp': timestamp,
       'synced': synced ? 1 : 0,
+      'retry_count': retryCount,
     };
   }
 
@@ -155,6 +158,7 @@ class PendingEvent {
       eventType: map['event_type'],
       timestamp: map['timestamp'],
       synced: map['synced'] == 1,
+      retryCount: map['retry_count'] as int? ?? 0,
     );
   }
 }
@@ -317,6 +321,37 @@ class LocalDatabaseRepository {
   Future<void> deleteEvent(int eventId) async {
     final db = await _dbHelper.database;
     await db.delete('pending_events', where: 'id = ?', whereArgs: [eventId]);
+  }
+
+  Future<void> incrementRetryCount(int eventId) async {
+    final db = await _dbHelper.database;
+    final existingEvents = await db.query(
+      'pending_events',
+      where: 'id = ?',
+      whereArgs: [eventId],
+    );
+    
+    if (existingEvents.isNotEmpty) {
+      final retryCount = existingEvents.first['retry_count'] as int?;
+      final newRetryCount = (retryCount ?? 0) + 1;
+      await db.update(
+        'pending_events',
+        {'retry_count': newRetryCount},
+        where: 'id = ?',
+        whereArgs: [eventId],
+      );
+    }
+  }
+
+  Future<void> deleteEvents(List<int> eventIds) async {
+    if (eventIds.isEmpty) return;
+    final db = await _dbHelper.database;
+    final placeholders = List.generate(eventIds.length, (_) => '?').join(',');
+    await db.delete(
+      'pending_events',
+      where: 'id IN ($placeholders)',
+      whereArgs: eventIds,
+    );
   }
 
   Future<void> deleteSyncedEvents() async {

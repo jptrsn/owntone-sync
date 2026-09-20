@@ -15,6 +15,10 @@ class PlayerProvider extends ChangeNotifier {
   bool _repeatMode = false;
   int _queueVersion = 0;
   List<SyncedTrack> _queue = [];
+  
+  int? _currentTrackId;
+  Duration _currentTrackPosition = Duration.zero;
+  Duration? _currentTrackDuration;
 
   PlayerProvider({SyncProvider? syncProvider})
       : _syncProvider = syncProvider ?? SyncProvider() {
@@ -27,6 +31,10 @@ class PlayerProvider extends ChangeNotifier {
   bool get repeatMode => _repeatMode;
   int get queueVersion => _queueVersion;
   List<SyncedTrack> get queue => _queue;
+
+  int? get currentTrackId => _currentTrackId;
+  Duration get currentTrackPosition => _currentTrackPosition;
+  Duration? get currentTrackDuration => _currentTrackDuration;
 
   Future<void> loadPlaylist(int playlistId) async {
     _currentPlaylistId = playlistId;
@@ -44,6 +52,7 @@ class PlayerProvider extends ChangeNotifier {
     try {
       await _playerChannel.invokeMethod('playTrack', {'trackId': trackId});
       _isPlaying = true;
+      _currentTrackId = trackId;
       notifyListeners();
     } catch (e) {
       if (kDebugMode) {
@@ -55,6 +64,9 @@ class PlayerProvider extends ChangeNotifier {
   Future<void> seek(Duration position) async {
     try {
       await _playerChannel.invokeMethod('seek', {'positionMs': position.inMilliseconds});
+      _currentTrackPosition = position;
+      await _checkPlayCompletion();
+      notifyListeners();
     } catch (e) {
       if (kDebugMode) {
         print('Error seeking: $e');
@@ -114,6 +126,68 @@ class PlayerProvider extends ChangeNotifier {
         if (kDebugMode) {
           print('Error loading queue: $e');
         }
+      }
+    }
+  }
+
+  Future<void> _checkPlayCompletion() async {
+    if (_currentTrackId != null && _currentTrackDuration != null) {
+      final percent = _currentTrackPosition.inMilliseconds / _currentTrackDuration!.inMilliseconds;
+      if (percent >= 0.9) {
+        await _recordPlayEvent();
+      }
+    }
+  }
+
+  Future<void> _recordPlayEvent() async {
+    try {
+      if (_currentTrackId != null) {
+        await _playerChannel.invokeMethod('recordPlayEvent', {
+          'trackId': _currentTrackId,
+          'durationMs': _currentTrackDuration?.inMilliseconds ?? 0
+        });
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error recording play event: $e');
+      }
+    }
+  }
+
+  Future<void> skipToNext() async {
+    try {
+      await _playerChannel.invokeMethod('skipToNext');
+      if (_currentTrackId != null) {
+        await _recordSkipEvent();
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error skipping to next: $e');
+      }
+    }
+  }
+
+  Future<void> skipToPrevious() async {
+    try {
+      await _playerChannel.invokeMethod('skipToPrevious');
+      if (_currentTrackId != null) {
+        await _recordSkipEvent();
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error skipping to previous: $e');
+      }
+    }
+  }
+
+  Future<void> _recordSkipEvent() async {
+    try {
+      if (_currentTrackId != null) {
+        await _playerChannel.invokeMethod('recordSkipEvent', {'trackId': _currentTrackId});
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error recording skip event: $e');
       }
     }
   }
