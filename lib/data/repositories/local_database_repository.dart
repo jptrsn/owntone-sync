@@ -56,6 +56,7 @@ class SyncedTrack {
   final int year;
   final String artworkUrl;
   final String? artworkPath;
+  final String? contentUri;
 
   SyncedTrack({
     required this.id,
@@ -74,6 +75,7 @@ class SyncedTrack {
     this.year = 0,
     this.artworkUrl = '',
     this.artworkPath,
+    this.contentUri,
   });
 
   Map<String, dynamic> toMap() {
@@ -94,6 +96,7 @@ class SyncedTrack {
       'year': year,
       'artwork_url': artworkUrl,
       'artwork_path': artworkPath,
+      'content_uri': contentUri,
     };
   }
 
@@ -115,6 +118,7 @@ class SyncedTrack {
       year: map['year'] as int? ?? 0,
       artworkUrl: map['artwork_url'] as String? ?? '',
       artworkPath: map['artwork_path'] as String?,
+      contentUri: map['content_uri'] as String?,
     );
   }
 }

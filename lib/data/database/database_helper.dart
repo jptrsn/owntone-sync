@@ -68,7 +68,8 @@ class DatabaseHelper {
         disc_number INTEGER NOT NULL DEFAULT 0,
         year INTEGER NOT NULL DEFAULT 0,
         artwork_url TEXT NOT NULL DEFAULT '',
-        artwork_path TEXT DEFAULT ''
+        artwork_path TEXT DEFAULT '',
+        content_uri TEXT DEFAULT ''
       )
     ''');
 
@@ -165,6 +166,12 @@ class DatabaseHelper {
       );
       await db.execute(
         'ALTER TABLE sync_history ADD COLUMN skips_synced INTEGER DEFAULT NULL',
+      );
+    }
+    if (oldVersion < 4) {
+      // Add content_uri column for audio playback
+      await db.execute(
+        'ALTER TABLE synced_tracks ADD COLUMN content_uri TEXT',
       );
     }
   }

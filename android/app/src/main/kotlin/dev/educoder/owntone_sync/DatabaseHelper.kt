@@ -321,7 +321,8 @@ class DatabaseHelper(private val context: Context) {
         val discNumber: Int,
         val year: Int,
         val artworkUrl: String,
-        val artworkPath: String?
+        val artworkPath: String?,
+        val contentUri: String? = null
     ) {
         companion object {
             fun fromCursor(cursor: Cursor) = SyncedTrack(
@@ -340,7 +341,8 @@ class DatabaseHelper(private val context: Context) {
                 discNumber = cursor.getInt(cursor.getColumnIndexOrThrow("disc_number")),
                 year = cursor.getInt(cursor.getColumnIndexOrThrow("year")),
                 artworkUrl = cursor.getString(cursor.getColumnIndexOrThrow("artwork_url")) ?: "",
-                artworkPath = cursor.getString(cursor.getColumnIndexOrThrow("artwork_path"))
+                artworkPath = cursor.getString(cursor.getColumnIndexOrThrow("artwork_path")),
+                contentUri = cursor.getString(cursor.getColumnIndexOrThrow("content_uri"))
             )
         }
     }

@@ -3,8 +3,10 @@ package dev.educoder.owntone_sync
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
 import android.os.BatteryManager
 import android.util.Log
+import androidx.documentfile.provider.DocumentFile
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkInfo
@@ -481,6 +483,21 @@ class BackgroundSyncWorker(
                                 isCancelled = { isStopped }
                             )
 
+                            // Get the content URI for the downloaded file using DocumentFile
+                            val musicFolderUriString = fileOps.getMusicFolderUri()
+                            val contentUri = if (musicFolderUriString != null) {
+                                try {
+                                    val musicFolder = DocumentFile.fromTreeUri(applicationContext, Uri.parse(musicFolderUriString))
+                                    val trackFile = musicFolder?.findFile("tracks/${downloadResult.filePath}")
+                                    trackFile?.uri?.toString()
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to get content URI for track: ${downloadResult.filePath}", e)
+                                    null
+                                }
+                            } else {
+                                null
+                            }
+
                             // Save to database
                             dbHelper.insertOrUpdateTrack(
                                 DatabaseHelper.SyncedTrack(
@@ -499,7 +516,8 @@ class BackgroundSyncWorker(
                                     discNumber = track.discNumber,
                                     year = track.year,
                                     artworkUrl = track.artworkUrl ?: "",
-                                    artworkPath = null
+                                    artworkPath = null,
+                                    contentUri = contentUri
                                 )
                             )
 

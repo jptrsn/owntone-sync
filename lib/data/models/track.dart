@@ -85,6 +85,8 @@ class Track {
   @JsonKey(name: 'artwork_url')
   final String artworkUrl;
 
+  final String? contentUri;
+
   Track({
     required this.id,
     required this.title,
@@ -110,16 +112,17 @@ class Track {
     required this.timeAdded,
     this.dateReleased,
     required this.seekMs,
-    required this.type,
-    required this.samplerate,
-    required this.bitrate,
-    required this.channels,
-    required this.usermark,
-    required this.mediaKind,
-    required this.dataKind,
-    required this.path,
-    required this.uri,
-    required this.artworkUrl,
+  required this.type,
+  required this.samplerate,
+  required this.bitrate,
+  required this.channels,
+  required this.usermark,
+  required this.mediaKind,
+  required this.dataKind,
+  required this.path,
+  required this.uri,
+  required this.artworkUrl,
+  this.contentUri,
   });
 
   factory Track.fromJson(Map<String, dynamic> json) => _$TrackFromJson(json);
