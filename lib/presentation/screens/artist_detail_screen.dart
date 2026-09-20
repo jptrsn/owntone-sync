@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../data/repositories/local_database_repository.dart';
+import '../widgets/play_button.dart';
 import 'album_detail_screen.dart';
 import 'dart:io';
 
@@ -39,7 +40,6 @@ class _ArtistDetailScreenState extends State<ArtistDetailScreen> {
     return '$minutes:$seconds';
   }
 
-  // Group tracks by album
   Map<String, List<SyncedTrack>> _groupByAlbum() {
     final grouped = <String, List<SyncedTrack>>{};
     for (final track in _tracks) {
@@ -105,17 +105,20 @@ class _ArtistDetailScreenState extends State<ArtistDetailScreen> {
                     ...tracks.map(
                       (track) => Padding(
                         padding: const EdgeInsets.only(left: 16),
-                        child: ListTile(
-                          leading: track.trackNumber > 0
-                              ? Text(
-                                  '${track.trackNumber}',
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                )
-                              : null,
-                          title: Text(track.title),
-                          trailing: Text(
-                            _formatDuration(track.lengthMs),
-                            style: Theme.of(context).textTheme.bodySmall,
+                        child: PlayableTile(
+                          track: track,
+                          child: ListTile(
+                            leading: track.trackNumber > 0
+                                ? Text(
+                                    '${track.trackNumber}',
+                                    style: Theme.of(context).textTheme.bodySmall,
+                                  )
+                                : null,
+                            title: Text(track.title),
+                            trailing: Text(
+                              _formatDuration(track.lengthMs),
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
                           ),
                         ),
                       ),

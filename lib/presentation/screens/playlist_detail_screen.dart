@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../data/repositories/local_database_repository.dart';
+import '../widgets/play_button.dart';
 
 class PlaylistDetailScreen extends StatefulWidget {
   final int playlistId;
@@ -58,15 +59,18 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               itemCount: _tracks.length,
               itemBuilder: (context, index) {
                 final track = _tracks[index];
-                return ListTile(
-                  leading: track.trackNumber > 0
-                      ? CircleAvatar(child: Text('${track.trackNumber}'))
-                      : const Icon(Icons.music_note),
-                  title: Text(track.title),
-                  subtitle: Text('${track.artist} • ${track.album}'),
-                  trailing: Text(
-                    _formatDuration(track.lengthMs),
-                    style: Theme.of(context).textTheme.bodySmall,
+                return PlayableTile(
+                  track: track,
+                  child: ListTile(
+                    leading: track.trackNumber > 0
+                        ? CircleAvatar(child: Text('${track.trackNumber}'))
+                        : const Icon(Icons.music_note),
+                    title: Text(track.title),
+                    subtitle: Text('${track.artist} • ${track.album}'),
+                    trailing: Text(
+                      _formatDuration(track.lengthMs),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                   ),
                 );
               },

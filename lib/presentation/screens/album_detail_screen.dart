@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../data/repositories/local_database_repository.dart';
+import '../widgets/play_button.dart';
 
 class AlbumDetailScreen extends StatefulWidget {
   final String albumName;
@@ -71,12 +72,10 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
           ? const Center(child: Text('No tracks found'))
           : Column(
               children: [
-                // Album header
                 Container(
                   padding: const EdgeInsets.all(16),
                   child: Row(
                     children: [
-                      // Album artwork
                       widget.artworkPath != null
                           ? ClipRRect(
                               borderRadius: BorderRadius.circular(8),
@@ -103,7 +102,6 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
                               child: const Icon(Icons.album, size: 60),
                             ),
                       const SizedBox(width: 16),
-                      // Album info
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -142,30 +140,32 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
                   ),
                 ),
                 const Divider(),
-                // Track list
                 Expanded(
                   child: ListView.builder(
                     itemCount: _tracks.length,
                     itemBuilder: (context, index) {
                       final track = _tracks[index];
-                      return ListTile(
-                        leading: track.trackNumber > 0
-                            ? SizedBox(
-                                width: 30,
-                                child: Text(
-                                  '${track.trackNumber}',
-                                  textAlign: TextAlign.center,
-                                  style: Theme.of(context).textTheme.bodyMedium,
-                                ),
-                              )
-                            : const Icon(Icons.music_note),
-                        title: Text(track.title),
-                        subtitle: track.genre.isNotEmpty
-                            ? Text(track.genre)
-                            : null,
-                        trailing: Text(
-                          _formatDuration(track.lengthMs),
-                          style: Theme.of(context).textTheme.bodySmall,
+                      return PlayableTile(
+                        track: track,
+                        child: ListTile(
+                          leading: track.trackNumber > 0
+                              ? SizedBox(
+                                  width: 30,
+                                  child: Text(
+                                    '${track.trackNumber}',
+                                    textAlign: TextAlign.center,
+                                    style: Theme.of(context).textTheme.bodyMedium,
+                                  ),
+                                )
+                              : const Icon(Icons.music_note),
+                          title: Text(track.title),
+                          subtitle: track.genre.isNotEmpty
+                              ? Text(track.genre)
+                              : null,
+                          trailing: Text(
+                            _formatDuration(track.lengthMs),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
                         ),
                       );
                     },

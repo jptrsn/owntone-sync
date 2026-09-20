@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/browse_provider.dart';
+import 'play_button.dart';
 
 class TrackListView extends StatelessWidget {
   const TrackListView({super.key});
@@ -25,12 +26,15 @@ class TrackListView extends StatelessWidget {
           itemBuilder: (context, index) {
             final track = provider.tracks[index];
 
-            return ListTile(
-              title: Text(track.title),
-              subtitle: Text('${track.artist} • ${track.album}'),
-              trailing: Text(
-                _formatDuration(track.lengthMs),
-                style: Theme.of(context).textTheme.bodySmall,
+            return PlayableTile(
+              track: track,
+              child: ListTile(
+                title: Text(track.title),
+                subtitle: Text('${track.artist} • ${track.album}'),
+                trailing: Text(
+                  _formatDuration(track.lengthMs),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ),
             );
           },

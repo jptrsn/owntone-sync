@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/browse_provider.dart';
 import '../screens/playlist_detail_screen.dart';
+import '../widgets/play_button.dart';
+import '../../data/repositories/local_database_repository.dart';
 
 class PlaylistListView extends StatelessWidget {
   const PlaylistListView({super.key});
@@ -20,24 +22,44 @@ class PlaylistListView extends StatelessWidget {
             final playlist = provider.playlists[index];
             final trackCount = playlist['track_count'] as int;
 
-            return ListTile(
-              leading: const Icon(Icons.queue_music),
-              title: Text(playlist['name'] as String),
-              subtitle: Text(
-                '$trackCount ${trackCount == 1 ? 'track' : 'tracks'}',
+            return PlayableTile(
+              track: SyncedTrack(
+                id: playlist['id'] as int,
+                title: playlist['name'] as String,
+                artist: '',
+                album: '',
+                albumArtist: '',
+                localPath: '',
+                serverPath: '',
+                downloadTimestamp: 0,
+                fileSize: 0,
+                genre: '',
+                lengthMs: trackCount * 180000,
+                trackNumber: 1,
+                discNumber: 1,
+                year: 2024,
+                artworkUrl: '',
+                contentUri: '',
               ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => PlaylistDetailScreen(
-                      playlistId: playlist['id'] as int,
-                      playlistName: playlist['name'] as String,
+              child: ListTile(
+                leading: const Icon(Icons.queue_music),
+                title: Text(playlist['name'] as String),
+                subtitle: Text(
+                  '$trackCount ${trackCount == 1 ? 'track' : 'tracks'}',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => PlaylistDetailScreen(
+                        playlistId: playlist['id'] as int,
+                        playlistName: playlist['name'] as String,
+                      ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             );
           },
         );
