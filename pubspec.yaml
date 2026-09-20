@@ -38,6 +38,11 @@ dependencies:
   # Logging
   logger: ^2.0.0
 
+  # Audio playback
+  just_audio: ^0.9.36
+  audio_service: ^0.18.13
+  just_audio_background: ^0.0.1-beta.11
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

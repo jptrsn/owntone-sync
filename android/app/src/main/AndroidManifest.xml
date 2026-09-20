@@ -21,6 +21,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Permissions for audio playback foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <application
         android:label="OwnTone Sync"
         android:name="${applicationName}"
@@ -45,6 +49,29 @@
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
             android:exported="false"/>
+
+        <service
+            android:name="com.ryanheise.audioservice.AudioService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="android.media.browse.action.BROWSE" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.media.session.action.PLAY_COMMAND" />
+                <action android:name="android.media.session.action.PAUSE_COMMAND" />
+                <action android:name="android.media.session.action.SKIP_TO_PREVIOUS_COMMAND" />
+                <action android:name="android.media.session.action.SKIP_TO_NEXT_COMMAND" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name="com.ryanheise.audioservice.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
 
         <activity
             android:name=".MainActivity"

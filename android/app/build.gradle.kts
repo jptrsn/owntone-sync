@@ -74,4 +74,7 @@ dependencies {
 
     // WorkManager (should already be there from Flutter)
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+    
+    // Guava for ListenableFuture support
+    implementation("com.google.guava:guava:32.1.3-android")
 }
