@@ -25,65 +25,58 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Scaffold(
-          appBar: AppBar(
-            title: const Text('OwnTone Sync'),
-            backgroundColor: Theme.of(context).colorScheme.surface,
-            foregroundColor: Theme.of(context).colorScheme.onSurface,
-            actions: [
-              Consumer<SyncProvider>(
-                builder: (context, provider, child) {
-                  if (provider.isConfigured) {
-                    return IconButton(
-                      icon: const Icon(Icons.settings),
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const ServerConfigScreen(),
-                          ),
-                        );
-                      },
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('OwnTone Sync'),
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
+        actions: [
+          Consumer<SyncProvider>(
+            builder: (context, provider, child) {
+              if (provider.isConfigured) {
+                return IconButton(
+                  icon: const Icon(Icons.settings),
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const ServerConfigScreen(),
+                      ),
                     );
-                  }
-                  return const SizedBox.shrink();
-                },
-              ),
-            ],
+                  },
+                );
+              }
+              return const SizedBox.shrink();
+            },
           ),
-          body: _screens[_currentIndex],
-        ),
-        const Positioned(
-          left: 0,
-          right: 0,
-          bottom: 56,
-          child: MiniPlayer(),
-        ),
-        Scaffold(
-          body: Positioned(
+        ],
+      ),
+      body: Stack(
+        children: [
+          _screens[_currentIndex],
+          const Positioned(
             left: 0,
             right: 0,
-            bottom: 0,
-            child: BottomNavigationBar(
-              currentIndex: _currentIndex,
-              onTap: (index) {
-                setState(() {
-                  _currentIndex = index;
-                });
-              },
-              items: const [
-                BottomNavigationBarItem(icon: Icon(Icons.sync), label: 'Sync'),
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.library_music),
-                  label: 'Browse',
-                ),
-                BottomNavigationBarItem(icon: Icon(Icons.history), label: 'History'),
-              ],
-            ),
+            bottom: 56,
+            child: MiniPlayer(),
           ),
-        ),
-      ],
+        ],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: (index) {
+          setState(() {
+            _currentIndex = index;
+          });
+        },
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.sync), label: 'Sync'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.library_music),
+            label: 'Browse',
+          ),
+          BottomNavigationBarItem(icon: Icon(Icons.history), label: 'History'),
+        ],
+      ),
     );
   }
 }

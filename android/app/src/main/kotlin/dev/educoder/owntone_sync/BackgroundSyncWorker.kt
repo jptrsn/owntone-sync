@@ -488,8 +488,20 @@ class BackgroundSyncWorker(
                             val contentUri = if (musicFolderUriString != null) {
                                 try {
                                     val musicFolder = DocumentFile.fromTreeUri(applicationContext, Uri.parse(musicFolderUriString))
-                                    val trackFile = musicFolder?.findFile("tracks/${downloadResult.filePath}")
-                                    trackFile?.uri?.toString()
+                                    val pathParts = downloadResult.filePath.split("/")
+                                    var currentFolder: DocumentFile? = musicFolder
+                                    for (i in 0 until pathParts.size - 1) {
+                                        val part = pathParts[i]
+                                        val child = currentFolder?.findFile(part)
+                                        if (child != null && child.isDirectory) {
+                                            currentFolder = child
+                                        } else {
+                                            currentFolder = null
+                                            break
+                                        }
+                                    }
+                                    val trackFileName = pathParts.last()
+                                    currentFolder?.findFile(trackFileName)?.uri?.toString()
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Failed to get content URI for track: ${downloadResult.filePath}", e)
                                     null

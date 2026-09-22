@@ -7,9 +7,11 @@ import 'presentation/providers/player_provider.dart';
 import 'presentation/services/audio_handler.dart';
 import 'presentation/screens/main_navigation_screen.dart';
 
+AudioHandler? audioHandler;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await AudioService.init(
+  audioHandler = await AudioService.init(
     builder: () => OwnToneAudioHandler(),
     config: const AudioServiceConfig(
       androidNotificationChannelId: 'com.owntone.sync.channel.audio',
@@ -25,6 +27,10 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return _buildApp();
+  }
+
+  Widget _buildApp() {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => SyncProvider()),

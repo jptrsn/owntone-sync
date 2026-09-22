@@ -28,6 +28,7 @@ class TrackListView extends StatelessWidget {
 
             return PlayableTile(
               track: track,
+              showContextMenu: true,
               child: ListTile(
                 title: Text(track.title),
                 subtitle: Text('${track.artist} • ${track.album}'),

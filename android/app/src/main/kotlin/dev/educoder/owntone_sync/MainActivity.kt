@@ -7,6 +7,7 @@ import android.provider.DocumentsContract
 import android.provider.Settings
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.android.FlutterActivity
+import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -33,7 +34,7 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.JsonClass
 import androidx.work.OutOfQuotaPolicy
 
-class MainActivity: FlutterActivity() {
+class MainActivity: AudioServiceActivity() {
     private val EVENTS_CHANNEL = "dev.educoder.owntone_sync/events"
     private val STORAGE_CHANNEL = "dev.educoder.owntone_sync/storage"
     private val PROGRESS_CHANNEL = "dev.educoder.owntone_sync/sync_progress"
@@ -100,6 +101,16 @@ class MainActivity: FlutterActivity() {
                             val uri = getMusicFolderUri()
                             withContext(Dispatchers.Main) {
                                 result.success(uri)
+                            }
+                        }
+                        "buildContentUri" -> {
+                            val localPath = call.argument<String>("localPath")
+                            withContext(Dispatchers.Main) {
+                                if (localPath != null) {
+                                    result.success(buildContentUri(localPath))
+                                } else {
+                                    result.success(null)
+                                }
                             }
                         }
                         "fileExists" -> {
@@ -284,6 +295,30 @@ class MainActivity: FlutterActivity() {
     private fun getMusicFolderUri(): String? {
         return getSharedPreferences("storage_prefs", MODE_PRIVATE)
             .getString("music_folder_uri", null)
+    }
+
+    private fun buildContentUri(localPath: String): String? {
+        val musicFolderUriString = getMusicFolderUri() ?: return null
+        return try {
+            val musicFolder = DocumentFile.fromTreeUri(this, Uri.parse(musicFolderUriString))
+            val pathParts = localPath.split("/")
+            var currentFolder: DocumentFile? = musicFolder
+            for (i in 0 until pathParts.size - 1) {
+                val part = pathParts[i]
+                val child = currentFolder?.findFile(part)
+                if (child != null && child.isDirectory) {
+                    currentFolder = child
+                } else {
+                    currentFolder = null
+                    break
+                }
+            }
+            val fileName = pathParts.last()
+            currentFolder?.findFile(fileName)?.uri?.toString()
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to build content URI for: $localPath", e)
+            null
+        }
     }
 
     private fun requestMusicFolderAccess(result: MethodChannel.Result) {

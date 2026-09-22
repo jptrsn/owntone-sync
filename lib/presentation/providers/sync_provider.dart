@@ -91,7 +91,11 @@ class SyncProvider extends ChangeNotifier {
 
     // Request notification permission for background sync
     if (!await _permissionsService.hasNotificationPermission()) {
-      await _permissionsService.requestNotificationPermission();
+      try {
+        await _permissionsService.requestNotificationPermission();
+      } catch (e) {
+        // Activity may not be ready yet; will retry later
+      }
     }
 
     // Load saved playlists
@@ -671,6 +675,21 @@ class SyncProvider extends ChangeNotifier {
   Future<List<SyncedTrack>?> getTracksForPlaylist(int playlistId) async {
     await _initializeIfNeeded();
     return _dbRepo?.getTracksForPlaylist(playlistId);
+  }
+
+  Future<List<SyncedTrack>?> getTracksByArtist(String artistName) async {
+    await _initializeIfNeeded();
+    return _dbRepo?.getTracksByArtist(artistName);
+  }
+
+  Future<List<SyncedTrack>?> getTracksByAlbum(String albumName) async {
+    await _initializeIfNeeded();
+    return _dbRepo?.getTracksByAlbum(albumName);
+  }
+
+  Future<SyncedTrack?> getTrackById(int id) async {
+    await _initializeIfNeeded();
+    return _dbRepo?.getTrackById(id);
   }
 
   Future<List<SyncedTrack>?> getAllTracks() async {

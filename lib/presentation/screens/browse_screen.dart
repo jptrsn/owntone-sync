@@ -5,7 +5,6 @@ import '../widgets/playlist_list_view.dart';
 import '../widgets/artist_list_view.dart';
 import '../widgets/album_list_view.dart';
 import '../widgets/track_list_view.dart';
-import '../widgets/mini_player.dart';
 
 class BrowseScreen extends StatefulWidget {
   const BrowseScreen({super.key});
@@ -78,7 +77,6 @@ class _BrowseScreenState extends State<BrowseScreen>
                 ),
               ],
             ),
-            bottomSheet: const MiniPlayer(),
           );
         },
       ),

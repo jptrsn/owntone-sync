@@ -7,6 +7,8 @@ class PermissionsService {
     'dev.educoder.owntone_sync/storage',
   );
 
+  bool _isRequestingPermission = false;
+
   /// Check if we have the necessary storage permissions
   Future<bool> hasStoragePermission() async {
     if (!Platform.isAndroid) return true;
@@ -89,7 +91,18 @@ class PermissionsService {
 
   Future<bool> requestNotificationPermission() async {
     if (!Platform.isAndroid) return true;
-    final status = await ph.Permission.notification.request();
-    return status.isGranted;
+    
+    // Prevent concurrent permission requests
+    if (_isRequestingPermission) {
+      return false;
+    }
+    
+    _isRequestingPermission = true;
+    try {
+      final status = await ph.Permission.notification.request();
+      return status.isGranted;
+    } finally {
+      _isRequestingPermission = false;
+    }
   }
 }

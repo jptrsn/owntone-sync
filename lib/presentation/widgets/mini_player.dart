@@ -1,8 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:audio_service/audio_service.dart';
-import 'package:just_audio/just_audio.dart';
+import '../../main.dart' show audioHandler;
 import '../providers/player_provider.dart';
 import '../screens/player_screen.dart';
 import '../../data/repositories/local_database_repository.dart';
@@ -15,18 +14,6 @@ class MiniPlayer extends StatefulWidget {
 }
 
 class _MiniPlayerState extends State<MiniPlayer> {
-  bool _isPlaying = false;
-
-  @override
-  void initState() {
-    super.initState();
-    AudioService.playbackStateStream.listen((state) {
-      setState(() {
-        _isPlaying = state.playing;
-      });
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return Consumer<PlayerProvider>(
@@ -116,9 +103,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
 
   Widget _buildPlayPauseButton(BuildContext context) {
     return StreamBuilder<bool>(
-      stream: AudioService.playbackStateStream
-          .map((state) => state.playing)
-          .distinct(),
+      stream: audioHandler!.playbackState.map((state) => state.playing),
       builder: (context, snapshot) {
         final isPlaying = snapshot.data ?? false;
 
@@ -130,9 +115,9 @@ class _MiniPlayerState extends State<MiniPlayer> {
           ),
           onPressed: () {
             if (isPlaying) {
-              AudioService.pause();
+              audioHandler!.pause();
             } else {
-              AudioService.play();
+              audioHandler!.play();
             }
           },
         );

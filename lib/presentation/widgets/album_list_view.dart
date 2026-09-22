@@ -2,8 +2,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/browse_provider.dart';
-import '../screens/album_detail_screen.dart';
+import '../providers/player_provider.dart';
 import '../widgets/play_button.dart';
+import '../screens/album_detail_screen.dart';
 import '../../data/repositories/local_database_repository.dart';
 
 class AlbumListView extends StatelessWidget {
@@ -22,43 +23,80 @@ class AlbumListView extends StatelessWidget {
           itemBuilder: (context, index) {
             final album = provider.albums[index];
             final artworkPath = album['artwork_path'] as String?;
+            final albumName = album['album'] as String;
+            final artistName = album['album_artist'] as String;
 
-            return PlayableTile(
-              track: SyncedTrack(
-                id: index + 1,
-                title: album['album'] as String,
-                artist: album['album_artist'] as String,
-                album: album['album'] as String,
-                albumArtist: album['album_artist'] as String,
-                localPath: '',
-                serverPath: '',
-                downloadTimestamp: 0,
-                fileSize: 0,
-                genre: '',
-                lengthMs: 0,
-                trackNumber: 1,
-                discNumber: 1,
-                year: album['year'] as int? ?? 2024,
-                artworkUrl: '',
-                contentUri: '',
-              ),
-              child: ListTile(
-                leading: _buildAlbumArt(artworkPath),
-                title: Text(album['album'] as String),
-                subtitle: Text(album['album_artist'] as String),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => AlbumDetailScreen(
-                        albumName: album['album'] as String,
-                        artistName: album['album_artist'] as String,
-                        artworkPath: artworkPath,
+            return GestureDetector(
+              onLongPress: () {
+                showModalBottomSheet(
+                  context: context,
+                  builder: (ctx) => Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.playlist_play),
+                        title: const Text('Play All'),
+                        onTap: () {
+                          final playerProvider =
+                              context.read<PlayerProvider>();
+                          playerProvider.playAlbum(albumName, artistName);
+                          Navigator.of(ctx).pop();
+                        },
                       ),
-                    ),
-                  );
-                },
+                      ListTile(
+                        leading: const Icon(Icons.shuffle),
+                        title: const Text('Shuffle'),
+                        onTap: () {
+                          final playerProvider =
+                              context.read<PlayerProvider>();
+                          playerProvider.playAlbum(
+                            albumName,
+                            artistName,
+                            shuffle: true,
+                          );
+                          Navigator.of(ctx).pop();
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              },
+              child: PlayableTile(
+                track: SyncedTrack(
+                  id: index + 1,
+                  title: albumName,
+                  artist: artistName,
+                  album: albumName,
+                  albumArtist: artistName,
+                  localPath: '',
+                  serverPath: '',
+                  downloadTimestamp: 0,
+                  fileSize: 0,
+                  genre: '',
+                  lengthMs: 0,
+                  trackNumber: 1,
+                  discNumber: 1,
+                  year: album['year'] as int? ?? 2024,
+                  artworkUrl: '',
+                  contentUri: '',
+                ),
+                child: ListTile(
+                  leading: _buildAlbumArt(artworkPath),
+                  title: Text(albumName),
+                  subtitle: Text(artistName),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => AlbumDetailScreen(
+                          albumName: albumName,
+                          artistName: artistName,
+                          artworkPath: artworkPath,
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
             );
           },

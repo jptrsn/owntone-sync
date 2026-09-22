@@ -1,8 +1,9 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:audio_service/audio_service.dart';
-import 'package:just_audio/just_audio.dart';
+import 'package:provider/provider.dart';
+import '../../main.dart' show audioHandler;
 import '../../data/repositories/local_database_repository.dart';
 import '../providers/player_provider.dart';
 
@@ -17,7 +18,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   final ScrollController _scrollController = ScrollController();
   bool _isScrolled = false;
   Duration _position = Duration.zero;
-  Duration _duration = Duration.zero;
+  Duration? _duration;
+  StreamSubscription<PlaybackState>? _playbackStateSubscription;
+  StreamSubscription<MediaItem?>? _mediaItemSubscription;
 
   @override
   void initState() {
@@ -28,26 +31,97 @@ class _PlayerScreenState extends State<PlayerScreen> {
       });
     });
 
-    AudioService.playbackStateStream.listen((state) {
+    _playbackStateSubscription = audioHandler!.playbackState.listen((state) {
+      if (!mounted) return;
       setState(() {
-        _position = state.position ?? Duration.zero;
-        _duration = state.bufferedPosition ?? Duration.zero;
+        _position = state.position;
+        _duration = state.bufferedPosition;
       });
     });
 
-    AudioService.currentMediaItemStream.listen((item) {
-      if (item != null) {
-        setState(() {
-          _duration = item.duration ?? Duration.zero;
-        });
-      }
+    _mediaItemSubscription = audioHandler!.mediaItem.listen((item) {
+      if (!mounted) return;
+      setState(() {
+        if (item != null) {
+          _duration = item.duration;
+        }
+      });
     });
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
+    _playbackStateSubscription?.cancel();
+    _mediaItemSubscription?.cancel();
     super.dispose();
+  }
+
+  void _showQueueSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => Consumer<PlayerProvider>(
+        builder: (context, playerProvider, child) {
+          return DraggableScrollableSheet(
+            initialChildSize: 0.4,
+            maxChildSize: 0.8,
+            builder: (_, controller) => Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      Text(
+                        'Queue (${playerProvider.queue.length})',
+                        style:
+                            Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.clear_all),
+                        onPressed: () {
+                          // Clear queue
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    controller: controller,
+                    itemCount: playerProvider.queue.length,
+                    itemBuilder: (ctx, index) {
+                      final track = playerProvider.queue[index];
+                      final isCurrent =
+                          track.id == playerProvider.currentTrackId;
+                      return ListTile(
+                        leading: Icon(
+                          isCurrent
+                              ? Icons.equalizer
+                              : Icons.music_note,
+                          color: isCurrent
+                              ? Theme.of(context).colorScheme.primary
+                              : null,
+                        ),
+                        title: Text(track.title),
+                        subtitle: Text(track.artist),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () {
+                            // Remove from queue
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   String _formatTime(Duration position) {
@@ -67,7 +141,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.queue_music),
-            onPressed: () {},
+            onPressed: () => _showQueueSheet(context),
           ),
         ],
       ),
@@ -202,7 +276,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  Widget _buildSeekControl(Duration position, Duration duration, PlayerProvider playerProvider) {
+  Widget _buildSeekControl(Duration position, Duration? duration, PlayerProvider playerProvider) {
+    final effectiveDuration = duration ?? Duration.zero;
+    final safePosition = position > effectiveDuration ? effectiveDuration : position;
     return Consumer<PlayerProvider>(
       builder: (context, playerProvider, child) {
         return Padding(
@@ -217,7 +293,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ),
                   const Spacer(),
                   Text(
-                    _formatTime(duration),
+                    _formatTime(effectiveDuration),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -232,8 +308,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   trackHeight: 4,
                 ),
                 child: Slider(
-                  value: position.inMilliseconds.toDouble(),
-                  max: duration.inMilliseconds.toDouble(),
+                  value: safePosition.inMilliseconds.toDouble(),
+                  max: effectiveDuration.inMilliseconds.toDouble() > 0
+                      ? effectiveDuration.inMilliseconds.toDouble()
+                      : 1.0,
                   onChanged: (value) {
                     playerProvider.seek(Duration(milliseconds: value.toInt()));
                   },
@@ -266,13 +344,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
             icon: Icons.skip_previous,
             isActive: false,
             onPressed: () {
-              AudioService.skipToPrevious();
+              audioHandler!.skipToPrevious();
             },
           ),
           StreamBuilder<bool>(
-            stream: AudioService.playbackStateStream
-                .map((state) => state.playing)
-                .distinct(),
+            stream: audioHandler!.playbackState.map((state) => state.playing),
             builder: (context, snapshot) {
               final isPlaying = snapshot.data ?? false;
               return _buildControlButton(
@@ -281,9 +357,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 isActive: isPlaying,
                 onPressed: () {
                   if (isPlaying) {
-                    AudioService.pause();
+                    audioHandler!.pause();
                   } else {
-                    AudioService.play();
+                    audioHandler!.play();
                   }
                 },
                 size: 72,
@@ -295,7 +371,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             icon: Icons.skip_next,
             isActive: false,
             onPressed: () {
-              AudioService.skipToNext();
+              audioHandler!.skipToNext();
             },
           ),
           _buildControlButton(
