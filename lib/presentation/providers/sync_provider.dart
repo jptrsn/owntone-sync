@@ -40,7 +40,6 @@ class SyncProvider extends ChangeNotifier {
   bool _isCancelling = false;
   bool _isLoadingPlaylists = false;
   SyncSchedule _syncSchedule = SyncSchedule();
-  bool _eventTrackingEnabled = false;
   bool _isBatteryOptimizationDisabled = false;
   DateTime? _missedSyncTime;
 
@@ -58,7 +57,6 @@ class SyncProvider extends ChangeNotifier {
   bool get isCancelling => _isCancelling;
   bool get isLoadingPlaylists => _isLoadingPlaylists;
   SyncSchedule get syncSchedule => _syncSchedule;
-  bool get eventTrackingEnabled => _eventTrackingEnabled;
   bool get isBatteryOptimizationDisabled => _isBatteryOptimizationDisabled;
   DateTime? get missedSyncTime => _missedSyncTime;
 
@@ -113,11 +111,7 @@ class SyncProvider extends ChangeNotifier {
     // Check for missed syncs
     _missedSyncTime = await checkForMissedSync();
 
-    // Load event tracking preference (premium only)
-    _eventTrackingEnabled = prefs.getBool('event_tracking_enabled') ?? false;
-    logger.i('Event tracking preference loaded: $_eventTrackingEnabled');
-
-    // Check if background sync is already running
+    // Check for missed syncs
     await checkIfSyncRunning();
 
     notifyListeners();
@@ -596,48 +590,6 @@ class SyncProvider extends ChangeNotifier {
       logger.e('Error triggering sync', error: e, stackTrace: stackTrace);
       notifyListeners();
     }
-  }
-
-  Future<bool> checkEventTrackingPermission() async {
-    try {
-      // Just check Android settings, no EventTracker service needed
-      const channel = MethodChannel('dev.educoder.owntone_sync/events');
-      final result = await channel.invokeMethod(
-        'isNotificationPermissionGranted',
-      );
-      logger.d('Notification permission check: $result');
-      return result as bool;
-    } catch (e, stackTrace) {
-      logger.e(
-        'Error checking notification permission',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      return false;
-    }
-  }
-
-  Future<void> requestEventTrackingPermission() async {
-    try {
-      logger.i('Requesting notification permission');
-      const channel = MethodChannel('dev.educoder.owntone_sync/events');
-      await channel.invokeMethod('requestNotificationPermission');
-    } catch (e, stackTrace) {
-      logger.e(
-        'Error requesting notification permission',
-        error: e,
-        stackTrace: stackTrace,
-      );
-    }
-  }
-
-  Future<void> setEventTracking(bool enabled) async {
-    _eventTrackingEnabled = enabled;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('event_tracking_enabled', enabled);
-
-    logger.i('Event tracking ${enabled ? "enabled" : "disabled"}');
-    notifyListeners();
   }
 
   Future<bool> checkBatteryOptimization() async {

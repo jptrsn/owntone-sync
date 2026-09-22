@@ -50,15 +50,6 @@ class MainActivity: AudioServiceActivity() {
         // Events channel
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, EVENTS_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
-                "requestNotificationPermission" -> {
-                    val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-                    startActivity(intent)
-                    result.success(null)
-                }
-                "isNotificationPermissionGranted" -> {
-                    val enabled = isNotificationServiceEnabled()
-                    result.success(enabled)
-                }
                 "isBatteryOptimizationDisabled" -> {
                     val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
                     result.success(powerManager.isIgnoringBatteryOptimizations(packageName))
@@ -271,14 +262,6 @@ class MainActivity: AudioServiceActivity() {
          // Create notification channel for sync worker
         SyncProgressBroadcaster.createNotificationChannel(applicationContext)
 
-    }
-
-    private fun isNotificationServiceEnabled(): Boolean {
-        val enabledListeners = Settings.Secure.getString(
-            contentResolver,
-            "enabled_notification_listeners"
-        )
-        return enabledListeners?.contains(packageName) == true
     }
 
     private fun hasMusicFolderAccess(): Boolean {

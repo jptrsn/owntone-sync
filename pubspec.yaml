@@ -41,7 +41,7 @@ dependencies:
   # Audio playback
   just_audio: ^0.9.36
   audio_service: ^0.18.13
-  just_audio_background: ^0.0.1-beta.11
+  rxdart: ^0.28.0
 
 dev_dependencies:
   flutter_test:
@@ -58,6 +58,9 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/images/
 
 flutter_launcher_icons:
   android: true

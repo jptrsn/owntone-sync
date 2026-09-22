@@ -276,7 +276,7 @@ class BackgroundSyncWorker(
         var historyWritten = false
 
         // Declare before the try block so catch handlers can capture them
-        var eventTrackingEnabled = false
+        var eventTrackingEnabled = true
         var eventSyncResult = EventSyncResult(0, 0, 0)
 
         return withContext(Dispatchers.IO) {
@@ -310,15 +310,10 @@ class BackgroundSyncWorker(
             val fileOps = FileOperations(applicationContext)
             val apiClient = OwnToneApiClient(serverUrl, fileOps)
 
-            // Sync events first (if tracking is enabled)
-            eventTrackingEnabled = prefs.getBoolean("flutter.event_tracking_enabled", false)
+            // Sync pending play/skip events
             eventSyncResult = EventSyncResult(0, 0, 0)
-            if (eventTrackingEnabled) {
-                Log.i(TAG, "Event tracking enabled, syncing events first")
-                eventSyncResult = syncEvents(applicationContext, worker, apiClient, dbHelper)
-            } else {
-                Log.d(TAG, "Event tracking disabled, skipping event sync")
-            }
+            Log.i(TAG, "Syncing pending play/skip events")
+            eventSyncResult = syncEvents(applicationContext, worker, apiClient, dbHelper)
 
             // Get selected playlist IDs - Flutter stores StringList with special encoding
             val playlistIdsString = prefs.getString("flutter.selected_playlist_ids", null)
