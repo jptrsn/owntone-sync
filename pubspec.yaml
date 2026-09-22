@@ -39,7 +39,7 @@ dependencies:
   logger: ^2.0.0
 
   # Audio playback
-  just_audio: ^0.9.36
+  just_audio: ^0.10.6
   audio_service: ^0.18.13
   rxdart: ^0.28.0
 
