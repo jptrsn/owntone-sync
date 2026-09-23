@@ -264,6 +264,23 @@ class LocalDatabaseRepository {
     await db.delete('synced_tracks', where: 'id = ?', whereArgs: [id]);
   }
 
+  /// Cache resolved content URIs back onto tracks so the expensive
+  /// document-ID resolution is paid once, not on every play.
+  Future<void> updateTracksContentUri(Map<int, String> trackUris) async {
+    if (trackUris.isEmpty) return;
+    final db = await _dbHelper.database;
+    await db.transaction((txn) async {
+      for (final entry in trackUris.entries) {
+        await txn.update(
+          'synced_tracks',
+          {'content_uri': entry.value},
+          where: 'id = ?',
+          whereArgs: [entry.key],
+        );
+      }
+    });
+  }
+
   // Playlist-Track relationship operations
   Future<void> addTrackToPlaylist(int playlistId, int trackId) async {
     final db = await _dbHelper.database;

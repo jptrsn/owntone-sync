@@ -1,13 +1,32 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/browse_provider.dart';
-import '../providers/player_provider.dart';
+import '../controllers/playback_controller.dart';
 import '../widgets/play_button.dart';
 import '../screens/artist_detail_screen.dart';
 import '../../data/repositories/local_database_repository.dart';
 
 class ArtistListView extends StatelessWidget {
   const ArtistListView({super.key});
+
+  Future<void> _playAll(
+    BuildContext context,
+    String artist, {
+    bool shuffle = false,
+  }) async {
+    final controller = context.read<PlaybackController>();
+    final tracks = await LocalDatabaseRepository().getTracksByArtist(artist);
+    if (tracks.isEmpty) return;
+    final startIndex = shuffle ? Random().nextInt(tracks.length) : 0;
+    await controller.playCollection(
+      QueueOrigin.artist(artist),
+      tracks,
+      startIndex: startIndex,
+    );
+    if (shuffle) await controller.toggleShuffle();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,20 +52,16 @@ class ArtistListView extends StatelessWidget {
                         leading: const Icon(Icons.playlist_play),
                         title: const Text('Play All'),
                         onTap: () {
-                          final playerProvider =
-                              context.read<PlayerProvider>();
-                          playerProvider.playArtist(artist);
                           Navigator.of(ctx).pop();
+                          _playAll(context, artist);
                         },
                       ),
                       ListTile(
                         leading: const Icon(Icons.shuffle),
                         title: const Text('Shuffle'),
                         onTap: () {
-                          final playerProvider =
-                              context.read<PlayerProvider>();
-                          playerProvider.playArtist(artist, shuffle: true);
                           Navigator.of(ctx).pop();
+                          _playAll(context, artist, shuffle: true);
                         },
                       ),
                     ],

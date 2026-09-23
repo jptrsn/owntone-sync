@@ -3,17 +3,18 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:audio_service/audio_service.dart';
 
+import 'data/repositories/local_database_repository.dart';
+import 'presentation/controllers/playback_controller.dart';
+import 'presentation/providers/browse_provider.dart';
 import 'presentation/providers/sync_provider.dart';
-import 'presentation/providers/player_provider.dart';
-import 'presentation/services/audio_handler.dart';
 import 'presentation/screens/main_navigation_screen.dart';
+import 'presentation/services/audio_handler.dart';
+import 'presentation/services/track_uri_resolver.dart';
 import 'presentation/widgets/debug_play_button.dart';
-
-OwnToneAudioHandler? audioHandler;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  audioHandler = await AudioService.init(
+  final audioHandler = await AudioService.init(
     builder: () => OwnToneAudioHandler(),
     config: const AudioServiceConfig(
       androidNotificationChannelId: 'com.owntone.sync.channel.audio',
@@ -21,11 +22,17 @@ Future<void> main() async {
       androidNotificationOngoing: true,
     ),
   );
-  runApp(const MyApp());
+  final playbackController = PlaybackController(
+    handler: audioHandler,
+    resolver: TrackUriResolver(dbRepo: LocalDatabaseRepository()),
+  );
+  runApp(MyApp(playbackController: playbackController));
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final PlaybackController playbackController;
+
+  const MyApp({super.key, required this.playbackController});
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +43,8 @@ class MyApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => SyncProvider()),
-        ChangeNotifierProvider(create: (_) => PlayerProvider()),
+        ChangeNotifierProvider(create: (_) => BrowseProvider()),
+        Provider<PlaybackController>.value(value: playbackController),
       ],
       child: MaterialApp(
         title: 'OwnTone Sync',
@@ -92,7 +100,9 @@ class MyApp extends StatelessWidget {
           if (kDebugMode) {
             return Scaffold(
               body: child,
-              floatingActionButton: DebugPlayButton(handler: audioHandler!),
+              floatingActionButton: DebugPlayButton(
+                controller: playbackController,
+              ),
             );
           }
           return child ?? const SizedBox.shrink();

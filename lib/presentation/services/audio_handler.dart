@@ -16,6 +16,11 @@ class OwnToneAudioHandler extends BaseAudioHandler
     _setupSubscriptions();
   }
 
+  /// The player's decoded duration for the current source (null when nothing
+  /// is loaded). Re-exposed so the controller can fall back to it when the
+  /// track's metadata duration is missing.
+  Stream<Duration?> get durationStream => _audioPlayer.durationStream;
+
   void _setupSubscriptions() {
     _playbackEventSubscription = _audioPlayer.playbackEventStream.listen(
       (event) {

@@ -96,13 +96,13 @@ class MainActivity: AudioServiceActivity() {
                         }
                         "buildContentUri" -> {
                             val localPath = call.argument<String>("localPath")
-                            withContext(Dispatchers.Main) {
-                                if (localPath != null) {
-                                    result.success(buildContentUri(localPath))
-                                } else {
-                                    result.success(null)
-                                }
-                            }
+                            result.success(
+                                if (localPath != null) buildContentUri(localPath) else null
+                            )
+                        }
+                        "buildContentUris" -> {
+                            val localPaths = call.argument<List<String>>("localPaths") ?: emptyList()
+                            result.success(localPaths.map { buildContentUri(it) })
                         }
                         "fileExists" -> {
                             fileExists(call, result)
@@ -281,6 +281,41 @@ class MainActivity: AudioServiceActivity() {
     }
 
     private fun buildContentUri(localPath: String): String? {
+        return buildContentUriFast(localPath) ?: buildContentUriWalk(localPath)
+    }
+
+    /// Builds the document URI directly from the tree URI plus the relative
+    /// path, with no directory enumeration. Returns null so the caller can
+    /// fall back to the (slow) walk.
+    private fun buildContentUriFast(localPath: String): String? {
+        val musicFolderUriString = getMusicFolderUri() ?: return null
+        val relativePath = localPath.removePrefix("/")
+        if (relativePath.isEmpty() || relativePath.contains("..")) return null
+        return try {
+            val treeUri = Uri.parse(musicFolderUriString)
+            if (treeUri.pathSegments.size < 2 || treeUri.pathSegments[0] != "tree") {
+                return null
+            }
+            // The document URI must be in the tree-scoped form
+            // (.../tree/<treeDocId>/document/<treeDocId>/<relativePath>),
+            // because the persisted grant from ACTION_OPEN_DOCUMENT_TREE only
+            // authorises URIs that carry the tree. A bare /document/ URI is
+            // what ACTION_OPEN_DOCUMENT produces and is denied with
+            // SecurityException. buildDocumentUriUsingTree emits exactly the
+            // tree-scoped form, with the document id encoded as a single
+            // path segment. getTreeDocumentId (not lastPathSegment) extracts
+            // the tree id: lastPathSegment breaks on a tree URI that already
+            // carries a /document/ suffix.
+            val treeDocId = DocumentsContract.getTreeDocumentId(treeUri)
+            val documentId = treeDocId + "/" + relativePath
+            DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId).toString()
+        } catch (e: Exception) {
+            Log.w("MainActivity", "Fast content URI build failed for: $localPath", e)
+            null
+        }
+    }
+
+    private fun buildContentUriWalk(localPath: String): String? {
         val musicFolderUriString = getMusicFolderUri() ?: return null
         return try {
             val musicFolder = DocumentFile.fromTreeUri(this, Uri.parse(musicFolderUriString))

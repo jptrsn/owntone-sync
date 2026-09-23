@@ -1,13 +1,34 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/browse_provider.dart';
-import '../providers/player_provider.dart';
+import '../controllers/playback_controller.dart';
 import '../widgets/play_button.dart';
 import '../screens/playlist_detail_screen.dart';
 import '../../data/repositories/local_database_repository.dart';
 
 class PlaylistListView extends StatelessWidget {
   const PlaylistListView({super.key});
+
+  Future<void> _playAll(
+    BuildContext context,
+    int playlistId,
+    String playlistName, {
+    bool shuffle = false,
+  }) async {
+    final controller = context.read<PlaybackController>();
+    final tracks =
+        await LocalDatabaseRepository().getTracksForPlaylist(playlistId);
+    if (tracks.isEmpty) return;
+    final startIndex = shuffle ? Random().nextInt(tracks.length) : 0;
+    await controller.playCollection(
+      QueueOrigin.playlist(playlistId, playlistName),
+      tracks,
+      startIndex: startIndex,
+    );
+    if (shuffle) await controller.toggleShuffle();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,23 +55,25 @@ class PlaylistListView extends StatelessWidget {
                         leading: const Icon(Icons.playlist_play),
                         title: const Text('Play All'),
                         onTap: () {
-                          final playerProvider =
-                              context.read<PlayerProvider>();
-                          playerProvider.playPlaylist(playlist['id'] as int);
                           Navigator.of(ctx).pop();
+                          _playAll(
+                            context,
+                            playlist['id'] as int,
+                            playlist['name'] as String,
+                          );
                         },
                       ),
                       ListTile(
                         leading: const Icon(Icons.shuffle),
                         title: const Text('Shuffle'),
                         onTap: () {
-                          final playerProvider =
-                              context.read<PlayerProvider>();
-                          playerProvider.playPlaylist(
+                          Navigator.of(ctx).pop();
+                          _playAll(
+                            context,
                             playlist['id'] as int,
+                            playlist['name'] as String,
                             shuffle: true,
                           );
-                          Navigator.of(ctx).pop();
                         },
                       ),
                     ],

@@ -19,7 +19,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -172,6 +172,18 @@ class DatabaseHelper {
       // Add content_uri column for audio playback
       await db.execute(
         'ALTER TABLE synced_tracks ADD COLUMN content_uri TEXT',
+      );
+    }
+    if (oldVersion < 5) {
+      // One-time purge: cached content URIs built in the bare document form
+      // (content://<authority>/document/...) lack the /tree/ segment and are
+      // not readable under a tree grant — playback on them is denied with a
+      // SecurityException. Invalidate them so they re-resolve to the correct
+      // tree-scoped form. Runs exactly once, at the 4 -> 5 upgrade.
+      await db.execute(
+        "UPDATE synced_tracks SET content_uri = '' "
+        "WHERE content_uri IS NOT NULL AND content_uri != '' "
+        "AND content_uri NOT LIKE '%/tree/%'",
       );
     }
   }

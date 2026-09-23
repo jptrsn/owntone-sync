@@ -6,8 +6,8 @@ Run this once per phase, substituting the phase number. Phases are defined in
 ---
 
 ```
-You are implementing a refactor of this Flutter app, defined in two documents in
-this repo. Read ALL THREE IN FULL before touching any code — they are
+You are implementing a refactor of this Flutter app, defined in four documents
+in this repo. Read ALL FOUR IN FULL before touching any code — they are
 authoritative and supersede anything in .agent/player-spec.md or
 .agent/play-music-plan.md (both obsolete; ignore them):
 
@@ -17,13 +17,18 @@ authoritative and supersede anything in .agent/player-spec.md or
                                     and the phased implementation path
   .agent/verification-protocol.md — what counts as evidence, and the report
                                     format you must use. Short. Binding.
+  .agent/invariants.md            — load-bearing facts established the hard way,
+                                    each with what breaks if you undo it. Short.
+                                    Binding. Read it last, before you start.
 
-Your job this session is PHASE <N> ONLY, as defined in §3 of the refactor plan.
-Do not begin any later phase. Do not do "while I'm here" cleanups that belong to
-another phase.
+Phase reports in .agent/ (phase1-report.md and any later ones) are NOT in that
+list. They are historical records of what one session did and saw — evidence,
+not guidance. Do not derive constraints from them. Anything a report established
+that still matters has been promoted into invariants.md; if a report seems to
+imply a rule, check invariants.md instead.
 
 Before writing code:
-1. Read all three documents completely.
+1. Read all four documents completely.
 2. Read §1 of the refactor plan (the defect inventory) carefully — it cites
    file:line evidence for why the current code is broken. Verify those claims
    against the actual code rather than assuming they are still accurate.
@@ -42,6 +47,11 @@ Binding constraints (§5 of the refactor plan):
 - If something in the spec turns out to be wrong, impossible, or contradicted by
   the code, STOP. Write it to .agent/blockers.md and tell me. Do not improvise a
   different architecture.
+- BEFORE flagging a risk or proposing a deviation, check .agent/invariants.md for
+  a matching RESOLVED CONCERN. Raising a concern rather than improvising is
+  correct and expected — this step only stops you re-deriving a question that was
+  already settled on device in an earlier phase. If an invariant looks wrong to
+  you, that is a blocker, not something to change silently.
 
 Device verification:
 - The OwnTone server is at `192.168.1.13`, reachable directly from the emulator
@@ -68,13 +78,29 @@ When you believe the phase is done, BEFORE writing anything:
 1. Re-read .agent/verification-protocol.md in full. Not from memory — open it.
 2. Identify this phase's go/no-go check and run it, if you have not already.
    If you have not run it, the phase is BLOCKED, not complete.
-3. Write your report using the exact template in §6 of that protocol. Every
+3. Update .agent/invariants.md. Promote anything a future phase must not undo
+   into it, in the format that file uses. If you hit a concern that looked real
+   but turned out to be already handled, add it as a RESOLVED CONCERN on the
+   relevant entry. Later phases run in isolated sessions and will not read your
+   report — a fact that lives only there is a fact that gets lost.
+4. Write your report using the exact template in §6 of the protocol. Every
    field is mandatory. Do not summarise it into prose.
 
 Claims about behaviour must come from actions you performed and results you
 observed on the emulator. A clean analyze and a successful build are not
 evidence that anything works.
+
+Your job this session is PHASE <N> ONLY, as defined in §3 of the refactor plan.
+Do not begin any later phase. Do not do "while I'm here" cleanups that belong to
+another phase.
 ```
+
+**Keep everything above the final `PHASE <N>` line byte-identical between
+sessions.** These sessions share a KV cache on the inference server, so an
+unchanged leading token sequence is nearly free to re-read after the first
+session — which is what makes four mandatory documents affordable. The phase
+number is the only thing that varies, so it sits last. Editing the preamble per
+phase, or moving the phase number earlier, throws that away.
 
 ---
 
@@ -89,10 +115,11 @@ its behavioural verification was not possible at the time: nothing writes
 `pending_events` until Phase 3, so there were no events to upload. That check is
 folded into Phase 3 below.
 
-**Phase 1** — Contains a go/no-go. Validate that `content://` URIs actually play
-through `just_audio`'s native path *before* building anything on top of the
-handler. It is the top risk in §6 of the refactor plan, and discovering it at
-Phase 5 would be expensive.
+**Phase 1** — COMPLETE. The go/no-go passed: `content://` URIs play through
+`just_audio`'s native path, so §6's top risk did not materialise. Two defects
+found during its verification are now invariants 1 and 2 — do not undo them.
+Phase 1 also left verification debt (shuffle, repeat, B5 previous, queue
+mutation) that Phase 5 must exercise; see the table in its plan entry.
 
 **Phase 3** — The whole point of the feature is that the numbers reaching OwnTone
 are right, so verify against the server, not the app. Play a track to completion,

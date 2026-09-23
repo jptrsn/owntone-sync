@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../data/repositories/local_database_repository.dart';
+import '../controllers/playback_controller.dart';
 import '../widgets/play_button.dart';
 import 'album_detail_screen.dart';
 import 'dart:io';
@@ -107,6 +108,9 @@ class _ArtistDetailScreenState extends State<ArtistDetailScreen> {
                         padding: const EdgeInsets.only(left: 16),
                         child: PlayableTile(
                           track: track,
+                          collection: _tracks,
+                          index: _tracks.indexWhere((t) => t.id == track.id),
+                          origin: QueueOrigin.artist(widget.artistName),
                           child: ListTile(
                             leading: track.trackNumber > 0
                                 ? Text(

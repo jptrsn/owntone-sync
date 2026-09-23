@@ -1,14 +1,34 @@
 import 'dart:io';
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/browse_provider.dart';
-import '../providers/player_provider.dart';
+import '../controllers/playback_controller.dart';
 import '../widgets/play_button.dart';
 import '../screens/album_detail_screen.dart';
 import '../../data/repositories/local_database_repository.dart';
 
 class AlbumListView extends StatelessWidget {
   const AlbumListView({super.key});
+
+  Future<void> _playAll(
+    BuildContext context,
+    String albumName,
+    String artistName, {
+    bool shuffle = false,
+  }) async {
+    final controller = context.read<PlaybackController>();
+    final tracks = await LocalDatabaseRepository().getTracksByAlbum(albumName);
+    if (tracks.isEmpty) return;
+    final startIndex = shuffle ? Random().nextInt(tracks.length) : 0;
+    await controller.playCollection(
+      QueueOrigin.album(albumName),
+      tracks,
+      startIndex: startIndex,
+    );
+    if (shuffle) await controller.toggleShuffle();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -37,24 +57,21 @@ class AlbumListView extends StatelessWidget {
                         leading: const Icon(Icons.playlist_play),
                         title: const Text('Play All'),
                         onTap: () {
-                          final playerProvider =
-                              context.read<PlayerProvider>();
-                          playerProvider.playAlbum(albumName, artistName);
                           Navigator.of(ctx).pop();
+                          _playAll(context, albumName, artistName);
                         },
                       ),
                       ListTile(
                         leading: const Icon(Icons.shuffle),
                         title: const Text('Shuffle'),
                         onTap: () {
-                          final playerProvider =
-                              context.read<PlayerProvider>();
-                          playerProvider.playAlbum(
+                          Navigator.of(ctx).pop();
+                          _playAll(
+                            context,
                             albumName,
                             artistName,
                             shuffle: true,
                           );
-                          Navigator.of(ctx).pop();
                         },
                       ),
                     ],

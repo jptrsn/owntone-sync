@@ -16,18 +16,16 @@ class BrowseScreen extends StatefulWidget {
 class _BrowseScreenState extends State<BrowseScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  late BrowseProvider _browseProvider;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    _browseProvider = BrowseProvider();
-    _browseProvider.loadData();
+    context.read<BrowseProvider>().loadData();
 
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging) {
-        _browseProvider.setCategory(
+        context.read<BrowseProvider>().setCategory(
           BrowseCategory.values[_tabController.index],
         );
       }
@@ -42,44 +40,41 @@ class _BrowseScreenState extends State<BrowseScreen>
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider.value(
-      value: _browseProvider,
-      child: Consumer<BrowseProvider>(
-        builder: (context, provider, child) {
-          if (!provider.hasContent && !provider.isLoading) {
-            return _buildEmptyState(context);
-          }
+    return Consumer<BrowseProvider>(
+      builder: (context, provider, child) {
+        if (!provider.hasContent && !provider.isLoading) {
+          return _buildEmptyState(context);
+        }
 
-          return Scaffold(
-            body: Column(
-              children: [
-                TabBar(
-                  controller: _tabController,
-                  tabs: const [
-                    Tab(text: 'Playlists'),
-                    Tab(text: 'Artists'),
-                    Tab(text: 'Albums'),
-                    Tab(text: 'Tracks'),
-                  ],
-                ),
-                Expanded(
-                  child: provider.isLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : TabBarView(
-                          controller: _tabController,
-                          children: const [
-                            PlaylistListView(),
-                            ArtistListView(),
-                            AlbumListView(),
-                            TrackListView(),
-                          ],
-                        ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
+        return Scaffold(
+          body: Column(
+            children: [
+              TabBar(
+                controller: _tabController,
+                tabs: const [
+                  Tab(text: 'Playlists'),
+                  Tab(text: 'Artists'),
+                  Tab(text: 'Albums'),
+                  Tab(text: 'Tracks'),
+                ],
+              ),
+              Expanded(
+                child: provider.isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : TabBarView(
+                        controller: _tabController,
+                        children: const [
+                          PlaylistListView(),
+                          ArtistListView(),
+                          AlbumListView(),
+                          TrackListView(),
+                        ],
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

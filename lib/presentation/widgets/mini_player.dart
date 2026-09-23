@@ -1,25 +1,23 @@
 import 'dart:io';
-import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../../main.dart' show audioHandler;
-import '../providers/player_provider.dart';
-import '../screens/player_screen.dart';
-import '../../data/repositories/local_database_repository.dart';
 
-class MiniPlayer extends StatefulWidget {
+import 'package:flutter/material.dart';
+import 'package:audio_service/audio_service.dart';
+import 'package:provider/provider.dart';
+
+import '../controllers/playback_controller.dart';
+import '../screens/player_screen.dart';
+
+class MiniPlayer extends StatelessWidget {
   const MiniPlayer({super.key});
 
   @override
-  State<MiniPlayer> createState() => _MiniPlayerState();
-}
-
-class _MiniPlayerState extends State<MiniPlayer> {
-  @override
   Widget build(BuildContext context) {
-    return Consumer<PlayerProvider>(
-      builder: (context, playerProvider, child) {
-        final currentTrack = playerProvider.getCurrentlyPlayingTrack();
-        if (currentTrack == null) {
+    final controller = context.read<PlaybackController>();
+    return StreamBuilder<MediaItem?>(
+      stream: controller.mediaItem,
+      builder: (context, itemSnapshot) {
+        final item = itemSnapshot.data;
+        if (item == null) {
           return const SizedBox.shrink();
         }
 
@@ -45,7 +43,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
             ),
             child: Row(
               children: [
-                _buildAlbumArt(currentTrack),
+                _buildAlbumArt(item.artUri),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -53,7 +51,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        currentTrack.title,
+                        item.title,
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 14,
@@ -64,7 +62,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        currentTrack.artist,
+                        item.artist ?? '',
                         style: TextStyle(
                           color: Colors.grey[300],
                           fontSize: 12,
@@ -76,7 +74,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
                   ),
                 ),
                 const SizedBox(width: 16),
-                _buildPlayPauseButton(context),
+                _buildPlayPauseButton(controller),
               ],
             ),
           ),
@@ -85,27 +83,35 @@ class _MiniPlayerState extends State<MiniPlayer> {
     );
   }
 
-  Widget _buildAlbumArt(SyncedTrack track) {
+  Widget _buildAlbumArt(Uri? artUri) {
     return Container(
       width: 48,
       height: 48,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(4),
         image: DecorationImage(
-          image: track.artworkPath != null
-              ? FileImage(File(track.artworkPath!))
-              : const AssetImage('assets/images/placeholder_album_art.png'),
+          image: _artImageProvider(artUri),
           fit: BoxFit.cover,
         ),
       ),
     );
   }
 
-  Widget _buildPlayPauseButton(BuildContext context) {
-    return StreamBuilder<bool>(
-      stream: audioHandler!.playbackState.map((state) => state.playing),
+  ImageProvider _artImageProvider(Uri? artUri) {
+    if (artUri != null && artUri.scheme == 'file') {
+      final file = File(artUri.toFilePath());
+      if (file.existsSync()) {
+        return FileImage(file);
+      }
+    }
+    return const AssetImage('assets/images/placeholder_album_art.png');
+  }
+
+  Widget _buildPlayPauseButton(PlaybackController controller) {
+    return StreamBuilder<PlaybackState>(
+      stream: controller.playbackState,
       builder: (context, snapshot) {
-        final isPlaying = snapshot.data ?? false;
+        final isPlaying = snapshot.data?.playing ?? false;
 
         return IconButton(
           icon: Icon(
@@ -115,9 +121,9 @@ class _MiniPlayerState extends State<MiniPlayer> {
           ),
           onPressed: () {
             if (isPlaying) {
-              audioHandler!.pause();
+              controller.pause();
             } else {
-              audioHandler!.play();
+              controller.play();
             }
           },
         );

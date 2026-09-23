@@ -670,6 +670,12 @@ the queue.
 
 - Work **one phase per session or per branch commit**. Do not begin a phase until
   the previous phase's verification has been run.
+- **Read `.agent/invariants.md` before starting, and update it before reporting.**
+  It holds facts that constrain later work, each with what breaks if undone.
+  Promote anything your phase established that a future phase must not undo, and
+  record any concern that looked real but was already handled as a RESOLVED
+  CONCERN. Later phases run in isolated sessions with no memory of yours and do
+  not read phase reports — invariants is the only channel that reaches them.
 - After every phase: `flutter analyze` (0 errors, 0 warnings) and
   `flutter build apk --debug`.
 - Every phase must be **run and verified on a device**, not just analysed.

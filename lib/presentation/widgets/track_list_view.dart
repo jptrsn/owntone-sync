@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/browse_provider.dart';
+import '../controllers/playback_controller.dart';
 import 'play_button.dart';
 
 class TrackListView extends StatelessWidget {
@@ -28,6 +29,9 @@ class TrackListView extends StatelessWidget {
 
             return PlayableTile(
               track: track,
+              collection: provider.tracks,
+              index: index,
+              origin: const QueueOrigin.allTracks(),
               showContextMenu: true,
               child: ListTile(
                 title: Text(track.title),
