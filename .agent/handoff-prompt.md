@@ -7,21 +7,23 @@ Run this once per phase, substituting the phase number. Phases are defined in
 
 ```
 You are implementing a refactor of this Flutter app, defined in two documents in
-this repo. Read BOTH IN FULL before touching any code — they are authoritative
-and supersede anything in .agent/player-spec.md or .agent/play-music-plan.md
-(both obsolete; ignore them):
+this repo. Read ALL THREE IN FULL before touching any code — they are
+authoritative and supersede anything in .agent/player-spec.md or
+.agent/play-music-plan.md (both obsolete; ignore them):
 
   .agent/player-ux-spec.md        — what we are building and why, plus the
                                     user stories and acceptance criteria
   .agent/player-refactor-plan.md  — the defect inventory, target architecture,
                                     and the phased implementation path
+  .agent/verification-protocol.md — what counts as evidence, and the report
+                                    format you must use. Short. Binding.
 
 Your job this session is PHASE <N> ONLY, as defined in §3 of the refactor plan.
 Do not begin any later phase. Do not do "while I'm here" cleanups that belong to
 another phase.
 
 Before writing code:
-1. Read both documents completely.
+1. Read all three documents completely.
 2. Read §1 of the refactor plan (the defect inventory) carefully — it cites
    file:line evidence for why the current code is broken. Verify those claims
    against the actual code rather than assuming they are still accurate.
@@ -62,9 +64,16 @@ Device verification:
   rather than inventing a workaround. Some of those views are story D3 and are
   meant to be built.
 
-When the phase is done, report: what changed, the verification output, what you
-confirmed by hand on the emulator, anything in the spec that proved wrong, and
-any remaining checks that need real hardware.
+When you believe the phase is done, BEFORE writing anything:
+1. Re-read .agent/verification-protocol.md in full. Not from memory — open it.
+2. Identify this phase's go/no-go check and run it, if you have not already.
+   If you have not run it, the phase is BLOCKED, not complete.
+3. Write your report using the exact template in §6 of that protocol. Every
+   field is mandatory. Do not summarise it into prose.
+
+Claims about behaviour must come from actions you performed and results you
+observed on the emulator. A clean analyze and a successful build are not
+evidence that anything works.
 ```
 
 ---

@@ -368,6 +368,52 @@ and none.
 auto-advance works, notification next/previous work, Bluetooth next/previous
 work, shuffle and repeat work, a deleted file is skipped.
 
+**Status: COMPLETE.** Report in `.agent/phase1-report.md`. Go/no-go passed:
+`content://` playback works through `just_audio`'s native path, so the §6 top
+risk did not materialise.
+
+**What it actually built, and what later phases must know:**
+
+- `setAudioSources` is used directly. `ConcatenatingAudioSource` is gone — do not
+  reintroduce it.
+- The handler is the sole owner of the queue. There is no Dart-side list. `queue`
+  and `mediaItem` are derived from `sequenceStateStream`; `playbackState` is
+  piped from `playbackEventStream`. **Do not add a parallel list in any later
+  phase.**
+- `updatePosition` emits `_audioPlayer.position` (extrapolated), NOT
+  `event.updatePosition` (a sparse platform sample). Pairing a stale sample with
+  a fresh `updateTime` resets the media session's projection and snaps the
+  playhead backwards. Do not "simplify" this back.
+- `playCollection` calls `_audioPlayer.play()` **without awaiting** — `play()`'s
+  future completes when playback *stops*. Do not add an `await`.
+- `dispose()` cancels all three subscriptions. Anything that constructs the
+  handler owns calling it.
+- `TrackUriResolver` exists but `resolveBatch` is a **sequential** loop over the
+  per-track SAF walk. Deferred from this phase — see Phase 2.
+- `MainActivity.buildContentUri` was **not** optimised. The per-segment
+  `DocumentFile.findFile` walk is still there. Deferred — see Phase 2.
+
+**Verification debt — implemented here, unverifiable until there is UI.** Each
+item names the phase that must exercise it. None may be assumed working.
+
+| Unverified behaviour | Verified in |
+|---|---|
+| `skipToPrevious` B5 branches (>3s restart vs <3s previous) | Phase 5 |
+| Shuffle and repeat modes | Phase 5 |
+| `addQueueItem` / `insertQueueItem` / `removeQueueItem` / `updateQueue` | Phase 5 |
+| `seek` / `seekForward` / `seekBackward` system actions | Phase 5 |
+| A9 error auto-advance (all 10 test tracks were playable) | Phase 7 |
+
+**Two known gaps left open deliberately:**
+
+1. The error listener advances past an unplayable track, but an unplayable
+   **last** track leaves the player parked in the error state. A9 also wants a
+   user-visible notice naming the skipped track, and an actionable message when
+   every track is unplayable. Both need UI — Phase 4 builds the notice, Phase 7
+   closes the behaviour.
+2. `playCollection` always starts playing. A8 (restore-on-cold-start) needs a
+   paused variant — Phase 7.
+
 ---
 
 ### Phase 2 — PlaybackController and provider wiring
@@ -381,17 +427,47 @@ work, shuffle and repeat work, a deleted file is skipped.
    playback. Delete `playTrack`, `playAlbum`, `playArtist`, `playPlaylist`,
    `playAllTracks` as distinct code paths — they all become callers of
    `playCollection` with a different origin.
-3. Delete `lib/presentation/providers/player_provider.dart` entirely.
-4. Remove the global `AudioHandler? audioHandler` from `main.dart`; provide the
-   controller through `MultiProvider`.
+   The controller maps `SyncedTrack` → `MediaItem`, resolving each track's URI
+   into `extras['uri']` and setting `artUri` from `artworkPath`. The handler's
+   `playCollection(List<MediaItem>, startIndex)` takes it from there — the
+   handler must stay ignorant of `SyncedTrack` and of the database.
+3. **Delete `lib/presentation/providers/player_provider.dart` together with all
+   six of its consumers' references** — `mini_player.dart`, `play_button.dart`,
+   `player_screen.dart`, `artist_list_view.dart`, `album_list_view.dart`,
+   `playlist_list_view.dart`. Phase 1 temporarily restored `PlayerProvider` to
+   `main.dart` purely to keep those widgets from throwing; that crutch comes out
+   here. Point each consumer at the controller. They are rewritten properly in
+   Phases 4–6; here they only need to compile and not crash.
+4. Remove the global `OwnToneAudioHandler? audioHandler` from `main.dart`;
+   provide the controller through `MultiProvider`. Construct the handler once and
+   hand it to the controller.
 5. Make `BrowseProvider` a tree-provided singleton; remove the `initState`
    construction in `BrowseScreen`.
 6. Ensure exactly one `SyncProvider` instance exists.
 7. Add a `PositionData` stream (position + buffered + duration via
-   `rxdart.combineLatest3`) for the seek bar.
+   `rxdart.combineLatest3`) for the seek bar. Use `AudioService.position` for the
+   position component.
+8. **Inherited from Phase 1 — URI resolution performance.** `resolveBatch` is
+   currently a sequential loop, and `MainActivity.buildContentUri` still walks the
+   SAF tree with `DocumentFile.findFile` per path segment (O(directory size) per
+   segment, per track — §1.5). The controller resolves whole collections, so this
+   is now on the hot path: a 500-track playlist means hundreds of enumerations
+   before playback starts.
+   - Replace the walk with a single `DocumentsContract.buildDocumentUriUsingTree`
+     construction from the tree URI plus relative path, falling back to the walk
+     only if that fails.
+   - Write successful resolutions back to `synced_tracks.content_uri` so the cost
+     is paid once, and prefer a cached non-empty value. Treat `''` as null.
+   - Resolve off the UI thread; consider a single batched method-channel call.
+
+**Do not** reintroduce a Dart-side queue list. The handler owns the queue; the
+controller forwards intents and re-exposes the handler's streams.
 
 **Verify:** `flutter analyze` clean; no file imports `main.dart` for
-`audioHandler`; `grep -r "SyncProvider()" lib/` yields exactly one construction.
+`audioHandler`; `grep -r "SyncProvider()" lib/` yields exactly one construction;
+`grep -r "PlayerProvider" lib/` yields nothing. On the emulator, the debug FAB
+still plays a collection through the controller, and a playlist of 100+ tracks
+starts playing without a visible stall.
 
 ---
 
@@ -415,8 +491,23 @@ Create `lib/presentation/services/playback_stats_recorder.dart`:
   activity is gone. Remove `recordPlayEvent` / `recordSkipEvent` from the player
   method channel once nothing calls them.
 
-**Verify:** the precise assertions in `player-ux-spec.md` §7 steps 3 and 4, read
-directly out of the `pending_events` table.
+**Inherited from Phase 1 — the position stream is now trustworthy.** `playbackState`
+carries an extrapolated `updatePosition`, so accumulated-listening measurement can
+be driven from `AudioService.position` / the controller's `PositionData`. Do not
+re-derive position from raw platform events.
+
+**Distinguishing auto-advance from a user skip.** The handler currently exposes no
+signal for *why* the track changed — a natural end and a pressed Next both surface
+as a sequence change. The recorder must not guess. Add an explicit intent signal:
+have the controller/handler mark user-initiated transitions (`skipToNext`,
+`skipToPrevious`, `skipToQueueItem`, new collection) so the recorder can tell them
+from completion and from the A9 error-skip. Getting this wrong reproduces the
+original bug in §1.2, where finishing a track was logged as a skip.
+
+**Verify:** spec §7 steps 3 and 4 — play a track to completion, skip another, sync,
+then read both tracks' play and skip counts in the OwnTone web UI at
+`192.168.1.13`. This is also the first real exercise of the Phase 0.5 gate removal:
+if the counts do not move, the upload path is still broken.
 
 ---
 
@@ -437,9 +528,19 @@ directly out of the `pending_events` table.
 5. Remove the nested `Scaffold` from `BrowseScreen` (or fold it into
    `LibraryScreen`).
 6. Move the sync entry point out of the tab bar entirely.
+7. **Remove the Phase 1 debug scaffolding**: delete
+   `lib/presentation/widgets/debug_play_button.dart` and the `kDebugMode` branch
+   in `main.dart`'s `MaterialApp.builder`. That branch currently wraps the whole
+   app in an extra `Scaffold` to host the FAB — it must not survive into the real
+   shell, where it would nest inside `LibraryScreen`'s own `Scaffold` and
+   interfere with bottom insets and snackbars.
+8. **Playback error notice (A9, part 1).** The handler already advances past an
+   unplayable track. Surface it: a one-line, non-blocking snackbar naming the
+   skipped track, driven off `AudioProcessingState.error`. Never a modal.
 
 **Verify:** cold start lands on Library; the last row of every list is fully
-tappable; there is exactly one mini player on screen at all times.
+tappable; there is exactly one mini player on screen at all times; no debug FAB
+appears in a debug build.
 
 ---
 
@@ -457,8 +558,27 @@ tappable; there is exactly one mini player on screen at all times.
    highlight, auto-scroll to current on open, jump-to-track on tap.
 6. Overflow: go to album, go to artist, track info.
 
+**This phase clears most of Phase 1's verification debt.** All of the following
+were implemented in the handler and have never been exercised. This is the first
+phase with UI capable of driving them, so verifying them is part of the work, not
+a bonus. Treat a failure here as a Phase 1 defect, not a Phase 5 one, and fix it
+in the handler.
+
+| Behaviour | What to check |
+|---|---|
+| `skipToPrevious` B5 | Past 3s → restarts current. Under 3s → previous track. At index 0 under 3s → restarts, does not no-op. |
+| Shuffle | Toggling mid-track keeps the current track playing and reshuffles the rest; toggling off restores the original order with the current track still current (A3). |
+| Repeat | All three states cycle and each behaves correctly, including repeat-one looping (A4). |
+| Queue mutation | Reorder, swipe-remove, jump-to-track, "play next", "add to queue" all take effect in the real playback order — not just the displayed list. |
+| Seek actions | `seek`, `seekForward`, `seekBackward` from both the sheet and the media session. |
+
+**Watch for a shuffle/queue-order divergence.** `queue` is derived from
+`sequenceState.sequence`. Confirm the queue sheet shows the *effective* play order
+under shuffle and that the highlighted current item matches what is actually
+playing — a mismatch here is the failure mode that killed the original design.
+
 **Verify:** spec §7 steps 5 and 7; the seek bar reaches the end exactly when the
-track does.
+track does; every row in the table above observed on the emulator.
 
 ---
 
@@ -483,15 +603,31 @@ track does.
 
 1. Persist and restore queue, origin, index, position, shuffle, repeat (A8).
    Restore **paused**.
+   **Inherited from Phase 1:** `playCollection` always calls `play()`. Add a
+   paused variant (a `startPaused` flag, or a separate `loadCollection`) rather
+   than loading and immediately pausing, which produces an audible blip.
 2. On sync completion, refresh `BrowseProvider` and reconcile the live queue:
    drop tracks that were deleted; if the current track was deleted, advance.
    Never interrupt playback otherwise (C2, C3).
-3. Invalidate `content_uri` for any track the sync worker re-downloads.
-4. Surface playback errors as snackbars; surface sync errors as an app-bar badge
-   plus a dismissible banner.
-5. Show a pending-events count in the drawer or Sync screen (D3).
+3. Invalidate `content_uri` for any track the sync worker re-downloads, so a
+   changed document ID cannot leave a stale URI behind.
+4. Surface sync errors as an app-bar badge plus a dismissible banner. (The
+   playback-error snackbar is built in Phase 4.)
+5. Show a pending-events count in the drawer or Sync screen (D3), and render
+   `plays_synced` / `skips_synced` on the History screen. Note that since Phase
+   0.5 these are `0` rather than `NULL` when a sync uploads nothing — display
+   that as "no events", not a bare "0 plays".
+6. **Close out A9 (part 2).** Phase 1 left the error path incomplete: an
+   unplayable **last** track leaves the player parked in the error state, and
+   there is no handling for a queue in which *every* track is unplayable. Fix
+   both — the latter stops playback and shows an actionable message pointing at
+   Sync. This is also the first real exercise of the error path: Phase 1's ten
+   test tracks were all playable, so it has never fired.
 
-**Verify:** spec §7 steps 9, 10, 11, 12.
+**Verify:** spec §7 steps 9, 10, 11, 12. For step 10, delete a synced file from
+the SAF folder so the error path genuinely fires; confirm the skip notice appears
+and playback continues, then repeat with the deleted file as the last track in
+the queue.
 
 ---
 
@@ -499,10 +635,11 @@ track does.
 
 | File | Action |
 |---|---|
-| `lib/presentation/services/audio_handler.dart` | **Rewrite** (phase 1) |
-| `lib/presentation/providers/player_provider.dart` | **Delete** (phase 2) |
+| `lib/presentation/services/audio_handler.dart` | **Rewritten — DONE** (phase 1). Later phases change it only to close the A9 gaps and add a paused load. |
+| `lib/presentation/providers/player_provider.dart` | **Delete, with all six consumers' references** (phase 2) |
 | `lib/presentation/controllers/playback_controller.dart` | **New** (phase 2) |
-| `lib/presentation/services/track_uri_resolver.dart` | **New** (phase 1) |
+| `lib/presentation/services/track_uri_resolver.dart` | **Created** (phase 1); **batching + caching** (phase 2) |
+| `lib/presentation/widgets/debug_play_button.dart` | **Temporary** (phase 1) → **Delete** (phase 4) |
 | `lib/presentation/services/playback_stats_recorder.dart` | **New** (phase 3) |
 | `lib/presentation/screens/main_navigation_screen.dart` | **Delete** → `LibraryScreen` (phase 4) |
 | `lib/presentation/screens/library_screen.dart` | **New** (phase 4) |
