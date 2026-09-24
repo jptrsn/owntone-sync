@@ -17,36 +17,19 @@ class QueueOrigin {
   final int? id;
   final String displayName;
 
-  const QueueOrigin({
-    required this.kind,
-    this.id,
-    required this.displayName,
-  });
+  const QueueOrigin({required this.kind, this.id, required this.displayName});
 
   const QueueOrigin.playlist(int id, String name)
-      : this(
-          kind: QueueOriginKind.playlist,
-          id: id,
-          displayName: name,
-        );
+    : this(kind: QueueOriginKind.playlist, id: id, displayName: name);
 
   const QueueOrigin.album(String name)
-      : this(
-          kind: QueueOriginKind.album,
-          displayName: name,
-        );
+    : this(kind: QueueOriginKind.album, displayName: name);
 
   const QueueOrigin.artist(String name)
-      : this(
-          kind: QueueOriginKind.artist,
-          displayName: name,
-        );
+    : this(kind: QueueOriginKind.artist, displayName: name);
 
   const QueueOrigin.allTracks([String name = 'All tracks'])
-      : this(
-          kind: QueueOriginKind.allTracks,
-          displayName: name,
-        );
+    : this(kind: QueueOriginKind.allTracks, displayName: name);
 
   @override
   bool operator ==(Object other) =>
@@ -83,9 +66,9 @@ class PlaybackController {
   PlaybackController({
     required OwnToneAudioHandler handler,
     required TrackUriResolver resolver,
-  })  : _handler = handler,
-        _resolver = resolver,
-        _originController = BehaviorSubject<QueueOrigin?>.seeded(null);
+  }) : _handler = handler,
+       _resolver = resolver,
+       _originController = BehaviorSubject<QueueOrigin?>.seeded(null);
 
   final OwnToneAudioHandler _handler;
   final TrackUriResolver _resolver;
@@ -101,6 +84,9 @@ class PlaybackController {
   Stream<List<MediaItem>> get queue => _handler.queue;
 
   Stream<QueueOrigin?> get queueOrigin => _originController.stream;
+
+  /// Tracks that failed to play and were auto-advanced past (A9).
+  Stream<MediaItem> get skippedTrack => _handler.skippedTrackStream;
 
   /// The origin of the queue currently loaded into the handler.
   QueueOrigin? get currentOrigin => _originController.value;
@@ -181,9 +167,7 @@ class PlaybackController {
       if (adjustedStart < 0) adjustedStart = 0;
     }
 
-    final items = playable
-        .map((t) => _toMediaItem(t, uris[t.id]!))
-        .toList();
+    final items = playable.map((t) => _toMediaItem(t, uris[t.id]!)).toList();
 
     _originController.add(origin);
     await _handler.playCollection(items, startIndex: adjustedStart);
@@ -252,8 +236,9 @@ class PlaybackController {
       title: track.title,
       artist: track.artist,
       album: track.album,
-      duration:
-          track.lengthMs > 0 ? Duration(milliseconds: track.lengthMs) : null,
+      duration: track.lengthMs > 0
+          ? Duration(milliseconds: track.lengthMs)
+          : null,
       artUri: (artworkPath != null && artworkPath.isNotEmpty)
           ? Uri.file(artworkPath)
           : null,

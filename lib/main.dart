@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:audio_service/audio_service.dart';
@@ -7,11 +6,10 @@ import 'data/repositories/local_database_repository.dart';
 import 'presentation/controllers/playback_controller.dart';
 import 'presentation/providers/browse_provider.dart';
 import 'presentation/providers/sync_provider.dart';
-import 'presentation/screens/main_navigation_screen.dart';
+import 'presentation/screens/library_screen.dart';
 import 'presentation/services/audio_handler.dart';
 import 'presentation/services/playback_stats_recorder.dart';
 import 'presentation/services/track_uri_resolver.dart';
-import 'presentation/widgets/debug_play_button.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -107,18 +105,7 @@ class MyApp extends StatelessWidget {
           ),
         ),
         themeMode: ThemeMode.system,
-        home: const MainNavigationScreen(),
-        builder: (context, child) {
-          if (kDebugMode) {
-            return Scaffold(
-              body: child,
-              floatingActionButton: DebugPlayButton(
-                controller: playbackController,
-              ),
-            );
-          }
-          return child ?? const SizedBox.shrink();
-        },
+        home: const LibraryScreen(),
       ),
     );
   }

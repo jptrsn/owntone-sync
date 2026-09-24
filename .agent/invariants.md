@@ -267,6 +267,69 @@ sync ran (worker logged each of the 11 events).
 
 ---
 
+## UI
+
+### 16. `PlayerScaffold` docks the mini player as a layout child (Column), never an overlay
+
+`player_scaffold.dart`: `Scaffold` whose body is
+`Column[Expanded(screen body), SafeArea(top: false, MiniPlayer())]`.
+
+**WHY:** `Scaffold.bottomSheet` and `Positioned` both *overlay* the body
+without insetting it — the list's last rows render under the mini player and
+the final row is not fully tappable (the B4 requirement). A `Column` child
+reserves real layout space. `MiniPlayer` returns zero height when no
+`mediaItem`, so at idle the list uses the full height.
+
+**BREAKS IF UNDONE:** bottom list rows hidden behind / under the player
+strip; "last row of every list fully tappable" fails. Verified on device in
+Phase 4 (Brass detail + 233-row Tracks tab).
+
+### 17. The A9 skipped-track notice is hosted on the home route
+
+`LibraryScreen`'s `State` (home route, mounted for the app's lifetime)
+subscribes to `PlaybackController.skippedTrack` — a broadcast stream the
+handler feeds from the error listener by resolving `PlayerException.index`
+against the sequence (the item tag, unambiguous even though the player has
+already auto-advanced) — and shows
+`ScaffoldMessenger.of(context).showSnackBar` with the one-line text
+`Skipped "<title>" - could not be played` (3s, non-modal). Dedup: same track
+id within 5s is ignored.
+
+**WHY:** hosting it on a per-screen widget would kill the notice the moment
+the user is on any other screen; the home route always stays mounted, and the
+app-level ScaffoldMessenger renders the snackbar over the **topmost**
+route's scaffold (verified: shown while a detail route was on top).
+
+**RESOLVED CONCERN (Phase 4):** "a snackbar shown from a lower route never
+renders while another route is on top" — FALSE. That conclusion was a
+detection artifact: uiautomator dumps attributes whose values contain `"`
+with *single-quoted* delimiters (`content-desc='...'`), so double-quoted
+attribute regexes miss the snackbar node (see invariant 18). With raw
+substring detection the snackbar was visible on the topmost route every time.
+
+**RESOLVED CONCERN (Phase 4):** a snackbar shown while a pushed route is on
+top does **not** re-appear on the lower route after that route is popped
+(checked mid-display window; no route-disposal logic found in the 3.41.7
+scaffold source — mechanism unknown). Accepted: A9 is a 3s transient notice
+and the spec does not require it to survive route changes. Do **not**
+re-engineer a custom toast layer for this.
+
+**RESOLVED CONCERN (Phase 4):** custom overlay approaches were tried and
+rejected on Flutter 3.41.7: (a) entries inserted into the *navigator's*
+overlay are dropped when the navigator rebuilds its entries on route
+push/pop; (b) entries in a *separate* app-level overlay above the navigator
+survive, but the new "theater" architecture re-stamps z-order of route
+content on route changes and paints it *above* the static entry (entry stays
+mounted, goes invisible). The standard snackbar is the right tool.
+
+**RESOLVED CONCERN (Phase 4), framework quirk:** on Flutter 3.41.7 a
+`Scaffold` that has a `floatingActionButton` suppresses ScaffoldMessenger
+snackbars (A/B verified with quote-free snackbar text: FAB present → no
+snackbar; removed → snackbar renders; no exception). If a later phase adds a
+FAB to a scaffold that also shows snackbars, expect this.
+
+---
+
 ## Environment
 
 ### 10. The OwnTone server is at `192.168.1.13`
@@ -295,13 +358,14 @@ some of those views are story D3 and are meant to be built.
 **Driving the UI (Phase 3 practice, keep doing this):** the screend
 subagent cannot see the emulator in this setup — drive it with
 `adb -s emulator-5554 shell uiautomator dump` + `input tap`, parsing
-`content-desc` (Flutter exposes semantics labels). Two traps found the hard
+`content-desc` (Flutter exposes semantics labels). Three traps found the hard
 way: (1) the PlayerScreen controls row shifts down ~96px when the track title
 wraps to two lines — always dump the button bounds *after* the track is known
-before tapping Next/Pause; (2) the mini player only exists on the main
-navigation screen — pushed detail/Now-Playing routes cover it, so go Back
-before tapping it (and confirm which screen a dump shows before tapping
-main-screen coordinates).
+before tapping Next/Pause; (2) since Phase 4 the mini player exists on the
+library AND all detail screens (PlayerScaffold docks it under the body);
+confirm which screen a dump shows before tapping mini-player coordinates;
+(3) see invariant 18 — attribute-value quoting silently defeats
+regex-based detection.
 
 ### 12. Put session logs and scratch files in `/tmp/owntone_verify/`
 
@@ -311,6 +375,23 @@ cleanup process during long sessions (observed twice in Phase 2, once while a
 unlinked inode). `/tmp/owntone_verify/` is stable. When driving the UI,
 `adb shell cat /sdcard/...` redirects into the temp dir also fail silently in
 some shells — prefer `adb pull` to a file.
+
+### 18. uiautomator XML: attribute quoting defeats regex detection
+
+When an attribute value contains `"`, `uiautomator dump` emits that attribute
+with **single-quoted** delimiters (`content-desc='Skipped "Black Ice" - ...'`)
+instead of double-quoted ones. Regexes like `text="([^"]*)"` /
+`content-desc="([^"]*)"` silently miss those nodes, which reads as "widget
+not rendered" when it is visible.
+
+**WHY:** cost one full Phase 4 debugging cycle: a working snackbar was
+misdiagnosed as a cross-route rendering defect, and an entire (rejected)
+toast-layer re-architecture was built on top of it.
+
+**USE:** for presence checks, do a raw substring search of the whole XML file
+for a distinctive fragment of the expected text (a fragment that contains no
+quote character). Only parse attributes for *bounds* (which never contain
+quotes).
 
 ---
 

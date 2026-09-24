@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../data/repositories/local_database_repository.dart';
 import '../controllers/playback_controller.dart';
+import '../widgets/player_scaffold.dart';
 import '../widgets/play_button.dart';
 import 'album_detail_screen.dart';
 import 'dart:io';
@@ -51,7 +52,7 @@ class _ArtistDetailScreenState extends State<ArtistDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PlayerScaffold(
       appBar: AppBar(
         title: Text(widget.artistName),
         backgroundColor: Theme.of(context).colorScheme.surface,
@@ -115,7 +116,9 @@ class _ArtistDetailScreenState extends State<ArtistDetailScreen> {
                             leading: track.trackNumber > 0
                                 ? Text(
                                     '${track.trackNumber}',
-                                    style: Theme.of(context).textTheme.bodySmall,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
                                   )
                                 : null,
                             title: Text(track.title),

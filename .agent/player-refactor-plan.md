@@ -520,8 +520,12 @@ if the counts do not move, the upload path is still broken.
    Playlists / Artists / Albums / Tracks; body `TabBarView`.
 2. Create `AppDrawer`: Sync, Schedule, Server, Storage, History, About, Sync now.
 3. Create `PlayerScaffold` — a wrapper that composes `body` + docked
-   `MiniPlayer`, sized so content is inset (a `Column`, or `Scaffold.bottomSheet`
-   with matching body padding). **Never** a `Positioned` overlay.
+   `MiniPlayer` as a `Column`: `body` in an `Expanded`, `MiniPlayer` as the next
+   child. The body genuinely shrinks; `MiniPlayer` is zero height when no track
+   is loaded. **Never** a `Positioned` overlay, and **not**
+   `Scaffold.bottomSheet` — the bottom sheet floats *over* the body without
+   insetting it (only `bottomNavigationBar` and `persistentFooterButtons`
+   shrink the body), so the last list row stays covered.
 4. Rewrite `MiniPlayer`: streams only, artwork + title + artist + play/pause +
    next + thin progress bar, zero height when there is no current item, tap or
    swipe-up to open Now Playing.
@@ -614,8 +618,12 @@ track does; every row in the table above observed on the emulator.
 4. Detail screens: collapsing header with Play and Shuffle actions; track list
    with play-in-context.
 5. Add `SearchScreen` / search delegate over title, artist, album, playlist name.
+6. Sort-order selection and **persistence** for the library lists (spec B2).
+   Explicitly assigned here in Phase 4 (2026-09-24): it was out of Phase 4's
+   scope and is owned by this phase, so Phase 6 does not lose it.
 
-**Verify:** spec §7 step 2 from every list surface.
+**Verify:** spec §7 step 2 from every list surface; B2 persistence across app
+restarts.
 
 ---
 
@@ -645,16 +653,38 @@ track does; every row in the table above observed on the emulator.
    **only when non-null**. That is why this stayed hidden: before Phase 0.5 event
    tracking was gated off, the counts were null, the columns were omitted, and
    the insert succeeded. **Phase 0.5 made the counts unconditional, which exposed
-   the latent mismatch** — on a fresh install the insert now fails every sync and
-   **no history rows are written at all**.
+   the latent mismatch** — the insert now fails every sync on any DB lacking the
+   columns, and **no history rows are written at all**.
 
-   Anyone who installed fresh after Phase 0.5 has an empty history. Fix by adding
-   both columns to `_createDB` and a v6 migration that adds them if absent (the
-   v3 branch does not run for a DB created at v4+). Make the migration tolerant of
-   a column that already exists.
+   **Who this actually affects — checked against the released tags.** Nobody is
+   running this branch, so there is no live impact today. The risk is at release,
+   and it is narrower than it first looks:
 
-   Verify on a genuinely fresh install — wipe app data, sync, and confirm a
-   history row appears. An upgraded DB will pass either way and proves nothing.
+   | Released tag | DB version | `sync_history` columns |
+   |---|---|---|
+   | v0.1.0, v0.1.1 | 1 | present — added by the `< 3` migration on upgrade |
+   | v0.1.5 – v0.1.7 | 2 | present — same |
+   | **v0.1.8** (current `main`) | 3 | **absent on a fresh install** |
+
+   Only **fresh installs of v0.1.8** are affected. Anyone who has been running
+   the app since v0.1.7 or earlier came up through the `< 3` migration and has
+   the columns. A fresh v0.1.8 install calls `_createDB` at version 3, so the
+   `< 3` branch never runs and the columns are never added.
+
+   Those users are fine on `main` only because its event-tracking gate defaults
+   to false, keeping the counts null so the columns are omitted from the insert.
+   The moment this branch ships, the gate is gone, the counts are unconditional,
+   and their history silently stops being written.
+
+   Fix by adding both columns to `_createDB` **and** a v6 migration that adds
+   them when absent. The migration must tolerate a column that already exists,
+   since every pre-v0.1.8 DB has them.
+
+   Verify **both** shapes, since each proves something the other cannot:
+   - a DB shaped like a fresh v0.1.8 install (columns absent) → upgrade → sync →
+     a history row appears. This is the path the bug actually lives on.
+   - a DB that came up through the `< 3` migration (columns present) → upgrade →
+     sync → still works, i.e. the v6 migration did not fail on existing columns.
 
 6. Show a pending-events count in the drawer or Sync screen (D3), and render
    `plays_synced` / `skips_synced` on the History screen. Note that since Phase

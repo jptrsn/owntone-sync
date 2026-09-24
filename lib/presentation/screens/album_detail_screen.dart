@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../data/repositories/local_database_repository.dart';
 import '../controllers/playback_controller.dart';
+import '../widgets/player_scaffold.dart';
 import '../widgets/play_button.dart';
 
 class AlbumDetailScreen extends StatefulWidget {
@@ -61,7 +62,7 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PlayerScaffold(
       appBar: AppBar(
         title: Text(widget.albumName),
         backgroundColor: Theme.of(context).colorScheme.surface,
@@ -158,7 +159,9 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
                                   child: Text(
                                     '${track.trackNumber}',
                                     textAlign: TextAlign.center,
-                                    style: Theme.of(context).textTheme.bodyMedium,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodyMedium,
                                   ),
                                 )
                               : const Icon(Icons.music_note),

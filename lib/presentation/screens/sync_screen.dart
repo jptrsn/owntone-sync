@@ -29,26 +29,33 @@ class _SyncScreenState extends State<SyncScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<SyncProvider>(
-      builder: (context, provider, child) {
-        if (provider.isSyncing) {
-          return _buildSyncingView(context, provider);
-        }
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Sync'),
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
+      ),
+      body: Consumer<SyncProvider>(
+        builder: (context, provider, child) {
+          if (provider.isSyncing) {
+            return _buildSyncingView(context, provider);
+          }
 
-        if (!provider.hasStoragePermission) {
-          return _buildPermissionRequest(context, provider);
-        }
+          if (!provider.hasStoragePermission) {
+            return _buildPermissionRequest(context, provider);
+          }
 
-        if (!provider.isConfigured) {
-          return _buildNotConfigured(context);
-        }
+          if (!provider.isConfigured) {
+            return _buildNotConfigured(context);
+          }
 
-        if (provider.availablePlaylists.isEmpty) {
-          return _buildInitialSetup(context, provider);
-        }
+          if (provider.availablePlaylists.isEmpty) {
+            return _buildInitialSetup(context, provider);
+          }
 
-        return _buildPlaylistSelection(context, provider);
-      },
+          return _buildPlaylistSelection(context, provider);
+        },
+      ),
     );
   }
 

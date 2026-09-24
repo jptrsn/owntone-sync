@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../data/repositories/local_database_repository.dart';
 import '../controllers/playback_controller.dart';
+import '../widgets/player_scaffold.dart';
 import '../widgets/play_button.dart';
 
 class PlaylistDetailScreen extends StatefulWidget {
@@ -46,7 +47,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PlayerScaffold(
       appBar: AppBar(
         title: Text(widget.playlistName),
         backgroundColor: Theme.of(context).colorScheme.surface,
@@ -64,8 +65,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                   track: track,
                   collection: _tracks,
                   index: index,
-                  origin:
-                      QueueOrigin.playlist(widget.playlistId, widget.playlistName),
+                  origin: QueueOrigin.playlist(
+                    widget.playlistId,
+                    widget.playlistName,
+                  ),
                   child: ListTile(
                     leading: track.trackNumber > 0
                         ? CircleAvatar(child: Text('${track.trackNumber}'))

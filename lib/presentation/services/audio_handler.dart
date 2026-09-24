@@ -12,6 +12,15 @@ class OwnToneAudioHandler extends BaseAudioHandler
   StreamSubscription<SequenceState>? _sequenceSubscription;
   StreamSubscription<PlayerException>? _errorSubscription;
 
+  final StreamController<MediaItem> _skippedTrackController =
+      StreamController<MediaItem>.broadcast();
+
+  /// Emits the [MediaItem] of a track that failed to play and was
+  /// auto-advanced past (A9). The item is resolved from the
+  /// [PlayerException.index] against the sequence, so it is unambiguous
+  /// even though the player moves on immediately.
+  Stream<MediaItem> get skippedTrackStream => _skippedTrackController.stream;
+
   /// Set when the user explicitly asks to move to a different track (UI
   /// button, media notification, or Bluetooth control), so the stats
   /// recorder can tell that move apart from natural completion, repeat
@@ -47,10 +56,12 @@ class OwnToneAudioHandler extends BaseAudioHandler
   Stream<Duration?> get durationStream => _audioPlayer.durationStream;
 
   void _setupSubscriptions() {
-    _playbackEventSubscription = _audioPlayer.playbackEventStream.listen(
-      (event) {
-        final playing = _audioPlayer.playing;
-        playbackState.add(playbackState.value.copyWith(
+    _playbackEventSubscription = _audioPlayer.playbackEventStream.listen((
+      event,
+    ) {
+      final playing = _audioPlayer.playing;
+      playbackState.add(
+        playbackState.value.copyWith(
           controls: [
             MediaControl.skipToPrevious,
             if (playing) MediaControl.pause else MediaControl.play,
@@ -74,9 +85,9 @@ class OwnToneAudioHandler extends BaseAudioHandler
           bufferedPosition: event.bufferedPosition,
           speed: _audioPlayer.speed,
           queueIndex: event.currentIndex,
-        ));
-      },
-    );
+        ),
+      );
+    });
 
     _sequenceSubscription = _audioPlayer.sequenceStateStream.listen((state) {
       final sequence = state.sequence;
@@ -87,9 +98,11 @@ class OwnToneAudioHandler extends BaseAudioHandler
       }
       queue.add(sequence.map((s) => s.tag as MediaItem).toList());
       final i = state.currentIndex;
-      mediaItem.add((i != null && i >= 0 && i < sequence.length)
-          ? sequence[i].tag as MediaItem
-          : null);
+      mediaItem.add(
+        (i != null && i >= 0 && i < sequence.length)
+            ? sequence[i].tag as MediaItem
+            : null,
+      );
     });
 
     // FIX 5: Auto-advance past unplayable tracks (story A9).
@@ -100,12 +113,24 @@ class OwnToneAudioHandler extends BaseAudioHandler
           '${error.message} (code=${error.code}, index=${error.index})',
         );
       }
-      playbackState.add(playbackState.value.copyWith(
-        processingState: AudioProcessingState.error,
-      ));
+      playbackState.add(
+        playbackState.value.copyWith(
+          processingState: AudioProcessingState.error,
+        ),
+      );
       // Error auto-advance is not a user skip: clear any stale marker so the
       // advance cannot be misattributed to the user.
       _userInitiatedPending = false;
+      final failedIndex = error.index;
+      final sequence = _audioPlayer.sequence;
+      if (failedIndex != null &&
+          failedIndex >= 0 &&
+          failedIndex < sequence.length) {
+        final tag = sequence[failedIndex].tag;
+        if (tag is MediaItem) {
+          _skippedTrackController.add(tag);
+        }
+      }
       _audioPlayer.seekToNext();
     });
   }
@@ -150,10 +175,7 @@ class OwnToneAudioHandler extends BaseAudioHandler
         continue;
       }
 
-      final source = AudioSource.uri(
-        Uri.parse(uriString),
-        tag: track,
-      );
+      final source = AudioSource.uri(Uri.parse(uriString), tag: track);
       audioSources.add(source);
     }
 
@@ -256,10 +278,7 @@ class OwnToneAudioHandler extends BaseAudioHandler
       }
       return;
     }
-    final source = AudioSource.uri(
-      Uri.parse(uriString),
-      tag: mediaItem,
-    );
+    final source = AudioSource.uri(Uri.parse(uriString), tag: mediaItem);
     await _audioPlayer.addAudioSource(source);
   }
 
@@ -275,10 +294,7 @@ class OwnToneAudioHandler extends BaseAudioHandler
       }
       return;
     }
-    final source = AudioSource.uri(
-      Uri.parse(uriString),
-      tag: mediaItem,
-    );
+    final source = AudioSource.uri(Uri.parse(uriString), tag: mediaItem);
     await _audioPlayer.insertAudioSource(index, source);
   }
 
@@ -333,6 +349,7 @@ class OwnToneAudioHandler extends BaseAudioHandler
     await _playbackEventSubscription?.cancel();
     await _sequenceSubscription?.cancel();
     await _errorSubscription?.cancel();
+    await _skippedTrackController.close();
     await _audioPlayer.dispose();
   }
 }
