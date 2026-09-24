@@ -9,6 +9,7 @@ import 'presentation/providers/browse_provider.dart';
 import 'presentation/providers/sync_provider.dart';
 import 'presentation/screens/main_navigation_screen.dart';
 import 'presentation/services/audio_handler.dart';
+import 'presentation/services/playback_stats_recorder.dart';
 import 'presentation/services/track_uri_resolver.dart';
 import 'presentation/widgets/debug_play_button.dart';
 
@@ -22,10 +23,21 @@ Future<void> main() async {
       androidNotificationOngoing: true,
     ),
   );
+  final dbRepo = LocalDatabaseRepository();
   final playbackController = PlaybackController(
     handler: audioHandler,
-    resolver: TrackUriResolver(dbRepo: LocalDatabaseRepository()),
+    resolver: TrackUriResolver(dbRepo: dbRepo),
   );
+  // Records play/skip events straight into pending_events. Lives for the
+  // process lifetime, like the handler.
+  PlaybackStatsRecorder(
+    mediaItem: audioHandler.mediaItem,
+    playbackState: audioHandler.playbackState,
+    durationStream: audioHandler.durationStream,
+    position: AudioService.position,
+    consumeUserInitiatedTransition: audioHandler.consumeUserInitiatedTransition,
+    insertEvent: dbRepo.insertEvent,
+  ).start();
   runApp(MyApp(playbackController: playbackController));
 }
 

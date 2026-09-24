@@ -42,6 +42,14 @@ seek bar stalls, the bug is in the handler's emission or in the `PositionData`
 wiring — not in `AudioService.position`, and not a reason to find a different
 position source.
 
+**RESOLVED CONCERN (Phase 3):** while verifying stats on device,
+`AudioService.position` was observed advancing smoothly in ~16–200ms steps
+(e.g. 2:43→2:58→4:11→4:19→5:51 over the observed window) with `content://`
+sources, while paused it held its last value exactly (4:11 frozen across three
+dumps; 0:01 frozen on a paused track). Confirms the Phase 1 resolved concern:
+the ticker-driven stream is a usable listening-time clock for the stats
+recorder (see invariant 14). No stall was seen in ~80 minutes of playback.
+
 **RESOLVED CONCERN (Phase 2):** the PlayerScreen "Bad state: Stream has already
 been listened to" was in the `PositionData` wiring, not in position itself.
 Root cause: `PlaybackController.positionData` exposed the raw `Rx.combineLatest3`
@@ -174,6 +182,13 @@ gate is the fix. `syncEvents()` already early-returns cheaply when
 `plays_synced` / `skips_synced` when a sync uploads nothing. Render that as
 "no events", not a bare "0 plays".
 
+**KNOWN DEFECT (see `.agent/blockers.md`, 2026-09-24):** on fresh installs the
+`sync_history` table is missing `plays_synced`/`skips_synced` entirely
+(`database_helper.dart` `_createDB` omits them; only the v2→v3 migration adds
+them), so the worker's history-row INSERT fails and **no** history row is
+written. The event upload itself works. Phase 7 must fix the schema before
+story D3 / spec §7 step 12 can be verified.
+
 ### 9. Natural completion is a play, never a skip
 
 **WHY:** the original implementation called `skipToNext()` on completion, which
@@ -186,6 +201,70 @@ their smart playlists — the failure this whole feature exists to correct.
 A natural end and a pressed Next both surface as a sequence change. The stats
 recorder must not guess; an explicit user-intent signal is required.
 
+**RESOLVED CONCERN (Phase 3):** the signal now exists — see invariant 13
+(`consumeUserInitiatedTransition`). Verified on device: eight natural
+completions produced plays and zero skips; two explicit user moves (start new
+collection, press Next) each produced exactly one skip.
+
+### 13. User-intent signal for track changes
+
+`audio_handler.dart` carries a sticky `_userInitiatedPending` flag exposed as
+`consumeUserInitiatedTransition()`. Set by: `skipToNext()`; `skipToPrevious()`
+(only the index-changing branch — the >3s "restart current" branch must NOT
+set it); `skipToQueueItem()` (only when the index actually changes);
+`playCollection()` (only when the new start track differs from the current
+one). Cleared by: the A9 error-skip path and `stop()`. The stats recorder
+consumes it once per mediaItem change: `true` = user moved on (skip candidate),
+`false` = auto-advance / loop wrap / error skip / fresh start (never a skip).
+
+**WHY:** the player exposes no reason for a sequence change (invariant 9). The
+sticky-consume pattern survives the ordering where the flag is set before the
+mediaItem emission lands, and the error-path clear stops A9 auto-advance from
+being attributed to the user.
+
+**BREAKS IF UNDONE:** the §1.2 bug returns — natural completion, A9 skips, and
+loop wraps become indistinguishable from user skips, corrupting skip counts.
+
+### 14. The position stream is the clock for listening time
+
+`AudioService.position` (= `createPositionStream(steps: 800)`) emits every
+16–200ms **while playing** and not at all while paused/stalled (audio_service
+0.18.19; `PlaybackState.position` is a computed extrapolation, so ticks are
+smooth). `PlaybackStatsRecorder` accumulates forward deltas ≤1000ms while
+`playing`; larger forward jumps are treated as seeks and never count as
+listened time; a backward jump >1000ms defers a reset until the next forward
+tick of the same track.
+
+**WHY:** without the ≤1000ms guard a forward seek is counted as listened time
+and can trigger a false play; without the backward-jump deferral the first
+tick of a new track would wipe the outgoing track's accumulator before its
+skip/play is evaluated.
+
+**BREAKS IF UNDONE:** stats are wrong for anyone who seeks or skips quickly —
+the original defect class this feature exists to fix.
+
+### 15. Play/skip thresholds and event flow
+
+Play: written when listened time ≥ `min(0.9 × duration, 4 min)`, at most once
+per pass (a repeat-one restart is a new pass). Skip: written only on a
+user-initiated track change with `2s ≤ listened < threshold`. Pause, stop,
+seek, and app backgrounding write nothing. Events are `PendingEvent` rows
+(Unix **seconds**) in `pending_events`, written synchronously by
+`PlaybackStatsRecorder` via `LocalDatabaseRepository.insertEvent`; the only
+uploader is `BackgroundSyncWorker.syncEvents`, which runs on every sync
+(invariant 8) and deletes rows after successful upload.
+
+**WHY:** these are the spec'd semantics (player-ux-spec D1/D2) verified against
+the server on device. The 2s floor stops pause-immediately noise; the 4-min cap
+stops long tracks from requiring near-full listening for a play.
+
+**RESOLVED CONCERN (Phase 3):** "did the app lose events on death?" — the
+recorder writes to the DB synchronously at the moment of the threshold crossing
+or the user move, before any UI work; rows survive process death by
+construction (sqflite commit). Verified indirectly: events recorded over
+~80 minutes of playback were all present in `pending_events` when the manual
+sync ran (worker logged each of the 11 events).
+
 ---
 
 ## Environment
@@ -194,6 +273,14 @@ recorder must not guess; an explicit user-intent signal is required.
 
 It is on the LAN, **not** on the host machine. `10.0.2.2` (the emulator's host
 alias) is wrong here and will not reach it.
+
+Ports: `:3689` is the JSON API (no authentication — curl from the host works),
+`:3000` is the server web UI (login page) which proxies the same data. Track
+stats live on the server as `play_count` / `skip_count` / `time_played` /
+`time_skipped` on `GET /api/library/tracks/{id}` — that is exactly what the web
+UI's stats display shows, so it is the source of truth for stats verification
+(invariant 11). The app's configured URL is `http://192.168.1.13:3689`
+(readable on the app's Server Configuration screen).
 
 ### 11. `pending_events` cannot be read from the shell
 
@@ -204,6 +291,17 @@ binary** (`/system/bin/sqlite3` does not exist on API 36).
 counts before, sync, then re-check. Do not burn time on `adb`/`run-as`
 plumbing. If a check needs in-app visibility that does not exist yet, say so —
 some of those views are story D3 and are meant to be built.
+
+**Driving the UI (Phase 3 practice, keep doing this):** the screend
+subagent cannot see the emulator in this setup — drive it with
+`adb -s emulator-5554 shell uiautomator dump` + `input tap`, parsing
+`content-desc` (Flutter exposes semantics labels). Two traps found the hard
+way: (1) the PlayerScreen controls row shifts down ~96px when the track title
+wraps to two lines — always dump the button bounds *after* the track is known
+before tapping Next/Pause; (2) the mini player only exists on the main
+navigation screen — pushed detail/Now-Playing routes cover it, so go Back
+before tapping it (and confirm which screen a dump shows before tapping
+main-screen coordinates).
 
 ### 12. Put session logs and scratch files in `/tmp/owntone_verify/`
 

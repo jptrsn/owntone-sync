@@ -12,7 +12,6 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.OutputStream
-import android.content.ContentValues
 import android.provider.MediaStore
 import android.content.ContentUris
 import androidx.work.Constraints
@@ -236,17 +235,6 @@ class MainActivity: AudioServiceActivity() {
                         Log.e("MainActivity", "Error handling queue rebuild", e)
                         result.error("REBUILD_FAILED", e.message, null)
                     }
-                }
-                "recordPlayEvent" -> {
-                    val trackId = call.argument<Int>("trackId")
-                    val durationMs = call.argument<Int>("durationMs")
-                    trackPlaybackEvent("play", trackId, durationMs ?: 0)
-                    result.success(true)
-                }
-                "recordSkipEvent" -> {
-                    val trackId = call.argument<Int>("trackId")
-                    trackPlaybackEvent("skip", trackId, 0)
-                    result.success(true)
                 }
                 else -> {
                     result.notImplemented()
@@ -558,30 +546,6 @@ class MainActivity: AudioServiceActivity() {
             CoroutineScope(Dispatchers.Main).launch {
                 result.error("WRITE_FAILED", e.message, null)
             }
-        }
-    }
-
-    private fun trackPlaybackEvent(eventType: String, trackId: Int?, durationMs: Int) {
-        if (trackId == null) {
-            Log.d("MainActivity", "No track ID provided for event tracking")
-            return
-        }
-
-        try {
-            val db = openOrCreateDatabase("owntone_sync.db", Context.MODE_PRIVATE, null)
-            val values = ContentValues().apply {
-                put("track_id", trackId)
-                put("event_type", eventType)
-                put("timestamp", System.currentTimeMillis() / 1000)
-                put("synced", 0)
-            }
-
-            val id = db.insert("pending_events", null, values)
-            db.close()
-
-            Log.d("MainActivity", "Recorded $eventType event for track $trackId (id=$id)")
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error recording playback event", e)
         }
     }
 

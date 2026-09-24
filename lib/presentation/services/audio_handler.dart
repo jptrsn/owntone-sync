@@ -12,8 +12,33 @@ class OwnToneAudioHandler extends BaseAudioHandler
   StreamSubscription<SequenceState>? _sequenceSubscription;
   StreamSubscription<PlayerException>? _errorSubscription;
 
+  /// Set when the user explicitly asks to move to a different track (UI
+  /// button, media notification, or Bluetooth control), so the stats
+  /// recorder can tell that move apart from natural completion, repeat
+  /// looping, and the A9 error auto-advance. Consumed exactly once, by the
+  /// recorder, on the next track change.
+  bool _userInitiatedPending = false;
+
   OwnToneAudioHandler() {
     _setupSubscriptions();
+  }
+
+  /// Consumes the pending user-initiated transition marker, if any.
+  ///
+  /// The handler is the single funnel for every user-initiated track change
+  /// (the controller, the media notification, and Bluetooth all call these
+  /// same overrides), so this is the only place the signal can be marked.
+  bool consumeUserInitiatedTransition() {
+    final pending = _userInitiatedPending;
+    _userInitiatedPending = false;
+    return pending;
+  }
+
+  Object? get _currentMediaItemTag {
+    final index = _audioPlayer.currentIndex;
+    final sequence = _audioPlayer.sequence;
+    if (index == null || index < 0 || index >= sequence.length) return null;
+    return sequence[index].tag;
   }
 
   /// The player's decoded duration for the current source (null when nothing
@@ -78,6 +103,9 @@ class OwnToneAudioHandler extends BaseAudioHandler
       playbackState.add(playbackState.value.copyWith(
         processingState: AudioProcessingState.error,
       ));
+      // Error auto-advance is not a user skip: clear any stale marker so the
+      // advance cannot be misattributed to the user.
+      _userInitiatedPending = false;
       _audioPlayer.seekToNext();
     });
   }
@@ -109,7 +137,7 @@ class OwnToneAudioHandler extends BaseAudioHandler
       return;
     }
 
-    final audioSources = <AudioSource>[];
+    final audioSources = <IndexedAudioSource>[];
     for (final track in tracks) {
       final uriString = track.extras?['uri'] as String? ?? '';
       if (uriString.isEmpty) {
@@ -137,6 +165,16 @@ class OwnToneAudioHandler extends BaseAudioHandler
     }
 
     final actualStartIndex = startIndex.clamp(0, audioSources.length - 1);
+
+    final startTag = audioSources[actualStartIndex].tag;
+    final currentTag = _currentMediaItemTag;
+    if (startTag is MediaItem &&
+        currentTag is MediaItem &&
+        currentTag.id != startTag.id) {
+      // Starting a new collection moves off the current track.
+      _userInitiatedPending = true;
+    }
+
     await _audioPlayer.setAudioSources(
       audioSources,
       initialIndex: actualStartIndex,
@@ -153,13 +191,17 @@ class OwnToneAudioHandler extends BaseAudioHandler
   Future<void> pause() => _audioPlayer.pause();
 
   @override
-  Future<void> stop() => _audioPlayer.stop();
+  Future<void> stop() async {
+    _userInitiatedPending = false;
+    await _audioPlayer.stop();
+  }
 
   @override
   Future<void> seek(Duration position) => _audioPlayer.seek(position);
 
   @override
   Future<void> skipToNext() async {
+    _userInitiatedPending = true;
     await _audioPlayer.seekToNext();
   }
 
@@ -170,8 +212,10 @@ class OwnToneAudioHandler extends BaseAudioHandler
 
     // B5: Past ~3s, restart current track; before ~3s, go to previous.
     if (position > const Duration(seconds: 3) && index != null) {
+      // Restarting the current track is not moving off it.
       await _audioPlayer.seek(Duration.zero, index: index);
     } else if (index != null && index > 0) {
+      _userInitiatedPending = true;
       await _audioPlayer.seek(Duration.zero, index: index - 1);
     } else if (index != null) {
       await _audioPlayer.seek(Duration.zero);
@@ -180,6 +224,9 @@ class OwnToneAudioHandler extends BaseAudioHandler
 
   @override
   Future<void> skipToQueueItem(int index) async {
+    if (index != _audioPlayer.currentIndex) {
+      _userInitiatedPending = true;
+    }
     await _audioPlayer.seek(Duration.zero, index: index);
   }
 

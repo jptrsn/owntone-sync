@@ -90,7 +90,7 @@ Claims about behaviour must come from actions you performed and results you
 observed on the emulator. A clean analyze and a successful build are not
 evidence that anything works.
 
-Your job this session is PHASE <N> ONLY, as defined in §3 of the refactor plan.
+Your job this session is PHASE 3 ONLY, as defined in §3 of the refactor plan.
 Do not begin any later phase. Do not do "while I'm here" cleanups that belong to
 another phase.
 ```

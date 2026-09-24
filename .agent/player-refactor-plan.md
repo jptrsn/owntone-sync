@@ -571,6 +571,26 @@ in the handler.
 | Repeat | All three states cycle and each behaves correctly, including repeat-one looping (A4). |
 | Queue mutation | Reorder, swipe-remove, jump-to-track, "play next", "add to queue" all take effect in the real playback order — not just the displayed list. |
 | Seek actions | `seek`, `seekForward`, `seekBackward` from both the sheet and the media session. |
+| **Notification & Bluetooth transport (A6)** | See below — this one is a statistics-correctness risk, not a cosmetic check. |
+
+**Notification and Bluetooth Next/Previous must route through the handler's
+`skipToNext` / `skipToPrevious`.** Phase 3 added a consume-once user-intent flag
+that those two methods set; a track change arriving *without* it is treated as
+natural auto-advance and recorded as a **play**. So if a notification or headset
+Next reaches the player by any path that bypasses those methods, the user's skip
+is silently recorded as a play — wrong data on their server, with no error
+anywhere.
+
+Notification controls were last exercised in **Phase 1**, before the intent flag
+existed, so this has never been checked in its current form. Phase 3 also logged
+an unexplained observation: an injected `KEYCODE_MEDIA_NEXT` did not advance the
+track while an on-screen tap on the same control did. That is *probably* an adb
+injection artefact, but it is untested either way.
+
+Check it directly: play a track past the 2s floor and below the play threshold,
+press **Next on the notification**, then confirm a **skip** (not a play) was
+recorded for it. Repeat for a Bluetooth/headset Next when doing the §7B
+hardware pass.
 
 **Watch for a shuffle/queue-order divergence.** `queue` is derived from
 `sequenceState.sequence`. Confirm the queue sheet shows the *effective* play order
@@ -613,11 +633,34 @@ track does; every row in the table above observed on the emulator.
    changed document ID cannot leave a stale URI behind.
 4. Surface sync errors as an app-bar badge plus a dismissible banner. (The
    playback-error snackbar is built in Phase 4.)
-5. Show a pending-events count in the drawer or Sync screen (D3), and render
+5. **Fix the `sync_history` schema first — nothing else in D3 can work until it
+   is done.** Found during Phase 3, logged in `.agent/blockers.md`.
+
+   `_createDB` creates `sync_history` **without** `plays_synced` / `skips_synced`
+   ([database_helper.dart:102-112](../lib/data/database/database_helper.dart#L102));
+   only the v2→v3 migration adds them. So a **fresh install** has a table missing
+   both columns, while an upgraded install has them.
+
+   Kotlin `insertSyncHistory` (`DatabaseHelper.kt:161-162`) writes those columns
+   **only when non-null**. That is why this stayed hidden: before Phase 0.5 event
+   tracking was gated off, the counts were null, the columns were omitted, and
+   the insert succeeded. **Phase 0.5 made the counts unconditional, which exposed
+   the latent mismatch** — on a fresh install the insert now fails every sync and
+   **no history rows are written at all**.
+
+   Anyone who installed fresh after Phase 0.5 has an empty history. Fix by adding
+   both columns to `_createDB` and a v6 migration that adds them if absent (the
+   v3 branch does not run for a DB created at v4+). Make the migration tolerant of
+   a column that already exists.
+
+   Verify on a genuinely fresh install — wipe app data, sync, and confirm a
+   history row appears. An upgraded DB will pass either way and proves nothing.
+
+6. Show a pending-events count in the drawer or Sync screen (D3), and render
    `plays_synced` / `skips_synced` on the History screen. Note that since Phase
    0.5 these are `0` rather than `NULL` when a sync uploads nothing — display
    that as "no events", not a bare "0 plays".
-6. **Close out A9 (part 2).** Phase 1 left the error path incomplete: an
+7. **Close out A9 (part 2).** Phase 1 left the error path incomplete: an
    unplayable **last** track leaves the player parked in the error state, and
    there is no handling for a queue in which *every* track is unplayable. Fix
    both — the latter stops playback and shows an actionable message pointing at
