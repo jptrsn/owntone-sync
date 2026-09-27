@@ -650,8 +650,6 @@ class SyncProvider extends ChangeNotifier {
   }
 
   Future<void> _initializeIfNeeded() async {
-    if (_dbRepo == null) {
-      _dbRepo = LocalDatabaseRepository();
-    }
+    _dbRepo ??= LocalDatabaseRepository();
   }
 }

@@ -75,6 +75,11 @@ class _LibraryScreenState extends State<LibraryScreen>
   void _onSkippedTrack(MediaItem item) {
     if (!mounted) return;
 
+    // While the NowPlayingSheet is open it owns the A9 notice (it renders on
+    // its own ScaffoldMessenger, above the sheet); showing it here too would
+    // paint a second notice behind the sheet barrier.
+    if (context.read<PlaybackController>().nowPlayingSheetOpen.value) return;
+
     // The handler auto-advances, so a stuck failure can emit the same track
     // repeatedly; ignore repeats of the same track for a few seconds.
     final now = DateTime.now();

@@ -54,6 +54,18 @@ the code under test proves nothing.
 
 Ask: *if the feature were entirely broken, would my test still pass?*
 
+**And the mirror of that question, which costs more when missed:** if a check
+reports a feature MISSING, ask *would my test detect it if it were working?*
+before you start fixing anything. Phase 4 spent most of a session chasing a
+"snackbar never appears" defect that did not exist — a `uiautomator` dump
+quoting artefact (invariant 18) meant the detection regex could never have
+matched, and the original implementation had been correct from the start. An
+experimental overlay layer was written and then reverted.
+
+A negative result from a harness you built is a claim about **two** things: the
+feature and the harness. Confirm the harness can see a known-present thing
+before concluding the feature is absent.
+
 ## 5. Scope
 
 Implement what the phase says. If you deviate — defer a requirement, add an

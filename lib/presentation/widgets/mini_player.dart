@@ -13,9 +13,7 @@ class MiniPlayer extends StatelessWidget {
   const MiniPlayer({super.key});
 
   void _openNowPlaying(BuildContext context) {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const PlayerScreen()));
+    showNowPlayingSheet(context);
   }
 
   @override
@@ -124,13 +122,14 @@ class MiniPlayer extends StatelessWidget {
   }
 
   Widget _buildAlbumArt(Uri? artUri) {
-    return Container(
-      width: 44,
-      height: 44,
-      decoration: BoxDecoration(
+    return Hero(
+      tag: nowPlayingArtworkHeroTag,
+      child: ClipRRect(
         borderRadius: BorderRadius.circular(4),
-        image: DecorationImage(
+        child: Image(
           image: _artImageProvider(artUri),
+          width: 44,
+          height: 44,
           fit: BoxFit.cover,
         ),
       ),

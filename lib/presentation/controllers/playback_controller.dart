@@ -83,6 +83,17 @@ class PlaybackController {
 
   Stream<List<MediaItem>> get queue => _handler.queue;
 
+  /// Base indices in play order. With shuffle off this list is a
+  /// permutation that nothing plays by (play order is base order); with
+  /// shuffle on it is the play order itself.
+  Stream<List<int>> get shuffleIndices => _handler.shuffleIndicesStream;
+
+  /// True while the NowPlayingSheet is presented. The sheet sets it in
+  /// initState/dispose. The A9 skipped-track notice uses it to pick its
+  /// owner: the sheet shows the notice while it is open, and the Library
+  /// screen suppresses its own, so exactly one notice is ever shown.
+  final ValueNotifier<bool> nowPlayingSheetOpen = ValueNotifier<bool>(false);
+
   Stream<QueueOrigin?> get queueOrigin => _originController.stream;
 
   /// Tracks that failed to play and were auto-advanced past (A9).
@@ -184,6 +195,22 @@ class PlaybackController {
   Future<void> skipToNext() => _handler.skipToNext();
 
   Future<void> skipToPrevious() => _handler.skipToPrevious();
+
+  /// Jumps to the queue item at base [baseIndex]. The caller performs the
+  /// play-order -> base translation (shuffleIndices) before calling.
+  Future<void> jumpTo(int baseIndex) => _handler.skipToQueueItem(baseIndex);
+
+  /// Removes the first queue item whose id matches [item.id].
+  Future<void> removeFromQueue(MediaItem item) =>
+      _handler.removeQueueItem(item);
+
+  /// Reorders the queue item at play-order row [fromRow] to row [toRow]
+  /// (post-removal coordinates, as ReorderableListView reports).
+  Future<void> moveQueueItem(int fromRow, int toRow) =>
+      _handler.moveQueueItem(fromRow, toRow);
+
+  /// Stops playback and empties the queue.
+  Future<void> clearQueue() => _handler.clearQueue();
 
   /// Toggles shuffle. The player owns the shuffle mode; this just flips it.
   Future<void> toggleShuffle() async {

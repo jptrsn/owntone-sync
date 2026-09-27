@@ -161,6 +161,60 @@ time it is reopened; any second consumer of `positionData` throws.
 
 ---
 
+### 19. There is exactly one index space: `sequence` (base order). `shuffleIndices` is the map to play order
+
+just_audio 0.10.6's `currentIndex` is an index into `sequence` (base order) —
+never a "play position". `seek(index:)` and the mutation APIs
+(`insertAudioSource` :935, `removeAudioSourceAt` :947, `moveAudioSource` :954)
+all take BASE indices. `shuffleIndices` is a list of BASE indices in play
+order; `effectiveSequence` is that list re-indexed. `seekToNext()` /
+`seekToPrevious()` (:1339-1350) are shuffle-aware at the Dart level:
+`nextIndex` / `previousIndex` (:599-617) resolve the play-order neighbour and
+`seek()` its base index.
+
+Authoritative source, `~/.pub-cache/hosted/pub.dev/just_audio-0.10.6/lib/just_audio.dart`:
+- :558 — `currentIndex` doc: "index of the current IndexedAudioSource in [sequence]"
+- :2181 — `currentSource => sequence[currentIndex!]`
+- :2184 — `effectiveSequence => shuffleModeEnabled ? shuffleIndices.map((i) => sequence[i]).toList() : sequence`
+
+The two translations any play-order UI (the queue sheet) needs:
+- highlight: `shuffleModeEnabled ? shuffleIndices.indexOf(currentIndex) : currentIndex`
+- jump from row `i`: base index `shuffleModeEnabled ? shuffleIndices[i] : i` → `skipToQueueItem` / `seek(index:)`
+
+Pitfall: `dumpsys media_session`'s "active item id" is ExoPlayer's play
+position, not `currentIndex` — the two diverge under shuffle (observed 14 vs
+21 in one session). Use the app's own log for ground truth.
+
+**WHY:** the first Phase 5 draft inverted this model (treating `currentIndex`
+as a play position), which poisoned the queue-sheet translations and three
+fix-list verdicts (#1b, #2, #5). Proven on device 2026-09-24: five
+consecutive shuffle auto-advances all matched
+`next = shuffleIndices[(indexOf(cur) + 1) % n]`, and the system
+notification's title matched `sequence[currentIndex]` — see
+`.agent/phase5-handoff.md` §DEVICE SNAPSHOT.
+
+**BREAKS IF UNDONE:** the queue sheet highlights the wrong row, jumps land on
+the wrong track, and play/skip stats under shuffle attribute the wrong track.
+
+**RESOLVED CONCERN:** "does the app-facing ExoPlayer timeline expose the
+shuffled windows, making `currentIndex` a play position?" — no. On-device
+proof above.
+
+**RESOLVED CONCERN (Phase 5):** "call `shuffle()` and the platform re-orders"
+— on just_audio 0.10.6 (Android/media3) it does **not**. Its
+`setShuffleOrder` method-channel handler resolves the source by id from a
+cache the top-level playlist (empty id) is never stored in, and silently
+returns; the platform keeps the load-time order while Dart/UI state shows the
+new one, until the next queue mutation. Fix (keep,
+`OwnToneAudioHandler.setShuffleMode`): after `shuffle()`, push the order the
+way every working mutation does — a concatenating call carrying the full
+indices — via `routeInsertAtPlayPosition(currentPlayPos)` +
+`moveAudioSource(current, current)` (same-index base move = no-op on the base
+list, no-op on the play order). Device-verified: with shuffle ON the real
+play order follows the Dart-side `shuffleIndices`.
+
+---
+
 ## Sync and statistics
 
 ### 8. Event upload is not gated
@@ -284,21 +338,29 @@ reserves real layout space. `MiniPlayer` returns zero height when no
 strip; "last row of every list fully tappable" fails. Verified on device in
 Phase 4 (Brass detail + 233-row Tracks tab).
 
-### 17. The A9 skipped-track notice is hosted on the home route
+### 17. The A9 skipped-track notice: home route when the sheet is closed, in-sheet when it is open
 
-`LibraryScreen`'s `State` (home route, mounted for the app's lifetime)
-subscribes to `PlaybackController.skippedTrack` — a broadcast stream the
-handler feeds from the error listener by resolving `PlayerException.index`
-against the sequence (the item tag, unambiguous even though the player has
-already auto-advanced) — and shows
-`ScaffoldMessenger.of(context).showSnackBar` with the one-line text
-`Skipped "<title>" - could not be played` (3s, non-modal). Dedup: same track
-id within 5s is ignored.
+Both `LibraryScreen`'s `State` (home route, mounted for the app's lifetime)
+and `NowPlayingSheet`'s `State` subscribe to `PlaybackController.skippedTrack`
+— a broadcast stream the handler feeds from the error listener by resolving
+`PlayerException.index` against the sequence (the item tag, unambiguous even
+though the player has already auto-advanced). Each shows the one-line text
+`Skipped "<title>" - could not be played` (3s, non-modal) with its own 5s
+same-track-id dedup. Exactly one shows: the library early-returns while
+`nowPlayingSheetOpen`; the sheet's subscription only exists while the sheet
+is mounted. The sheet shows via its **own** `ScaffoldMessenger` (GlobalKey;
+see invariant 20) — not `ScaffoldMessenger.of(context)`, which resolves to
+the app-level ancestor messenger whose snackbar renders behind the modal
+sheet.
 
 **WHY:** hosting it on a per-screen widget would kill the notice the moment
 the user is on any other screen; the home route always stays mounted, and the
 app-level ScaffoldMessenger renders the snackbar over the **topmost**
-route's scaffold (verified: shown while a detail route was on top).
+route's scaffold (verified: shown while a detail route was on top). The
+in-sheet host (Phase 5) is required because a sheet over Library is the
+*normal* state while music plays — home-route-only would drop the notice on
+the floor exactly when an unplayable track fires (plan §Phase 5, "inherited
+from Phase 4").
 
 **RESOLVED CONCERN (Phase 4):** "a snackbar shown from a lower route never
 renders while another route is on top" — FALSE. That conclusion was a
@@ -327,6 +389,43 @@ mounted, goes invisible). The standard snackbar is the right tool.
 snackbars (A/B verified with quote-free snackbar text: FAB present → no
 snackbar; removed → snackbar renders; no exception). If a later phase adds a
 FAB to a scaffold that also shows snackbars, expect this.
+
+**RESOLVED CONCERN (Phase 5):** the in-sheet notice was invisible —
+`_onSkippedTrack` fired and `showSnackBar` was called without throwing, but
+no snackbar appeared. Root cause: `ScaffoldMessenger.of(context)` from the
+sheet's State context uses `findAncestorStateOfType` (ancestors only), but
+the sheet's own `ScaffoldMessenger` (created in `build()`) is a
+**descendant** of that context, so the call reached the app-level ancestor
+messenger whose snackbar renders behind the modal sheet. Fix:
+`GlobalKey<ScaffoldMessengerState>` on the sheet's own messenger, then
+`currentState?.showSnackBar` (invariant 20). Verified on device: pixel band
+at the sheet bottom with the enter animation across two captures; library
+path (sheet closed) re-verified the same way. Harness note:
+`uiautomator dump` missed the 3s snackbar (the dump waits for window idle;
+the sheet's position ticker delays it, so the snapshot lands after the
+notice dismissed) — a fast `screencap` row-mean dark-band check is the
+reliable presence check here.
+
+### 20. `ScaffoldMessenger` is a hub; the snackbar is rendered by a registered descendant `Scaffold`
+
+Flutter 3.41.7 (`material/scaffold.dart`): `ScaffoldMessengerState` holds the
+snackbar queue; `_updateScaffolds()` forwards it to the **Scaffold states
+registered with it**, and the Scaffold renders it in its own snackbar slot
+(`ScaffoldState._updateSnackBar`). `showSnackBar` asserts if no descendant
+Scaffold is registered. `ScaffoldMessenger.of(context)` is
+`findAncestorStateOfType` — **ancestors only**. A modal sheet that shows
+snackbars must own a `ScaffoldMessenger` wrapping its own Scaffold and hold
+a `GlobalKey<ScaffoldMessengerState>` to it; from the sheet's State context,
+`.of(context)` cannot reach the sheet's own messenger (a descendant) and
+hits the app-level one instead — whose snackbar renders behind the modal
+barrier and is invisible.
+
+**WHY:** the A9 in-sheet notice was invisible for exactly this reason
+(invariant 17, Phase 5).
+
+**BREAKS IF UNDONE:** a snackbar call from a sheet's State via
+`.of(context)` silently targets the wrong messenger — no exception, no
+log; the notice just never appears.
 
 ---
 

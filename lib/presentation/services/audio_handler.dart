@@ -3,14 +3,39 @@ import 'dart:async';
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:rxdart/rxdart.dart';
+
+import 'shuffle_order.dart';
 
 class OwnToneAudioHandler extends BaseAudioHandler
     with QueueHandler, SeekHandler {
   final AudioPlayer _audioPlayer = AudioPlayer();
 
+  /// The one ShuffleOrder instance that owns the play order. It is passed to
+  /// every `setAudioSources` call; the player clears and re-seeds it per
+  /// collection (`ConcatenatingAudioSource._init`), and the load path
+  /// re-shuffles it with the starting track anchored at the head (just_audio
+  /// `AudioPlayer._load`), so `playCollection` needs no explicit re-shuffle.
+  /// Without it, `updateQueue` would silently swap in a fresh
+  /// `DefaultShuffleOrder` whose random inserts break exact-position queue
+  /// mutations.
+  final ExactPositionShuffleOrder _shuffleOrder = ExactPositionShuffleOrder();
+
+  /// Base indices in play order, re-emitted on every sequence state change.
+  /// `currentIndex` indexes `sequence` (base order); this list maps play
+  /// order to base indices (see the index-space invariant).
+  final BehaviorSubject<List<int>> _shuffleIndicesSubject =
+      BehaviorSubject<List<int>>.seeded(const []);
+
+  Stream<List<int>> get shuffleIndicesStream => _shuffleIndicesSubject.stream;
+
   StreamSubscription<PlaybackEvent>? _playbackEventSubscription;
   StreamSubscription<SequenceState>? _sequenceSubscription;
   StreamSubscription<PlayerException>? _errorSubscription;
+
+  OwnToneAudioHandler() {
+    _setupSubscriptions();
+  }
 
   final StreamController<MediaItem> _skippedTrackController =
       StreamController<MediaItem>.broadcast();
@@ -27,10 +52,6 @@ class OwnToneAudioHandler extends BaseAudioHandler
   /// looping, and the A9 error auto-advance. Consumed exactly once, by the
   /// recorder, on the next track change.
   bool _userInitiatedPending = false;
-
-  OwnToneAudioHandler() {
-    _setupSubscriptions();
-  }
 
   /// Consumes the pending user-initiated transition marker, if any.
   ///
@@ -91,12 +112,18 @@ class OwnToneAudioHandler extends BaseAudioHandler
 
     _sequenceSubscription = _audioPlayer.sequenceStateStream.listen((state) {
       final sequence = state.sequence;
+      _shuffleIndicesSubject.add(state.shuffleIndices);
       if (sequence.isEmpty) {
         queue.add([]);
         mediaItem.add(null);
         return;
       }
-      queue.add(sequence.map((s) => s.tag as MediaItem).toList());
+      // Play order, not base order: with shuffle on, `sequence` is the
+      // collection order and `shuffleIndices` is the map to play order.
+      // Emitting `effectiveSequence` keeps the UI queue in step with what
+      // actually plays. The current item still resolves through
+      // `sequence[currentIndex]` — `currentIndex` is a BASE index.
+      queue.add(state.effectiveSequence.map((s) => s.tag as MediaItem).toList());
       final i = state.currentIndex;
       mediaItem.add(
         (i != null && i >= 0 && i < sequence.length)
@@ -200,6 +227,7 @@ class OwnToneAudioHandler extends BaseAudioHandler
     await _audioPlayer.setAudioSources(
       audioSources,
       initialIndex: actualStartIndex,
+      shuffleOrder: _shuffleOrder,
     );
     // play() returns a future that completes when playback stops,
     // so do not await it here.
@@ -231,16 +259,24 @@ class OwnToneAudioHandler extends BaseAudioHandler
   Future<void> skipToPrevious() async {
     final position = _audioPlayer.position;
     final index = _audioPlayer.currentIndex;
+    if (index == null) return;
 
     // B5: Past ~3s, restart current track; before ~3s, go to previous.
-    if (position > const Duration(seconds: 3) && index != null) {
+    // `previousIndex` (not `index - 1`) is the previous track in PLAY order:
+    // it resolves the play-order neighbour and returns a base index, and is
+    // null when there is no previous (first in play order, repeat off).
+    final previous = _audioPlayer.previousIndex;
+    if (position > const Duration(seconds: 3)) {
       // Restarting the current track is not moving off it.
       await _audioPlayer.seek(Duration.zero, index: index);
-    } else if (index != null && index > 0) {
+    } else if (previous != null && previous != index) {
+      // repeat-one reports the current track as its own previous; that is a
+      // restart, not a move, so it must not set the intent flag.
       _userInitiatedPending = true;
-      await _audioPlayer.seek(Duration.zero, index: index - 1);
-    } else if (index != null) {
-      await _audioPlayer.seek(Duration.zero);
+      await _audioPlayer.seek(Duration.zero, index: previous);
+    } else {
+      // First track in play order (or repeat-one): restart, do not no-op.
+      await _audioPlayer.seek(Duration.zero, index: index);
     }
   }
 
@@ -256,6 +292,30 @@ class OwnToneAudioHandler extends BaseAudioHandler
   Future<void> setShuffleMode(AudioServiceShuffleMode shuffleMode) async {
     final enabled = shuffleMode == AudioServiceShuffleMode.all;
     await _audioPlayer.setShuffleModeEnabled(enabled);
+    if (enabled && _audioPlayer.audioSources.isNotEmpty) {
+      // Re-shuffle with the current track anchored at the head of the play
+      // order. Without this, the stored permutation's prefix (everything
+      // before the current track's position in it) plays first, which
+      // violates A3 ("toggling on mid-track reshuffles only the remaining
+      // tracks"). A3's "off restores the original order" is free: the base
+      // sequence is never mutated, so disabling just ignores this list.
+      await _audioPlayer.shuffle();
+      // just_audio 0.10.6 (Android) never delivers the order produced by the
+      // shuffle() above to the platform: its "setShuffleOrder" method-channel
+      // handler resolves the source by id from a cache that the top-level
+      // playlist (empty id) is never stored in, and silently returns. Left
+      // alone, the platform keeps playing the load-time order while the
+      // Dart/UI state shows the new one, until the next queue mutation.
+      // Push the order the way every working mutation does — a concatenating
+      // call carrying the full indices. A same-index base move is a no-op on
+      // the base list, and routed back to the moved track's own play position
+      // it is a no-op on the play order (the GATE-verified mechanism that
+      // moveQueueItem relies on).
+      final current = _audioPlayer.currentIndex ?? 0;
+      final pos = _audioPlayer.shuffleIndices.indexOf(current);
+      _shuffleOrder.routeInsertAtPlayPosition(pos >= 0 ? pos : 0);
+      await _audioPlayer.moveAudioSource(current, current);
+    }
     playbackState.add(playbackState.value.copyWith(shuffleMode: shuffleMode));
   }
 
@@ -279,6 +339,8 @@ class OwnToneAudioHandler extends BaseAudioHandler
       return;
     }
     final source = AudioSource.uri(Uri.parse(uriString), tag: mediaItem);
+    // Add-to-queue appends to the tail of the play order.
+    _shuffleOrder.routeInsertAppend();
     await _audioPlayer.addAudioSource(source);
   }
 
@@ -295,7 +357,23 @@ class OwnToneAudioHandler extends BaseAudioHandler
       return;
     }
     final source = AudioSource.uri(Uri.parse(uriString), tag: mediaItem);
+    // Play-next lands immediately after the currently playing track in the
+    // play order. With shuffle off, play order IS base order, so the base
+    // insertion index is the play position; with shuffle on, the base index
+    // is only the slot the item occupies in the collection order and the
+    // play position comes from the shuffle order.
+    _shuffleOrder.routeInsertAtPlayPosition(_playPositionForInsert(index));
     await _audioPlayer.insertAudioSource(index, source);
+  }
+
+  /// The play position a new item inserted at base [index] should occupy.
+  int _playPositionForInsert(int index) {
+    if (!_audioPlayer.shuffleModeEnabled) return index;
+    final order = _audioPlayer.shuffleIndices;
+    final current = _audioPlayer.currentIndex;
+    if (current == null) return order.length;
+    final pos = order.indexOf(current);
+    return pos >= 0 ? pos + 1 : order.length;
   }
 
   @override
@@ -324,7 +402,39 @@ class OwnToneAudioHandler extends BaseAudioHandler
         )
         .toList();
 
-    await _audioPlayer.setAudioSources(audioSources);
+    await _audioPlayer.setAudioSources(audioSources, shuffleOrder: _shuffleOrder);
+  }
+
+  /// Reorders the queue item at play-order row [fromRow] to row [toRow].
+  /// [toRow] is in post-removal coordinates, as ReorderableListView reports
+  /// it.
+  ///
+  /// With shuffle off, play order IS base order, so this is a real base move.
+  /// With shuffle on, the base order must stay untouched (A3: turning shuffle
+  /// off restores the collection order), so the item is re-placed in the
+  /// shuffle order via a same-index base move — the platform applies the
+  /// shuffle-order update that rides on every concatenating move
+  /// (verified on device, see invariants).
+  Future<void> moveQueueItem(int fromRow, int toRow) async {
+    final length = _audioPlayer.sequence.length;
+    if (fromRow < 0 || fromRow >= length) return;
+    if (toRow == fromRow) return;
+    final target = toRow.clamp(0, length - 1);
+    if (_audioPlayer.shuffleModeEnabled) {
+      final base = _audioPlayer.shuffleIndices[fromRow];
+      _shuffleOrder.routeInsertAtPlayPosition(target);
+      await _audioPlayer.moveAudioSource(base, base);
+    } else {
+      await _audioPlayer.moveAudioSource(fromRow, target);
+    }
+  }
+
+  /// Stops playback and empties the queue (A7 "clear queue"). Clearing the
+  /// queue is not a user move off the current track, so any pending
+  /// user-initiated marker is dropped with the stop.
+  Future<void> clearQueue() async {
+    await stop();
+    await _audioPlayer.clearAudioSources();
   }
 
   LoopMode _repeatModeToLoopMode(AudioServiceRepeatMode repeatMode) {

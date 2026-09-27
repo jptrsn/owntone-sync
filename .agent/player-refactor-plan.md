@@ -562,6 +562,34 @@ appears in a debug build.
    highlight, auto-scroll to current on open, jump-to-track on tap.
 6. Overflow: go to album, go to artist, track info.
 
+**Inherited from Phase 4 — three things that will bite this phase:**
+
+- **The A9 error notice becomes invisible exactly when it matters most.** Phase 4
+  found that a snackbar shown while a pushed route is on top does not re-appear
+  on the lower route after the route pops. That was acceptable when Now Playing
+  was a rarely-open pushed route. This phase makes a sheet over Library the
+  *normal* state while music is playing — which is precisely when an unplayable
+  track fires. As specified, the user would never see the notice. Decide and
+  implement one of: host the notice so it renders above the sheet, or surface it
+  inside the sheet as well. Do not leave it dropping silently on the floor.
+- **Do not add a `FloatingActionButton` to any screen.** Phase 4 A/B-verified on
+  Flutter 3.41.7 that a `Scaffold` with a FAB suppresses messenger snackbars, and
+  the mechanism is unknown. A round play/pause control on the sheet is the
+  obvious place to reach for one — use a plain button, not a FAB, or the A9
+  notice dies for a second and unrelated reason.
+- **Navigation changes shape.** `MiniPlayer` currently *pushes* `PlayerScreen` as
+  a route. Converting to `NowPlayingSheet` means the mini player presents a sheet
+  instead. Update the mini player's tap and swipe-up handlers together with the
+  sheet, and confirm the system back gesture dismisses the sheet rather than
+  leaving the app.
+
+**When verification says a feature is missing, suspect the harness first.**
+Phase 4 lost significant time to a "snackbar never appears" defect that was a
+`uiautomator` dump quoting artefact — see invariant 18. Dump attribute values
+containing `"` switch that attribute to single-quote delimiters, so double-quoted
+regexes silently miss the node. Use raw substring matching. This phase drives
+more UI state than any other, so the trap is likelier here than anywhere.
+
 **This phase clears most of Phase 1's verification debt.** All of the following
 were implemented in the handler and have never been exercised. This is the first
 phase with UI capable of driving them, so verifying them is part of the work, not
@@ -604,6 +632,43 @@ playing — a mismatch here is the failure mode that killed the original design.
 **Verify:** spec §7 steps 5 and 7; the seek bar reaches the end exactly when the
 track does; every row in the table above observed on the emulator.
 
+**Status: COMPLETE.** Report in `.agent/phase5-report.md`. The go/no-go passed
+on all three counts: queue order matched actual play order under shuffle with
+the highlight tracking correctly through auto-advance, Next and jump; server
+play/skip counts after a shuffled session matched the tracks actually heard
+(4 plays, 0 misattributions); and the A9 notice rendered with the sheet both
+open and closed, including multi-track cascades with exactly one notice per
+skipped track.
+
+**What it built, and what later phases must know:**
+
+- `queue` now emits `state.effectiveSequence` (play order). `mediaItem` still
+  resolves `sequence[currentIndex]` (base order) and **must stay that way** —
+  see invariant 19. The two live in different index spaces on purpose.
+- `ExactPositionShuffleOrder` (`lib/presentation/services/shuffle_order.dart`)
+  replaces `DefaultShuffleOrder`, whose insert lands at a random play position.
+  One instance lives on the handler and is passed to **every** `setAudioSources`
+  call, including `updateQueue`, which previously swapped in a fresh default.
+- Reorder under shuffle is a base no-op move: base order is left untouched so
+  A3's "shuffle off restores the original order" holds, and only the shuffle
+  order moves. Verified on device.
+- `shuffle()` is now called when shuffle is enabled and on `playCollection` when
+  the flag is already set; the toggle alone never generated a new order.
+- The A9 notice is owned by whichever surface is on top: the sheet hosts its own
+  messenger via a `GlobalKey`, and the `LibraryScreen` listener suppresses while
+  the sheet is open. Both paths verified.
+- Phase 1's verification debt is cleared — B5 previous, shuffle, repeat, queue
+  mutation and seek actions were all exercised.
+
+**Inherited by Phase 6 — the one thing left untested in production:**
+`ExactPositionShuffleOrder`'s one-shot insert routing (tail / after-current /
+target play position) was verified only through a **temporary debug vehicle**
+that called `PlaybackController.playNext` / `enqueue` directly. The vehicle was
+removed. No production UI reaches those methods yet, because the library row
+menus are Phase 6. When Phase 6 wires them up, that is the **first production
+exercise of the routing** — check it explicitly rather than assuming the vehicle
+settled it.
+
 ---
 
 ### Phase 6 — Rows, detail screens, and search
@@ -611,6 +676,13 @@ track does; every row in the table above observed on the emulator.
 1. Delete `PlayableTile`. Rewrite `PlayButton` usages so rows follow the
    interaction grammar in the spec's §5: one tap target, laid-out trailing
    controls, ⋮ / long-press menus.
+   **The row menu's "Play next" and "Add to queue" are the first production
+   callers of `PlaybackController.playNext` / `enqueue`.** Phase 5 verified that
+   path only through a temporary debug vehicle, since no UI reached it. With
+   shuffle ON, confirm "Play next" lands the item immediately after the current
+   **play** position and "Add to queue" lands it at the tail — not at a random
+   play position, which is what `DefaultShuffleOrder` would have done and what
+   `ExactPositionShuffleOrder` exists to prevent.
 2. `TrackListView`, `PlaylistListView`, `ArtistListView`, `AlbumListView`: tap
    behaviour per the grammar; remove the fake `SyncedTrack` construction in the
    collection list views.
@@ -618,7 +690,24 @@ track does; every row in the table above observed on the emulator.
 4. Detail screens: collapsing header with Play and Shuffle actions; track list
    with play-in-context.
 5. Add `SearchScreen` / search delegate over title, artist, album, playlist name.
+   **Phase 4 shipped a placeholder**: the Library app bar already has the search
+   affordance, and tapping it shows a "coming later" snackbar. Replace that, do
+   not add a second entry point.
 6. Sort-order selection and **persistence** for the library lists (spec B2).
+   `BrowseProvider` holds `_sortOrder` in memory only — nothing writes it to
+   `SharedPreferences`. Each of the four categories persists its own value.
+
+**Row widgets must read streams, not mirrors.** The now-playing indicator in
+item 3 is the first per-row consumer of playback state. Drive it from the
+controller's `mediaItem` stream; do not introduce a `ChangeNotifier` that caches
+"which track is playing" for the lists to read. That mirror is how the original
+design rotted (§1.1, invariant 3).
+
+**Wrap every screen in `PlayerScaffold`.** Phase 4 converted Library and the
+three detail screens. Any new screen this phase adds — `SearchScreen` above all,
+since results are playable — must dock the mini player the same way, and must
+not use `Scaffold.bottomSheet` or a `Positioned` overlay to do it (see the
+`PlayerScaffold` doc comment for why).
    Explicitly assigned here in Phase 4 (2026-09-24): it was out of Phase 4's
    scope and is owned by this phase, so Phase 6 does not lose it.
 
@@ -694,8 +783,18 @@ restarts.
    unplayable **last** track leaves the player parked in the error state, and
    there is no handling for a queue in which *every* track is unplayable. Fix
    both — the latter stops playback and shows an actionable message pointing at
-   Sync. This is also the first real exercise of the error path: Phase 1's ten
-   test tracks were all playable, so it has never fired.
+   Sync.
+
+   **What already exists, so you do not rebuild it:** Phase 4 built the notice
+   itself and verified it end-to-end against a genuinely deleted file. The
+   handler exposes `skippedTrackStream`, which resolves `PlayerException.index`
+   against the live sequence and emits the failed `MediaItem` *before* calling
+   `seekToNext()` — so the track named is always the right one. The controller
+   re-exposes it as `skippedTrack`. Consume that stream; do not re-derive the
+   failed track from `mediaItem` or `playbackState`, which race with the advance.
+
+   What is left is the **behaviour at the edges**: the last-track case and the
+   all-unplayable case. Neither has ever fired.
 
 **Verify:** spec §7 steps 9, 10, 11, 12. For step 10, delete a synced file from
 the SAF folder so the error path genuinely fires; confirm the skip notice appears
