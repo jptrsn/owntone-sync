@@ -1,18 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../providers/browse_provider.dart';
-import '../controllers/playback_controller.dart';
-import 'play_button.dart';
 
+import '../controllers/playback_controller.dart';
+import '../providers/browse_provider.dart';
+import 'library_rows.dart';
+
+/// The Tracks tab: every synced track, tap plays in context (A1).
 class TrackListView extends StatelessWidget {
   const TrackListView({super.key});
-
-  String _formatDuration(int milliseconds) {
-    final duration = Duration(milliseconds: milliseconds);
-    final minutes = duration.inMinutes;
-    final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
-    return '$minutes:$seconds';
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,21 +21,11 @@ class TrackListView extends StatelessWidget {
           itemCount: provider.tracks.length,
           itemBuilder: (context, index) {
             final track = provider.tracks[index];
-
-            return PlayableTile(
+            return TrackRow(
               track: track,
               collection: provider.tracks,
               index: index,
               origin: const QueueOrigin.allTracks(),
-              showContextMenu: true,
-              child: ListTile(
-                title: Text(track.title),
-                subtitle: Text('${track.artist} • ${track.album}'),
-                trailing: Text(
-                  _formatDuration(track.lengthMs),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
             );
           },
         );

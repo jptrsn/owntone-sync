@@ -1,34 +1,13 @@
-import 'dart:io';
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../providers/browse_provider.dart';
-import '../controllers/playback_controller.dart';
-import '../widgets/play_button.dart';
-import '../screens/album_detail_screen.dart';
-import '../../data/repositories/local_database_repository.dart';
 
+import '../providers/browse_provider.dart';
+import 'library_rows.dart';
+
+/// The Albums tab: tap opens the album detail screen; Play / Shuffle / Add
+/// to queue / Go to artist live in the row menu.
 class AlbumListView extends StatelessWidget {
   const AlbumListView({super.key});
-
-  Future<void> _playAll(
-    BuildContext context,
-    String albumName,
-    String artistName, {
-    bool shuffle = false,
-  }) async {
-    final controller = context.read<PlaybackController>();
-    final tracks = await LocalDatabaseRepository().getTracksByAlbum(albumName);
-    if (tracks.isEmpty) return;
-    final startIndex = shuffle ? Random().nextInt(tracks.length) : 0;
-    await controller.playCollection(
-      QueueOrigin.album(albumName),
-      tracks,
-      startIndex: startIndex,
-    );
-    if (shuffle) await controller.toggleShuffle();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -42,115 +21,16 @@ class AlbumListView extends StatelessWidget {
           itemCount: provider.albums.length,
           itemBuilder: (context, index) {
             final album = provider.albums[index];
-            final artworkPath = album['artwork_path'] as String?;
-            final albumName = album['album'] as String;
-            final artistName = album['album_artist'] as String;
-
-            return GestureDetector(
-              onLongPress: () {
-                showModalBottomSheet(
-                  context: context,
-                  builder: (ctx) => Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ListTile(
-                        leading: const Icon(Icons.playlist_play),
-                        title: const Text('Play All'),
-                        onTap: () {
-                          Navigator.of(ctx).pop();
-                          _playAll(context, albumName, artistName);
-                        },
-                      ),
-                      ListTile(
-                        leading: const Icon(Icons.shuffle),
-                        title: const Text('Shuffle'),
-                        onTap: () {
-                          Navigator.of(ctx).pop();
-                          _playAll(
-                            context,
-                            albumName,
-                            artistName,
-                            shuffle: true,
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                );
-              },
-              child: PlayableTile(
-                track: SyncedTrack(
-                  id: index + 1,
-                  title: albumName,
-                  artist: artistName,
-                  album: albumName,
-                  albumArtist: artistName,
-                  localPath: '',
-                  serverPath: '',
-                  downloadTimestamp: 0,
-                  fileSize: 0,
-                  genre: '',
-                  lengthMs: 0,
-                  trackNumber: 1,
-                  discNumber: 1,
-                  year: album['year'] as int? ?? 2024,
-                  artworkUrl: '',
-                  contentUri: '',
-                ),
-                child: ListTile(
-                  leading: _buildAlbumArt(artworkPath),
-                  title: Text(albumName),
-                  subtitle: Text(artistName),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => AlbumDetailScreen(
-                          albumName: albumName,
-                          artistName: artistName,
-                          artworkPath: artworkPath,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
+            return AlbumRow(
+              albumName: album['album'] as String,
+              artistName: album['album_artist'] as String? ?? '',
+              year: album['year'] as int? ?? 0,
+              artworkPath: album['artwork_path'] as String?,
+              trackCount: album['track_count'] as int? ?? 0,
             );
           },
         );
       },
-    );
-  }
-
-  Widget _buildAlbumArt(String? artworkPath) {
-    if (artworkPath != null && artworkPath.isNotEmpty) {
-      final file = File(artworkPath);
-      if (file.existsSync() && file.lengthSync() > 0) {
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: Image.file(
-            file,
-            width: 56,
-            height: 56,
-            fit: BoxFit.cover,
-            errorBuilder: (_, _, _) => _buildPlaceholder(),
-          ),
-        );
-      }
-    }
-
-    return _buildPlaceholder();
-  }
-
-  Widget _buildPlaceholder() {
-    return Container(
-      width: 56,
-      height: 56,
-      decoration: BoxDecoration(
-        color: Colors.grey[300],
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: const Icon(Icons.album),
     );
   }
 }

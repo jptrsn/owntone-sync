@@ -200,6 +200,17 @@ the wrong track, and play/skip stats under shuffle attribute the wrong track.
 shuffled windows, making `currentIndex` a play position?" — no. On-device
 proof above.
 
+**RESOLVED CONCERN (Phase 6):** "can `enqueueCollection` batch its appends
+via `setAudioSources`?" — no, not while preserving shuffle. just_audio 0.10.6
+re-seeds the shuffle order to identity on every load (`just_audio.dart`
+`ConcatenatingAudioSource._playlist` ctor:
+`shuffleOrder ?? DefaultShuffleOrder() ..insert(0, children.length)`, then
+`_shuffle(initialIndex:)` re-shuffles when shuffle is enabled), so a
+rebuild-and-reload would silently replace the active play order. Keep
+`enqueueCollection`'s item-by-item `addQueueItem` path. Measured 2026-09-28:
+62 appends (Soul) finished in <2s on emulator-5554 (snackbar observed), no
+visible stall — batching is not a performance need at this library size.
+
 **RESOLVED CONCERN (Phase 5):** "call `shuffle()` and the platform re-orders"
 — on just_audio 0.10.6 (Android/media3) it does **not**. Its
 `setShuffleOrder` method-channel handler resolves the source by id from a
@@ -426,6 +437,42 @@ barrier and is invisible.
 **BREAKS IF UNDONE:** a snackbar call from a sheet's State via
 `.of(context)` silently targets the wrong messenger — no exception, no
 log; the notice just never appears.
+
+### 21. Album identity is (album, album_artist, year); artist membership is `artist = X OR album_artist = X`
+
+The synced library contains same-named albums by different artists (nine
+distinct albums named "Brass" among 95 tracks). `getTracksByAlbum(album,
+{albumArtist, year})` narrows to one displayed album row; `AlbumDetailScreen`
+carries `albumArtist`/`year`; `MediaItem.extras` carries `albumArtist`/`year`
+so the sheet's "Go to artist"/"Go to album" can disambiguate (the MediaItem is
+the only identity source available there). `getAllArtists` counts with the same
+`artist = X OR album_artist = X` rule as `getTracksByArtist` (feature credits
+like "Too Many Zooz feat. Joshua Gawel" have `album_artist = "Too Many Zooz"`),
+so a row's "N tracks" matches its detail screen.
+
+**WHY:** name-only matching is a pre-existing defect Phase 6's surfaces made
+visible (a row advertising "1 track" queued 13 tracks). The artist row count
+originally used plain `GROUP BY artist` and disagreed with the detail screen
+(12 vs 13).
+
+**BREAKS IF UNDONE:** album rows whose detail/queue contents don't match the
+row's count; "Go to album" from the sheet opening an empty or wrong album.
+
+### 22. Row now-playing indicators stream from `controller.mediaItem`; never mirror the current track id into a notifier
+
+Each `TrackRow` (`library_rows.dart`) runs its own
+`StreamBuilder<MediaItem?>` over the handler's `mediaItem` subject and compares
+`mediaItem.id == track.id.toString()`. No screen or list keeps a copy of
+"which track is playing" (spec §5 Phase 6 requirement).
+
+**WHY:** `mediaItem` is a `BehaviorSubject` (broadcast) and already feeds the
+mini player and the NowPlayingSheet, so many concurrent subscriptions are the
+expected shape. A ChangeNotifier mirror of the current id would desync per
+list (the §1.1 failure class), and a single-subscription stream per row would
+crash the second mount (invariant 7's failure mode).
+
+**BREAKS IF UNDONE:** stale or absent indicators on lists mounted after
+playback started; or "Stream has already been listened to" when a row re-mounts.
 
 ---
 

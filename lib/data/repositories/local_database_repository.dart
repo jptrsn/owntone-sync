@@ -163,6 +163,21 @@ class PendingEvent {
   }
 }
 
+/// Grouped results of a library search.
+class LibrarySearchResult {
+  final List<Map<String, dynamic>> playlists;
+  final List<Map<String, dynamic>> artists;
+  final List<Map<String, dynamic>> albums;
+  final List<SyncedTrack> tracks;
+
+  const LibrarySearchResult({
+    required this.playlists,
+    required this.artists,
+    required this.albums,
+    required this.tracks,
+  });
+}
+
 class LocalDatabaseRepository {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
 
@@ -399,22 +414,34 @@ class LocalDatabaseRepository {
     await db.delete('playlist_cache');
   }
 
-  /// Get all unique artists
-  Future<List<String>> getAllArtists({String sortBy = 'artist'}) async {
-    final db = await _dbHelper.database; // Changed this line
-    final result = await db.query(
-      'synced_tracks',
-      columns: ['DISTINCT artist'],
-      orderBy: sortBy == 'artist' ? 'artist ASC' : 'artist DESC',
-    );
-    return result.map((row) => row['artist'] as String).toList();
+  /// Get all unique artists with track and album counts.
+  ///
+  /// The counts use the same membership rule as [getTracksByArtist]
+  /// (`artist = X OR album_artist = X`), so the row's numbers match what the
+  /// artist detail screen shows. A plain `GROUP BY artist` would count only
+  /// exact-`artist` matches and understate feature credits.
+  Future<List<Map<String, dynamic>>> getAllArtists(
+    {String sortBy = 'artist'}
+  ) async {
+    final db = await _dbHelper.database;
+    final result = await db.rawQuery('''
+      SELECT
+        a.artist AS artist,
+        (SELECT COUNT(*) FROM synced_tracks t
+          WHERE t.artist = a.artist OR t.album_artist = a.artist) AS track_count,
+        (SELECT COUNT(DISTINCT t.album) FROM synced_tracks t
+          WHERE t.artist = a.artist OR t.album_artist = a.artist) AS album_count
+      FROM (SELECT DISTINCT artist FROM synced_tracks WHERE artist != '') a
+      ORDER BY a.artist ${sortBy == 'artist' ? 'ASC' : 'DESC'}
+    ''');
+    return result;
   }
 
-  /// Get all unique albums with artist info
+  /// Get all unique albums with artist info and track count
   Future<List<Map<String, dynamic>>> getAllAlbums({
     String sortBy = 'album',
   }) async {
-    final db = await _dbHelper.database; // Changed this line
+    final db = await _dbHelper.database;
 
     String orderByClause;
     switch (sortBy) {
@@ -429,8 +456,14 @@ class LocalDatabaseRepository {
     }
 
     final result = await db.rawQuery('''
-      SELECT DISTINCT album, album_artist, year, artwork_path
+      SELECT
+        album,
+        album_artist,
+        year,
+        artwork_path,
+        COUNT(*) AS track_count
       FROM synced_tracks
+      GROUP BY album, album_artist, year, artwork_path
       ORDER BY $orderByClause
     ''');
 
@@ -469,12 +502,19 @@ class LocalDatabaseRepository {
     return result.map((map) => SyncedTrack.fromMap(map)).toList();
   }
 
-  /// Get tracks by album
+  /// Get tracks by album.
+  ///
+  /// Album names collide across artists in real libraries (this one has
+  /// nine distinct albums named "Brass"), so the optional [albumArtist] and
+  /// [year] narrow the match to one displayed album row. Callers that only
+  /// know the name get the union of all same-named albums.
   Future<List<SyncedTrack>> getTracksByAlbum(
     String album, {
+    String? albumArtist,
+    int? year,
     String sortBy = 'track',
   }) async {
-    final db = await _dbHelper.database; // Changed this line
+    final db = await _dbHelper.database;
 
     String orderByClause;
     switch (sortBy) {
@@ -488,10 +528,21 @@ class LocalDatabaseRepository {
         orderByClause = 'disc_number ASC, track_number ASC';
     }
 
+    final where = StringBuffer('album = ?');
+    final args = <Object?>[album];
+    if (albumArtist != null) {
+      where.write(' AND album_artist = ?');
+      args.add(albumArtist);
+    }
+    if (year != null) {
+      where.write(' AND year = ?');
+      args.add(year);
+    }
+
     final result = await db.query(
       'synced_tracks',
-      where: 'album = ?',
-      whereArgs: [album],
+      where: where.toString(),
+      whereArgs: args,
       orderBy: orderByClause,
     );
 
@@ -529,8 +580,10 @@ class LocalDatabaseRepository {
   }
 
   /// Get synced playlists with track counts
-  Future<List<Map<String, dynamic>>> getAllPlaylistsWithCounts() async {
-    final db = await _dbHelper.database; // Changed this line
+  Future<List<Map<String, dynamic>>> getAllPlaylistsWithCounts({
+    bool nameDesc = false,
+  }) async {
+    final db = await _dbHelper.database;
 
     final result = await db.rawQuery('''
       SELECT
@@ -543,10 +596,93 @@ class LocalDatabaseRepository {
       FROM synced_playlists p
       LEFT JOIN playlist_tracks pt ON p.id = pt.playlist_id
       GROUP BY p.id
-      ORDER BY p.name ASC
+      ORDER BY p.name ${nameDesc ? 'DESC' : 'ASC'}
     ''');
 
     return result;
+  }
+
+  /// Search the synced library by track title, artist, album, and playlist
+  /// name. Matching is case-insensitive: the column side is folded with
+  /// SQLite's `LOWER` (ASCII) and the query side with Dart's Unicode-aware
+  /// `toLowerCase()`, which stock SQLite's `LIKE`/`NOCASE` cannot do alone.
+  Future<LibrarySearchResult> searchLibrary(String query) async {
+    if (query.trim().isEmpty) {
+      return const LibrarySearchResult(
+        playlists: [],
+        artists: [],
+        albums: [],
+        tracks: [],
+      );
+    }
+    final db = await _dbHelper.database;
+    final escaped = query
+        .trim()
+        .toLowerCase()
+        .replaceAll(r'\', r'\\')
+        .replaceAll('%', r'\%')
+        .replaceAll('_', r'\_');
+    final q = '%$escaped%';
+
+    final playlists = await db.rawQuery('''
+      SELECT
+        p.id,
+        p.name,
+        p.path,
+        p.type,
+        p.last_synced,
+        COUNT(pt.track_id) as track_count
+      FROM synced_playlists p
+      LEFT JOIN playlist_tracks pt ON p.id = pt.playlist_id
+      WHERE LOWER(p.name) LIKE ? ESCAPE '\\'
+      GROUP BY p.id
+      ORDER BY p.name ASC
+      LIMIT 20
+    ''', [q]);
+
+    final artists = await db.rawQuery('''
+      SELECT
+        artist AS artist,
+        COUNT(*) AS track_count,
+        COUNT(DISTINCT album) AS album_count
+      FROM synced_tracks
+      WHERE artist != '' AND LOWER(artist) LIKE ? ESCAPE '\\'
+      GROUP BY artist
+      ORDER BY artist ASC
+      LIMIT 20
+    ''', [q]);
+
+    final albums = await db.rawQuery('''
+      SELECT
+        album,
+        album_artist,
+        year,
+        artwork_path,
+        COUNT(*) AS track_count
+      FROM synced_tracks
+      WHERE LOWER(album) LIKE ? ESCAPE '\\'
+        OR LOWER(album_artist) LIKE ? ESCAPE '\\'
+      GROUP BY album, album_artist, year, artwork_path
+      ORDER BY album ASC
+      LIMIT 20
+    ''', [q, q]);
+
+    final trackRows = await db.rawQuery('''
+      SELECT st.*
+      FROM synced_tracks st
+      WHERE LOWER(st.title) LIKE ? ESCAPE '\\'
+        OR LOWER(st.artist) LIKE ? ESCAPE '\\'
+        OR LOWER(st.album) LIKE ? ESCAPE '\\'
+      ORDER BY st.title ASC
+      LIMIT 100
+    ''', [q, q, q]);
+
+    return LibrarySearchResult(
+      playlists: playlists,
+      artists: artists,
+      albums: albums,
+      tracks: trackRows.map((map) => SyncedTrack.fromMap(map)).toList(),
+    );
   }
 
   /// Get multiple tracks by IDs in a single query

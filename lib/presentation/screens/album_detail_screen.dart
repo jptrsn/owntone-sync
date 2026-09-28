@@ -1,20 +1,29 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
 import '../../data/repositories/local_database_repository.dart';
 import '../controllers/playback_controller.dart';
+import '../services/collection_playback.dart';
 import '../widgets/player_scaffold.dart';
-import '../widgets/play_button.dart';
+import '../widgets/library_rows.dart';
 
 class AlbumDetailScreen extends StatefulWidget {
   final String albumName;
   final String artistName;
   final String? artworkPath;
 
+  /// Album identity used to disambiguate same-named albums across artists
+  /// and years (the displayed row is one (album, artist, year) group).
+  final String? albumArtist;
+  final int? year;
+
   const AlbumDetailScreen({
     super.key,
     required this.albumName,
     required this.artistName,
     this.artworkPath,
+    this.albumArtist,
+    this.year,
   });
 
   @override
@@ -33,19 +42,16 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
   }
 
   Future<void> _loadTracks() async {
-    setState(() => _isLoading = true);
-    final tracks = await _dbRepo.getTracksByAlbum(widget.albumName);
+    final tracks = await _dbRepo.getTracksByAlbum(
+      widget.albumName,
+      albumArtist: widget.albumArtist,
+      year: widget.year,
+    );
+    if (!mounted) return;
     setState(() {
       _tracks = tracks;
       _isLoading = false;
     });
-  }
-
-  String _formatDuration(int milliseconds) {
-    final duration = Duration(milliseconds: milliseconds);
-    final minutes = duration.inMinutes;
-    final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
-    return '$minutes:$seconds';
   }
 
   String _formatTotalDuration() {
@@ -60,79 +66,54 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
     return '$minutes min';
   }
 
+  QueueOrigin get _origin => QueueOrigin.album(widget.albumName);
+
   @override
   Widget build(BuildContext context) {
+    final controller = context.read<PlaybackController>();
+    final colorScheme = Theme.of(context).colorScheme;
+
     return PlayerScaffold(
-      appBar: AppBar(
-        title: Text(widget.albumName),
-        backgroundColor: Theme.of(context).colorScheme.surface,
-        foregroundColor: Theme.of(context).colorScheme.onSurface,
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _tracks.isEmpty
-          ? const Center(child: Text('No tracks found'))
-          : Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(16),
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            expandedHeight: 260,
+            pinned: true,
+            backgroundColor: colorScheme.surface,
+            foregroundColor: colorScheme.onSurface,
+            flexibleSpace: FlexibleSpaceBar(
+              title: Text(widget.albumName),
+              background: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+                child: Align(
+                  alignment: Alignment.bottomLeft,
                   child: Row(
                     children: [
-                      widget.artworkPath != null
-                          ? ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Image.file(
-                                File(widget.artworkPath!),
-                                width: 120,
-                                height: 120,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) => Container(
-                                  width: 120,
-                                  height: 120,
-                                  color: Colors.grey[300],
-                                  child: const Icon(Icons.album, size: 60),
-                                ),
-                              ),
-                            )
-                          : Container(
-                              width: 120,
-                              height: 120,
-                              decoration: BoxDecoration(
-                                color: Colors.grey[300],
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Icon(Icons.album, size: 60),
-                            ),
+                      AlbumArtTile(
+                        artworkPath: widget.artworkPath,
+                        size: 120,
+                        borderRadius: 8,
+                      ),
                       const SizedBox(width: 16),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.end,
                           children: [
                             Text(
-                              widget.albumName,
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
                               widget.artistName,
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Colors.grey[600],
-                              ),
+                              style: Theme.of(context).textTheme.titleMedium,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            const SizedBox(height: 8),
-                            Text(
-                              '${_tracks.length} tracks • ${_formatTotalDuration()}',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            if (_tracks.first.year > 0) ...[
+                            if (!_isLoading && _tracks.isNotEmpty) ...[
                               const SizedBox(height: 4),
                               Text(
-                                '${_tracks.first.year}',
+                                '${_tracks.length} ${_tracks.length == 1 ? 'track' : 'tracks'} \u2022 ${_formatTotalDuration()}'
+                                '${_tracks.first.year > 0 ? ' \u2022 ${_tracks.first.year}' : ''}',
                                 style: Theme.of(context).textTheme.bodySmall,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ],
                           ],
@@ -141,45 +122,73 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
                     ],
                   ),
                 ),
-                const Divider(),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: _tracks.length,
-                    itemBuilder: (context, index) {
-                      final track = _tracks[index];
-                      return PlayableTile(
-                        track: track,
-                        collection: _tracks,
-                        index: index,
-                        origin: QueueOrigin.album(widget.albumName),
-                        child: ListTile(
-                          leading: track.trackNumber > 0
-                              ? SizedBox(
-                                  width: 30,
-                                  child: Text(
-                                    '${track.trackNumber}',
-                                    textAlign: TextAlign.center,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodyMedium,
-                                  ),
-                                )
-                              : const Icon(Icons.music_note),
-                          title: Text(track.title),
-                          subtitle: track.genre.isNotEmpty
-                              ? Text(track.genre)
-                              : null,
-                          trailing: Text(
-                            _formatDuration(track.lengthMs),
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
+              ),
             ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Row(
+                children: [
+                  FilledButton.icon(
+                    onPressed:
+                        _isLoading || _tracks.isEmpty
+                            ? null
+                            : () =>
+                                playCollectionInOrder(controller, _origin, _tracks),
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('Play'),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed:
+                        _isLoading || _tracks.isEmpty
+                            ? null
+                            : () => shuffleCollection(controller, _origin, _tracks),
+                    icon: const Icon(Icons.shuffle),
+                    label: const Text('Shuffle'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_isLoading)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.all(32),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            )
+          else if (_tracks.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: const Center(child: Text('No tracks found')),
+            )
+          else
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final track = _tracks[index];
+                  return TrackRow(
+                    track: track,
+                    collection: _tracks,
+                    index: index,
+                    origin: _origin,
+                    leading: track.trackNumber > 0
+                        ? Text(
+                            '${track.trackNumber}',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          )
+                        : const Icon(Icons.music_note, size: 20),
+                    secondary:
+                        track.genre.isNotEmpty ? track.genre : null,
+                  );
+                },
+                childCount: _tracks.length,
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

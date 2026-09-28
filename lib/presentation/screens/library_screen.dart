@@ -13,6 +13,7 @@ import '../widgets/artist_list_view.dart';
 import '../widgets/player_scaffold.dart';
 import '../widgets/playlist_list_view.dart';
 import '../widgets/track_list_view.dart';
+import 'search_screen.dart';
 import 'sync_screen.dart';
 
 /// The home screen: the library. Sync lives in the drawer and behind the
@@ -114,6 +115,12 @@ class _LibraryScreenState extends State<LibraryScreen>
     ).push(MaterialPageRoute(builder: (_) => const SyncScreen()));
   }
 
+  void _openSearch(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const SearchScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<BrowseProvider>();
@@ -156,16 +163,11 @@ class _LibraryScreenState extends State<LibraryScreen>
         backgroundColor: Theme.of(context).colorScheme.surface,
         foregroundColor: Theme.of(context).colorScheme.onSurface,
         actions: [
+          _buildSortAction(context, provider),
           IconButton(
             tooltip: 'Search',
             icon: const Icon(Icons.search),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Search is coming in a later update'),
-                ),
-              );
-            },
+            onPressed: () => _openSearch(context),
           ),
           _buildSyncStatusAction(context),
           const SizedBox(width: 4),
@@ -173,6 +175,33 @@ class _LibraryScreenState extends State<LibraryScreen>
       ),
       drawer: const AppDrawer(),
       body: body,
+    );
+  }
+
+  /// Sort selector for the active tab. Each category keeps its own order
+  /// across sessions (B2); the options shown depend on the current tab.
+  Widget _buildSortAction(BuildContext context, BrowseProvider provider) {
+    return PopupMenuButton<SortOrder>(
+      tooltip: 'Sort by',
+      icon: const Icon(Icons.sort),
+      onSelected: (order) => provider.setSortOrder(order),
+      itemBuilder: (context) => [
+        for (final option in provider.sortOptions)
+          PopupMenuItem<SortOrder>(
+            value: option,
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  child: option == provider.sortOrder
+                      ? const Icon(Icons.check, size: 16)
+                      : null,
+                ),
+                Text(kSortOrderLabels[option]!),
+              ],
+            ),
+          ),
+      ],
     );
   }
 

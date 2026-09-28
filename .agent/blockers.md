@@ -49,3 +49,38 @@ schema before it can verify step 12.
 
 **Not affected:** event recording, event upload, server counts — all verified
 working in Phase 3.
+
+---
+
+## 2026-09-27 — Library never refreshes after a sync; first sync leaves a dead end (found during Phase 6 setup)
+
+**Symptom (observed on emulator-5554, fresh AVD):** installed the app, granted
+the folder, selected Brass plus one other playlist, and synced. The sync
+succeeded — 95 files on disk under `/sdcard/Music/tracks` — but the Library
+screen still showed the "No Music Synced" empty state with no tracks anywhere.
+Force-stopping and relaunching the app made the whole library appear
+immediately, so the data was in the database the entire time.
+
+**Root cause:** `LibraryScreen` calls `BrowseProvider.loadData()` **only in
+`initState`** (`lib/presentation/screens/library_screen.dart:38-46`). Nothing
+listens for sync completion, so the UI holds whatever it read at startup.
+
+**Why the first sync is the worst case, and not just "a stale list".** When
+`BrowseProvider.hasContent` is false, `LibraryScreen` replaces the entire tabbed
+body with the empty state. Switching tabs is what would otherwise trigger a
+reload — `setCategory` calls `loadData()` — but with the empty state rendered
+there are no tabs to switch. A first-time user therefore reaches a state with
+**no in-app route out of it**: sync completes, the screen still says "No Music
+Synced", and only killing and reopening the app recovers. It reads as a broken
+install rather than a stale list.
+
+**Where it gets fixed:** Phase 7 item 2 already requires "On sync completion,
+refresh `BrowseProvider`" (stories C2/C3), so no new work needs scheduling — but
+that item is written in terms of keeping a *populated* library current. Whoever
+implements it must confirm the **empty → populated** transition specifically,
+on a genuinely fresh install, without restarting the app. A refresh that only
+reloads list contents will incidentally fix this because `hasContent` is
+re-evaluated on rebuild — but it must be verified, not assumed.
+
+**Not affected:** the sync pipeline, the database, file download, or playback.
+Purely a UI refresh gap.

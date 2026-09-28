@@ -95,6 +95,8 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
           albumName: album,
           artistName: item.artist ?? '',
           artworkPath: _artFilePath(item.artUri),
+          albumArtist: item.extras?['albumArtist'] as String?,
+          year: item.extras?['year'] as int?,
         ),
       ),
     );

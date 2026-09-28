@@ -9,7 +9,7 @@ import '../services/audio_handler.dart';
 import '../services/track_uri_resolver.dart';
 
 /// Where the current queue came from ("Playing from ...").
-enum QueueOriginKind { playlist, album, artist, allTracks }
+enum QueueOriginKind { playlist, album, artist, allTracks, search }
 
 /// A small value type identifying the origin of the current queue.
 class QueueOrigin {
@@ -30,6 +30,9 @@ class QueueOrigin {
 
   const QueueOrigin.allTracks([String name = 'All tracks'])
     : this(kind: QueueOriginKind.allTracks, displayName: name);
+
+  const QueueOrigin.search(String query)
+    : this(kind: QueueOriginKind.search, displayName: 'Search "$query"');
 
   @override
   bool operator ==(Object other) =>
@@ -80,6 +83,11 @@ class PlaybackController {
   Stream<MediaItem?> get mediaItem => _handler.mediaItem;
 
   Stream<PlaybackState> get playbackState => _handler.playbackState;
+
+  /// The current playback state snapshot. The handler's subject is seeded,
+  /// so this is safe to read any time (used to inspect shuffle/repeat mode
+  /// without subscribing).
+  PlaybackState get currentPlaybackState => _handler.playbackState.value;
 
   Stream<List<MediaItem>> get queue => _handler.queue;
 
@@ -256,6 +264,21 @@ class PlaybackController {
     await _handler.addQueueItem(_toMediaItem(track, uri));
   }
 
+  /// Appends every resolvable track in [tracks] to the end of the queue,
+  /// in the given order. URIs are resolved in one batch; the items are
+  /// appended one at a time through the same verified per-item path as
+  /// [enqueue] (the player exposes no batch-append API, and rebuilding the
+  /// whole source list via `setAudioSources` would reset the shuffle order).
+  Future<void> enqueueCollection(List<SyncedTrack> tracks) async {
+    if (tracks.isEmpty) return;
+    final uris = await _resolver.resolveCollection(tracks);
+    for (final track in tracks) {
+      final uri = uris[track.id];
+      if (uri == null) continue;
+      await _handler.addQueueItem(_toMediaItem(track, uri));
+    }
+  }
+
   MediaItem _toMediaItem(SyncedTrack track, String uri) {
     final artworkPath = track.artworkPath;
     return MediaItem(
@@ -269,7 +292,9 @@ class PlaybackController {
       artUri: (artworkPath != null && artworkPath.isNotEmpty)
           ? Uri.file(artworkPath)
           : null,
-      extras: {'uri': uri},
+      // Album identity rides along so "Go to album" can disambiguate
+      // same-named albums (name + album artist + year).
+      extras: {'uri': uri, 'albumArtist': track.albumArtist, 'year': track.year},
     );
   }
 }
