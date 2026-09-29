@@ -1,6 +1,25 @@
 # Blockers and discovered defects
 
-## 2026-09-24 — `sync_history` missing `plays_synced`/`skips_synced` on fresh installs (found in Phase 3)
+## 2026-09-28 — RESOLVED: both open entries below were fixed and device-verified in Phase 7
+
+- **2026-09-24 schema defect:** fixed by the v5→v6 migration
+  (`database_helper.dart` `oldVersion < 6`): adds the two columns only when
+  absent, deletes the orphaned `sync_history_playlists` children, creates
+  `playback_state`. Verified in all three migration shapes and a real sync
+  afterwards (history row written with non-null counts; server diff
+  +14 plays / +4 skips). See `.agent/invariants.md` entry 8.
+- **2026-09-27 empty-state dead end:** fixed by Phase 7 item 2
+  (`LibraryScreen._onSyncCompleted` → queue reconcile +
+  `BrowseProvider.loadData()`). Verified on a genuine fresh install
+  (`pm clear`): empty state → configure URL → grant folder → load playlists →
+  select Brass + Soul → sync 88 tracks → Library shows both playlists with
+  **no app restart**. See `.agent/invariants.md` and the Phase 7 report.
+
+Both entries below are kept as history.
+
+---
+
+## 2026-09-24 — `sync_history` missing `plays_synced`/`skips_synced` on fresh installs (found in Phase 3) — **RESOLVED 2026-09-28 in Phase 7**
 
 **Symptom (observed on emulator-5554 during Phase 3 verification):** every sync
 fails to write a history row:
@@ -52,7 +71,7 @@ working in Phase 3.
 
 ---
 
-## 2026-09-27 — Library never refreshes after a sync; first sync leaves a dead end (found during Phase 6 setup)
+## 2026-09-27 — Library never refreshes after a sync; first sync leaves a dead end (found during Phase 6 setup) — **RESOLVED 2026-09-28 in Phase 7**
 
 **Symptom (observed on emulator-5554, fresh AVD):** installed the app, granted
 the folder, selected Brass plus one other playlist, and synced. The sync

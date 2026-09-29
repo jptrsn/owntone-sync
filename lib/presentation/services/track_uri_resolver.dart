@@ -47,7 +47,17 @@ class TrackUriResolver {
       }
     }
 
-    if (missing.isEmpty) return resolved;
+    final cachedCount = tracks.length - missing.length;
+
+    if (missing.isEmpty) {
+      if (kDebugMode) {
+        debugPrint(
+          '[TrackUriResolver] $cachedCount cached, 0 walked '
+          '(${tracks.length} tracks)',
+        );
+      }
+      return resolved;
+    }
 
     final uris = await _resolvePaths(missing.map((t) => t.localPath).toList());
 
@@ -73,6 +83,14 @@ class TrackUriResolver {
           debugPrint('[TrackUriResolver] URI cache-back failed: $e');
         }
       }
+    }
+
+    if (kDebugMode) {
+      debugPrint(
+        '[TrackUriResolver] ${cachedCount + toCache.length} cached, '
+        '${missing.length} walked, ${missing.length - toCache.length} failed '
+        '(${tracks.length} tracks)',
+      );
     }
 
     return resolved;

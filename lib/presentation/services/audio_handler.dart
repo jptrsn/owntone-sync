@@ -7,6 +7,27 @@ import 'package:rxdart/rxdart.dart';
 
 import 'shuffle_order.dart';
 
+/// The queue contents in base order, for A8 persistence. [baseIds] are the
+/// track ids at each base index, [currentIndex] is the base index of the
+/// current track, and [shuffleIndices] is the persisted play-order
+/// permutation (base indices in play order).
+class SequenceSnapshot {
+  const SequenceSnapshot({
+    required this.baseIds,
+    this.currentIndex,
+    required this.shuffleIndices,
+  });
+
+  final List<int> baseIds;
+  final int? currentIndex;
+  final List<int> shuffleIndices;
+}
+
+/// Why the queue stopped on its own because there was nothing left it could
+/// play (A9). The UI turns [allFailed] into an actionable "re-sync" message;
+/// [endOfQueue] is the plain "reached the end" case.
+enum QueueExhaustedReason { endOfQueue, allFailed }
+
 class OwnToneAudioHandler extends BaseAudioHandler
     with QueueHandler, SeekHandler {
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -28,6 +49,31 @@ class OwnToneAudioHandler extends BaseAudioHandler
       BehaviorSubject<List<int>>.seeded(const []);
 
   Stream<List<int>> get shuffleIndicesStream => _shuffleIndicesSubject.stream;
+
+  /// The current queue contents in base order. Seeded empty and re-emitted on
+  /// every sequence state change, so a late subscriber (A8 persistence
+  /// started after the queue exists) still sees the current queue.
+  final BehaviorSubject<SequenceSnapshot> _sequenceSnapshotSubject =
+      BehaviorSubject<SequenceSnapshot>.seeded(
+        const SequenceSnapshot(baseIds: [], shuffleIndices: []),
+      );
+
+  Stream<SequenceSnapshot> get sequenceSnapshotStream =>
+      _sequenceSnapshotSubject.stream;
+
+  /// Base indices that have failed to play in the current sweep. Cleared the
+  /// moment any track actually starts playing (A9 terminal detection).
+  final Set<int> _failedIndices = {};
+
+  final StreamController<QueueExhaustedReason> _queueExhaustedController =
+      StreamController<QueueExhaustedReason>.broadcast();
+
+  /// Emits when playback stops on its own because the queue ran out of
+  /// playable tracks (A9): [QueueExhaustedReason.endOfQueue] for an
+  /// unplayable last track, [QueueExhaustedReason.allFailed] when every
+  /// track in the queue is unplayable.
+  Stream<QueueExhaustedReason> get queueExhaustedStream =>
+      _queueExhaustedController.stream;
 
   StreamSubscription<PlaybackEvent>? _playbackEventSubscription;
   StreamSubscription<SequenceState>? _sequenceSubscription;
@@ -81,6 +127,12 @@ class OwnToneAudioHandler extends BaseAudioHandler
       event,
     ) {
       final playing = _audioPlayer.playing;
+      // A track that actually starts playing is healthy: any earlier
+      // failures in this sweep are behind us, so reset the A9 terminal
+      // detection.
+      if (event.processingState == ProcessingState.ready && playing) {
+        _failedIndices.clear();
+      }
       playbackState.add(
         playbackState.value.copyWith(
           controls: [
@@ -113,6 +165,19 @@ class OwnToneAudioHandler extends BaseAudioHandler
     _sequenceSubscription = _audioPlayer.sequenceStateStream.listen((state) {
       final sequence = state.sequence;
       _shuffleIndicesSubject.add(state.shuffleIndices);
+      _sequenceSnapshotSubject.add(
+        SequenceSnapshot(
+          baseIds: [
+            for (final source in sequence)
+              if (source.tag is MediaItem)
+                int.parse((source.tag as MediaItem).id)
+              else
+                0,
+          ],
+          currentIndex: state.currentIndex,
+          shuffleIndices: List<int>.unmodifiable(state.shuffleIndices),
+        ),
+      );
       if (sequence.isEmpty) {
         queue.add([]);
         mediaItem.add(null);
@@ -150,15 +215,39 @@ class OwnToneAudioHandler extends BaseAudioHandler
       _userInitiatedPending = false;
       final failedIndex = error.index;
       final sequence = _audioPlayer.sequence;
-      if (failedIndex != null &&
-          failedIndex >= 0 &&
-          failedIndex < sequence.length) {
-        final tag = sequence[failedIndex].tag;
-        if (tag is MediaItem) {
-          _skippedTrackController.add(tag);
-        }
+      if (failedIndex == null ||
+          failedIndex < 0 ||
+          failedIndex >= sequence.length ||
+          sequence.isEmpty) {
+        // Stale error from a sequence that already changed; nothing to
+        // advance through.
+        return;
       }
-      _audioPlayer.seekToNext();
+      final tag = sequence[failedIndex].tag;
+      if (tag is MediaItem) {
+        _skippedTrackController.add(tag);
+      }
+      // A9 terminal detection: remember the failure, then decide whether
+      // advancing can still reach a healthy track.
+      _failedIndices.add(failedIndex);
+      final allFailed = _failedIndices.length >= sequence.length;
+      // nextIndex is null only at the end of the play order with repeat off;
+      // with repeat-one it reports the current (already failed) track; with
+      // repeat-all it wraps, so only allFailed can be terminal there.
+      final terminal =
+          allFailed ||
+          _audioPlayer.loopMode == LoopMode.one ||
+          _audioPlayer.nextIndex == null;
+      if (terminal) {
+        _queueExhaustedController.add(
+          allFailed
+              ? QueueExhaustedReason.allFailed
+              : QueueExhaustedReason.endOfQueue,
+        );
+        unawaited(stop());
+      } else {
+        unawaited(_audioPlayer.seekToNext());
+      }
     });
   }
 
@@ -232,6 +321,72 @@ class OwnToneAudioHandler extends BaseAudioHandler
     // play() returns a future that completes when playback stops,
     // so do not await it here.
     _audioPlayer.play();
+  }
+
+  /// Loads [tracks] starting at [startIndex] and leaves the player PAUSED at
+  /// [position] (A8 cold-start restore). [repeatMode] is restored, and when
+  /// [shuffleEnabled] is true [shuffleIndices] (base indices in play order,
+  /// already remapped onto [tracks]) is restored exactly.
+  ///
+  /// The load itself runs with shuffle off: just_audio re-shuffles the
+  /// ShuffleOrder on every load (`ConcatenatingAudioSource._shuffle`, called
+  /// unconditionally from `_load`), but while shuffle is disabled the order
+  /// is ignored, so re-seeding it afterwards is safe. Re-enabling shuffle
+  /// does not re-randomise (`setShuffleModeEnabled` never calls `_shuffle`),
+  /// and the platform only learns the seeded order when a concatenating
+  /// mutation pushes the full indices — the same-index base move is the
+  /// verified push (the GATE-verified moveQueueItem mechanism).
+  Future<void> restoreCollection({
+    required List<MediaItem> tracks,
+    required int startIndex,
+    required Duration position,
+    required AudioServiceRepeatMode repeatMode,
+    required bool shuffleEnabled,
+    required List<int> shuffleIndices,
+  }) async {
+    if (tracks.isEmpty) return;
+
+    final audioSources = <IndexedAudioSource>[];
+    for (final track in tracks) {
+      final uriString = track.extras?['uri'] as String? ?? '';
+      if (uriString.isEmpty) continue;
+      audioSources.add(AudioSource.uri(Uri.parse(uriString), tag: track));
+    }
+    if (audioSources.isEmpty) return;
+
+    final actualStartIndex = startIndex.clamp(0, audioSources.length - 1);
+    final loopMode = _repeatModeToLoopMode(repeatMode);
+
+    _failedIndices.clear();
+    await _audioPlayer.setAudioSources(
+      audioSources,
+      initialIndex: actualStartIndex,
+      shuffleOrder: _shuffleOrder,
+    );
+    await _audioPlayer.setLoopMode(loopMode);
+    await _audioPlayer.seek(position);
+
+    if (shuffleEnabled && shuffleIndices.length == audioSources.length) {
+      _shuffleOrder.seedIndices(shuffleIndices);
+      await _audioPlayer.setShuffleModeEnabled(true);
+      // Anchor the restored play order at the restored track: the same-index
+      // base move re-inserts it at its persisted play position and pushes the
+      // full order to the platform.
+      final pos = shuffleIndices.indexOf(actualStartIndex);
+      _shuffleOrder.routeInsertAtPlayPosition(pos >= 0 ? pos : 0);
+      await _audioPlayer.moveAudioSource(actualStartIndex, actualStartIndex);
+    }
+
+    // The direct player calls above bypass the audio_service overrides, so
+    // sync the projected playback state (shuffle/repeat mode) by hand.
+    playbackState.add(
+      playbackState.value.copyWith(
+        shuffleMode: shuffleEnabled
+            ? AudioServiceShuffleMode.all
+            : AudioServiceShuffleMode.none,
+        repeatMode: repeatMode,
+      ),
+    );
   }
 
   @override
@@ -437,6 +592,66 @@ class OwnToneAudioHandler extends BaseAudioHandler
     await _audioPlayer.clearAudioSources();
   }
 
+  /// Drops queued tracks whose id is not in [aliveTrackIds] (sync
+  /// reconciliation, called when a sync completes). If the current track is
+  /// dropped, playback advances to the next surviving track in play order;
+  /// otherwise playback is never interrupted (C2/C3).
+  Future<void> reconcileQueue(Set<int> aliveTrackIds) async {
+    final sequence = _audioPlayer.sequence;
+    if (sequence.isEmpty) return;
+
+    int? trackIdAt(int i) {
+      final tag = sequence[i].tag;
+      return tag is MediaItem ? int.tryParse(tag.id) : null;
+    }
+
+    final toRemove = <int>[];
+    for (var i = sequence.length - 1; i >= 0; i--) {
+      final id = trackIdAt(i);
+      if (id != null && !aliveTrackIds.contains(id)) toRemove.add(i);
+    }
+    if (toRemove.isEmpty) return;
+
+    // Next surviving track in play order (no wrap), if the current track is
+    // about to be removed. Computed pre-removal and re-based as lower indices
+    // are removed.
+    int? targetIndex;
+    final current = _audioPlayer.currentIndex;
+    if (current != null && toRemove.contains(current)) {
+      final order = _audioPlayer.shuffleModeEnabled
+          ? _audioPlayer.shuffleIndices
+          : List<int>.generate(sequence.length, (i) => i);
+      final pos = order.indexOf(current);
+      for (var p = pos + 1; p < order.length; p++) {
+        final base = order[p];
+        final id = trackIdAt(base);
+        if (id != null && aliveTrackIds.contains(id)) {
+          targetIndex = base;
+          break;
+        }
+      }
+    }
+
+    for (final i in toRemove) {
+      await _audioPlayer.removeAudioSourceAt(i);
+      if (targetIndex != null && i < targetIndex) targetIndex -= 1;
+    }
+
+    if (current != null && toRemove.contains(current)) {
+      if (targetIndex != null) {
+        try {
+          await _audioPlayer.seek(Duration.zero, index: targetIndex);
+        } on PlayerInterruptedException {
+          // A concurrent load or mutation won the race; the queue state is
+          // consistent either way.
+        }
+      } else {
+        // The last surviving track was removed: nothing left to play.
+        await clearQueue();
+      }
+    }
+  }
+
   LoopMode _repeatModeToLoopMode(AudioServiceRepeatMode repeatMode) {
     switch (repeatMode) {
       case AudioServiceRepeatMode.none:
@@ -460,6 +675,7 @@ class OwnToneAudioHandler extends BaseAudioHandler
     await _sequenceSubscription?.cancel();
     await _errorSubscription?.cancel();
     await _skippedTrackController.close();
+    await _queueExhaustedController.close();
     await _audioPlayer.dispose();
   }
 }

@@ -45,6 +45,18 @@ class ExactPositionShuffleOrder extends ShuffleOrder {
     _nextInsertAtPlayPosition = playPosition;
   }
 
+  /// Replaces the current play order with [order] (base indices in play
+  /// order). A8 restore: the persisted permutation is seeded here after the
+  /// load (which re-randomised [indices] but harmlessly, because the load
+  /// ran with shuffle off) and before shuffle is re-enabled, so the restored
+  /// order is the one that was persisted, not a fresh random one.
+  void seedIndices(List<int> order) {
+    indices
+      ..clear()
+      ..addAll(order);
+    _nextInsertAtPlayPosition = null;
+  }
+
   @override
   void shuffle({int? initialIndex}) {
     assert(initialIndex == null || indices.contains(initialIndex));

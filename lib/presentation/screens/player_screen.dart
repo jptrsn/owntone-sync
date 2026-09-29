@@ -6,6 +6,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:provider/provider.dart';
 
 import '../controllers/playback_controller.dart';
+import '../services/audio_handler.dart';
 import '../widgets/queue_sheet.dart';
 import 'album_detail_screen.dart';
 import 'artist_detail_screen.dart';
@@ -34,6 +35,7 @@ class NowPlayingSheet extends StatefulWidget {
 class _NowPlayingSheetState extends State<NowPlayingSheet> {
   late final PlaybackController _controller;
   StreamSubscription<MediaItem>? _skippedTrackSubscription;
+  StreamSubscription<QueueExhaustedReason>? _queueExhaustedSubscription;
   String? _lastNoticeTrackId;
   DateTime? _lastNoticeAt;
   // The sheet's OWN messenger. `ScaffoldMessenger.of(this.context)` would
@@ -53,13 +55,37 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
     // Library screen suppresses its own so exactly one notice is shown.
     _controller.nowPlayingSheetOpen.value = true;
     _skippedTrackSubscription = _controller.skippedTrack.listen(_onSkippedTrack);
+    // While this sheet is open it owns the A9 queue-exhausted notice too;
+    // the Library screen suppresses its own (mirroring the skipped-track
+    // handoff).
+    _queueExhaustedSubscription = _controller.queueExhausted.listen(
+      _onQueueExhausted,
+    );
   }
 
   @override
   void dispose() {
     _skippedTrackSubscription?.cancel();
+    _queueExhaustedSubscription?.cancel();
     _controller.nowPlayingSheetOpen.value = false;
     super.dispose();
+  }
+
+  /// A9: the queue ran out of playable tracks, rendered on this sheet's own
+  /// ScaffoldMessenger so it is visible while the sheet is open.
+  void _onQueueExhausted(QueueExhaustedReason reason) {
+    if (!mounted) return;
+    final message = reason == QueueExhaustedReason.allFailed
+        ? 'No playable tracks in the queue - sync again to repair missing files'
+        : 'Queue ended - no more playable tracks';
+    _messengerKey.currentState?.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: Duration(
+          seconds: reason == QueueExhaustedReason.allFailed ? 6 : 3,
+        ),
+      ),
+    );
   }
 
   /// A9: one-line, non-blocking notice naming the skipped track, rendered on

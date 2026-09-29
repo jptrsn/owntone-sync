@@ -522,13 +522,23 @@ class BackgroundSyncWorker(
                                     trackNumber = track.trackNumber,
                                     discNumber = track.discNumber,
                                     year = track.year,
-                                    artworkUrl = track.artworkUrl ?: "",
-                                    artworkPath = null,
-                                    contentUri = contentUri
-                                )
-                            )
+                                     artworkUrl = track.artworkUrl ?: "",
+                                     artworkPath = null,
+                                     contentUri = contentUri
+                                 )
+                             )
 
-                            // Add to existingFiles set to prevent duplicate downloads
+                             if (contentUri == null) {
+                                 // This file was just (re)downloaded but its
+                                 // document URI could not be resolved. A
+                                 // content_uri cached from a previous
+                                 // download is stale (the new file has a new
+                                 // document id), so invalidate it explicitly
+                                 // — the upsert preserves omitted columns.
+                                 dbHelper.invalidateTrackContentUri(track.id)
+                             }
+
+                             // Add to existingFiles set to prevent duplicate downloads
                             existingFiles.add(downloadResult.filePath)
 
                             tracksDownloaded++

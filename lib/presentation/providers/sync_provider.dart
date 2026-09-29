@@ -22,6 +22,8 @@ class SyncProvider extends ChangeNotifier {
     'dev.educoder.owntone_sync/sync_progress',
   );
   StreamSubscription<dynamic>? _progressSubscription;
+  final StreamController<String> _syncCompletedController =
+      StreamController<String>.broadcast();
 
   OwnToneApiRepository? _apiRepo;
   LocalDatabaseRepository? _dbRepo;
@@ -60,6 +62,11 @@ class SyncProvider extends ChangeNotifier {
   bool get isBatteryOptimizationDisabled => _isBatteryOptimizationDisabled;
   DateTime? get missedSyncTime => _missedSyncTime;
 
+  /// Emits the worker's completion status ('success', 'failed', 'cancelled',
+  /// 'skipped', 'interrupted') each time a sync run ends. Library refresh and
+  /// queue reconciliation hook off this (C2/C3).
+  Stream<String> get syncCompleted => _syncCompletedController.stream;
+
   SyncProvider() {
     _initialize();
   }
@@ -67,7 +74,15 @@ class SyncProvider extends ChangeNotifier {
   @override
   void dispose() {
     _progressSubscription?.cancel();
+    _syncCompletedController.close();
     super.dispose();
+  }
+
+  /// Clears the surfaced sync error (the app-bar badge and banner).
+  void clearError() {
+    if (_lastError == null) return;
+    _lastError = null;
+    notifyListeners();
   }
 
   Future<void> _initialize() async {
@@ -258,11 +273,23 @@ class SyncProvider extends ChangeNotifier {
         if (event is Map) {
           // Check if this is a completion event
           if (event['syncComplete'] == true) {
-            logger.i('Sync completed with status: ${event['status']}');
+            final status = (event['status'] ?? 'unknown').toString();
+            logger.i('Sync completed with status: $status');
             _isSyncing = false;
             _syncProgress = null;
             _isCancelling = false;
+            // A failed run surfaces on the app-bar badge and banner; a
+            // successful run clears any previous error.
+            if (status == 'failed') {
+              final message = event['message'];
+              _lastError = (message is String && message.isNotEmpty)
+                  ? message
+                  : 'Sync failed';
+            } else if (status == 'success') {
+              _lastError = null;
+            }
             notifyListeners();
+            _syncCompletedController.add(status);
             return;
           }
 

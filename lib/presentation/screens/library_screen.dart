@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:provider/provider.dart';
 
+import '../../data/repositories/local_database_repository.dart';
 import '../controllers/playback_controller.dart';
 import '../providers/browse_provider.dart';
 import '../providers/sync_provider.dart';
+import '../services/audio_handler.dart';
 import '../widgets/app_drawer.dart';
 import '../widgets/album_list_view.dart';
 import '../widgets/artist_list_view.dart';
@@ -29,6 +31,8 @@ class _LibraryScreenState extends State<LibraryScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
   StreamSubscription<MediaItem>? _skippedTrackSubscription;
+  StreamSubscription<String>? _syncCompletedSubscription;
+  StreamSubscription<QueueExhaustedReason>? _queueExhaustedSubscription;
 
   String? _lastNoticeTrackId;
   DateTime? _lastNoticeAt;
@@ -64,13 +68,73 @@ class _LibraryScreenState extends State<LibraryScreen>
         .read<PlaybackController>()
         .skippedTrack
         .listen(_onSkippedTrack);
+
+    _queueExhaustedSubscription = context
+        .read<PlaybackController>()
+        .queueExhausted
+        .listen(_onQueueExhausted);
+
+    // On sync completion: reconcile the live queue against what the sync
+    // left behind, then refresh the library so new content appears without a
+    // restart (and the empty state leaves once the first sync lands).
+    _syncCompletedSubscription = context
+        .read<SyncProvider>()
+        .syncCompleted
+        .listen(_onSyncCompleted);
   }
 
   @override
   void dispose() {
     _skippedTrackSubscription?.cancel();
+    _queueExhaustedSubscription?.cancel();
+    _syncCompletedSubscription?.cancel();
     _tabController.dispose();
     super.dispose();
+  }
+
+  Future<void> _onSyncCompleted(String status) async {
+    if (status != 'success' || !mounted) return;
+    final controller = context.read<PlaybackController>();
+    try {
+      final allTracks = await LocalDatabaseRepository().getAllTracks();
+      if (!mounted) return;
+      final aliveIds = allTracks.map((t) => t.id).toSet();
+      await controller.reconcileQueue(aliveIds);
+    } catch (e) {
+      debugPrint('Queue reconciliation after sync failed: $e');
+    }
+    if (!mounted) return;
+    await context.read<BrowseProvider>().loadData();
+  }
+
+  /// A9: the queue ran out of playable tracks. While the NowPlayingSheet is
+  /// open it owns this notice (its own ScaffoldMessenger is above the
+  /// sheet's barrier); the library suppresses its own then.
+  void _onQueueExhausted(QueueExhaustedReason reason) {
+    if (!mounted) return;
+    if (context.read<PlaybackController>().nowPlayingSheetOpen.value) return;
+    final messenger = ScaffoldMessenger.of(context);
+    if (reason == QueueExhaustedReason.allFailed) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'No playable tracks in the queue - sync again to repair missing files',
+          ),
+          action: SnackBarAction(
+            label: 'Sync',
+            onPressed: () => _openSync(context),
+          ),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    } else {
+      messenger.showSnackBar(
+        SnackBar(
+          content: const Text('Queue ended - no more playable tracks'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   void _onSkippedTrack(MediaItem item) {
@@ -174,7 +238,57 @@ class _LibraryScreenState extends State<LibraryScreen>
         ],
       ),
       drawer: const AppDrawer(),
-      body: body,
+      body: Column(
+        children: [
+          _buildSyncErrorBanner(),
+          Expanded(child: body),
+        ],
+      ),
+    );
+  }
+
+  /// Dismissible banner for the last sync error (the app-bar badge only
+  /// carries a tooltip; this is where the message is readable).
+  Widget _buildSyncErrorBanner() {
+    return Consumer<SyncProvider>(
+      builder: (context, syncProvider, _) {
+        final error = syncProvider.lastError;
+        if (error == null) return const SizedBox.shrink();
+        final scheme = Theme.of(context).colorScheme;
+        return Material(
+          color: scheme.errorContainer,
+          child: SafeArea(
+            top: false,
+            child: Row(
+              children: [
+                const Padding(
+                  padding: EdgeInsetsDirectional.only(start: 12),
+                  child: Icon(Icons.error_outline, size: 20),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 8,
+                    ),
+                    child: Text(
+                      error,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: scheme.onErrorContainer),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  tooltip: 'Dismiss',
+                  onPressed: syncProvider.clearError,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

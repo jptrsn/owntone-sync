@@ -178,6 +178,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
   Widget _buildHistoryItem(SyncHistoryRecord record) {
     final statusColor = _getStatusColor(record.status);
     final statusIcon = _getStatusIcon(record.status);
+    final plays = record.playsSynced ?? 0;
+    final skips = record.skipsSynced ?? 0;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -238,9 +240,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     _buildStat('Downloaded', '${record.tracksDownloaded}'),
                     if (record.tracksDeleted > 0)
                       _buildStat('Deleted', '${record.tracksDeleted}'),
-                    if (record.playsSynced != null) ...[
-                      _buildStat('Plays', '${record.playsSynced}'),
-                      _buildStat('Skips', '${record.skipsSynced}'),
+                    // Since Phase 0.5 the worker records 0 rather than NULL
+                    // when a sync uploads nothing; render that as "No events"
+                    // instead of a bare 0/0.
+                    if (record.playsSynced != null ||
+                        record.skipsSynced != null) ...[
+                      if (plays + skips > 0) ...[
+                        _buildStat('Plays', '$plays'),
+                        _buildStat('Skips', '$skips'),
+                      ] else
+                        _buildStat('Plays / Skips', 'No events'),
                     ],
                   ],
                 ),

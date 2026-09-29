@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:sqflite/sqflite.dart';
 import '../database/database_helper.dart';
 import '../models/playlist.dart';
@@ -163,6 +165,76 @@ class PendingEvent {
   }
 }
 
+/// The persisted playback state (A8), stored as the single playback_state
+/// row. [queueIds] is the queue in BASE order (the player's sequence), and
+/// [shuffleIndices] the base indices in play order at the moment of saving
+/// (identity when shuffle is off). Restoring replays both, so the user gets
+/// back the same queue, the same current track, and the same "next track".
+class PlaybackStateRecord {
+  final List<int> queueIds;
+  final int? currentTrackId;
+  final int positionMs;
+  final bool shuffleEnabled;
+  final List<int> shuffleIndices;
+  final String repeatMode; // 'none' | 'one' | 'all'
+  final String? originKind;
+  final int? originId;
+  final String? originName;
+
+  PlaybackStateRecord({
+    required this.queueIds,
+    this.currentTrackId,
+    required this.positionMs,
+    required this.shuffleEnabled,
+    required this.shuffleIndices,
+    required this.repeatMode,
+    this.originKind,
+    this.originId,
+    this.originName,
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': 1,
+      'queue_ids': jsonEncode(queueIds),
+      'current_track_id': currentTrackId,
+      'position_ms': positionMs,
+      'shuffle_enabled': shuffleEnabled ? 1 : 0,
+      'shuffle_indices': jsonEncode(shuffleIndices),
+      'repeat_mode': repeatMode,
+      'origin_kind': originKind,
+      'origin_id': originId,
+      'origin_name': originName,
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+    };
+  }
+
+  factory PlaybackStateRecord.fromMap(Map<String, dynamic> map) {
+    List<int> parseIntList(String? raw) {
+      if (raw == null || raw.isEmpty) return const [];
+      try {
+        return (jsonDecode(raw) as List<dynamic>)
+            .map((e) => (e as num).toInt())
+            .toList();
+      } catch (_) {
+        return const [];
+      }
+    }
+
+    return PlaybackStateRecord(
+      queueIds: parseIntList(map['queue_ids'] as String?),
+      currentTrackId: map['current_track_id'] as int?,
+      positionMs: map['position_ms'] as int? ?? 0,
+      shuffleEnabled: (map['shuffle_enabled'] as int? ?? 0) == 1,
+      shuffleIndices: parseIntList(map['shuffle_indices'] as String?),
+      repeatMode: map['repeat_mode'] as String? ?? 'none',
+      originKind: map['origin_kind'] as String?,
+      originId: map['origin_id'] as int?,
+      originName: map['origin_name'] as String?,
+    );
+  }
+}
+
 /// Grouped results of a library search.
 class LibrarySearchResult {
   final List<Map<String, dynamic>> playlists;
@@ -227,15 +299,6 @@ class LocalDatabaseRepository {
   }
 
   // Track operations
-  Future<void> insertOrUpdateTrack(SyncedTrack track) async {
-    final db = await _dbHelper.database;
-    await db.insert(
-      'synced_tracks',
-      track.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-  }
-
   Future<SyncedTrack?> getTrackById(int id) async {
     final db = await _dbHelper.database;
     final results = await db.query(
@@ -389,6 +452,42 @@ class LocalDatabaseRepository {
   Future<void> deleteSyncedEvents() async {
     final db = await _dbHelper.database;
     await db.delete('pending_events', where: 'synced = ?', whereArgs: [1]);
+  }
+
+  /// Count of playback events queued for the next sync (D3).
+  Future<int> getPendingEventCount() async {
+    final db = await _dbHelper.database;
+    final rows = await db.rawQuery(
+      'SELECT COUNT(*) AS c FROM pending_events WHERE synced = 0',
+    );
+    return (rows.first['c'] as int?) ?? 0;
+  }
+
+  // Playback state persistence (A8)
+  Future<void> savePlaybackState(PlaybackStateRecord state) async {
+    final db = await _dbHelper.database;
+    await db.insert(
+      'playback_state',
+      state.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<PlaybackStateRecord?> loadPlaybackState() async {
+    final db = await _dbHelper.database;
+    final rows = await db.query(
+      'playback_state',
+      where: 'id = ?',
+      whereArgs: [1],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return PlaybackStateRecord.fromMap(rows.first);
+  }
+
+  Future<void> clearPlaybackState() async {
+    final db = await _dbHelper.database;
+    await db.delete('playback_state');
   }
 
   // Playlist cache operations

@@ -224,6 +224,90 @@ indices — via `routeInsertAtPlayPosition(currentPlayPos)` +
 list, no-op on the play order). Device-verified: with shuffle ON the real
 play order follows the Dart-side `shuffleIndices`.
 
+**RESOLVED CONCERN (Phase 7):** "does `setShuffleModeEnabled(true)`
+re-randomise the order?" — no: `just_audio.dart` :1239 never calls
+`_shuffle()`. But the mirror fact matters: every `_load` (any
+`setAudioSources`) **does** call `source._shuffle(initialIndex:)`, so the
+order instance is re-seeded on every load. Harmless while shuffle is off;
+fatal to persistence if ignored — a saved permutation must be re-seeded after
+any rebuild (see invariant 23).
+
+### 23. Restoring a persisted shuffle order: seed, enable, route, move
+
+`audio_handler.dart` `restoreCollection` (Phase 7 item 1): load the saved
+queue **shuffle-off** → `setLoopMode(saved)` → `seek(position)` →
+`ShuffleOrder.seedIndices(savedPerm)` → `setShuffleModeEnabled(true)` →
+`routeInsertAtPlayPosition(perm.indexOf(startBase))` +
+`moveAudioSource(startBase, startBase)` → manual
+`playbackState.add(copyWith(shuffleMode, repeatMode))` (the platform
+`PlaybackState` event lags the mode change).
+
+**WHY:** the platform (media3) learns `shuffleOrder.indices` only from
+concatenating mutations that carry indices (`_toMessage`); `setShuffleOrder`
+is a silent no-op for the top-level playlist (invariant 19, Phase 5). The
+route+move pair is the same push every working mutation uses, and it also
+pins the *current* play position so the restored index is both base-correct
+and play-correct. The final manual `playbackState.add` keeps the UI's
+shuffle/repeat icons consistent without a UI-driven mode toggle.
+
+**BREAKS IF UNDONE:** a restored session re-randomises its play order (every
+load re-seeds, entry 19's Phase 7 concern), or the platform keeps a stale
+order so auto-advance diverges from the queue sheet. Device-verified
+2026-09-28: force-stop mid-shuffle, relaunch, and the full 33-row queue order
+matched `[queue_ids[i] for i in saved shuffle_indices]` element-for-element,
+with position, shuffle and repeat restored.
+
+### 24. A9 error handling has exactly two outcomes: advance or stop
+
+`audio_handler.dart` PlayerException listener: out-of-range/stale index →
+ignore; otherwise record `failedIndex` in `_failedIndices` and
+`terminal = allFailed || loopMode == LoopMode.one || nextIndex == null`.
+Terminal → `queueExhaustedStream` emits `allFailed` (every base index has
+failed at least once) or `endOfQueue` (end of play order, repeat off), then
+`stop()`. Non-terminal → `seekToNext()`. `_failedIndices` clears the moment
+any track reaches `ProcessingState.ready && playing`.
+
+**WHY:** `nextIndex` is null **only** at the end of the play order with
+repeat off; repeat-one reports the current (already-failed) track, so
+`LoopMode.one` needs its own clause or a dead track would retry forever;
+repeat-all wraps, so only `allFailed` is terminal there. Advancing
+`seekToNext()` (not `skipToNext()`) keeps the error path out of the
+user-intent signal (invariant 13).
+
+**BREAKS IF UNDONE:** one deleted file parks the player in an error state
+forever (the pre-Phase 7 defect), or an unplayable tail loops.
+Device-verified 2026-09-28: two consecutive mid-queue failures skipped
+through and the next healthy track played; last-track failure with repeat off
+stopped cleanly with a "Queue ended" notice; a single-track queue whose only
+file was deleted stopped with the actionable "sync again" notice and a
+working Sync action.
+
+### 25. `playback_state` persistence: when it writes, and what restore may drop
+
+`PlaybackController` (process-lifetime, `start()` from `main` before
+`runApp`; restore is `unawaited(...)` — **never awaited** before `runApp`):
+persists on (a) sequence-snapshot change — a non-empty queue becoming empty
+*clears* the row, an empty snapshot with no prior queue must not wipe it
+(cold-start seed vs `restorePlaybackState` read ordering); (b)
+shuffle/repeat change; (c) position ticks ≥5000ms from the last persisted
+value; (d) lifecycle `paused`/`hidden`. The row holds base-order `queue_ids`,
+the `shuffle_indices` permutation, `current_track_id`, `position_ms`, modes,
+and origin (kind/id/name for the "Playing from X" line).
+
+`restorePlaybackState` never throws: tracks missing from the DB are dropped
+from the queue, the permutation is remapped through the survivors (relative
+order preserved), and the start index follows the surviving current track.
+
+**WHY:** (a)'s empty-snapshot guard exists because `start()` subscribes
+before `restorePlaybackState` runs — the first snapshot is the empty
+cold-start seed, and reacting to it would erase the row restore is about to
+read. (c) bounds write volume (the position stream ticks ~every 16–200ms,
+invariant 14).
+
+**BREAKS IF UNDONE:** restart loses the queue (pre-Phase 7), or the
+cold-start seed wipes the saved state on every launch, or restore throws on
+a partially-synced library and kills startup.
+
 ---
 
 ## Sync and statistics
@@ -247,12 +331,14 @@ gate is the fix. `syncEvents()` already early-returns cheaply when
 `plays_synced` / `skips_synced` when a sync uploads nothing. Render that as
 "no events", not a bare "0 plays".
 
-**KNOWN DEFECT (see `.agent/blockers.md`, 2026-09-24):** on fresh installs the
-`sync_history` table is missing `plays_synced`/`skips_synced` entirely
-(`database_helper.dart` `_createDB` omits them; only the v2→v3 migration adds
-them), so the worker's history-row INSERT fails and **no** history row is
-written. The event upload itself works. Phase 7 must fix the schema before
-story D3 / spec §7 step 12 can be verified.
+**RESOLVED (Phase 7, 2026-09-28):** the fresh-install `sync_history` column
+defect (see `.agent/blockers.md`, 2026-09-24) is fixed. The v5→v6 migration
+adds `plays_synced`/`skips_synced` only when absent (guard: v3-migrated DBs
+already have them), deletes the orphaned `sync_history_playlists` children
+written with `sync_id = -1` while the parent INSERT was failing, and creates
+`playback_state`. Verified on device in all three shapes (v5 fixture → v6;
+v5 + pre-existing columns → v6, no double-add; fresh install → v6) and a real
+sync afterwards wrote a history row with non-null counts.
 
 ### 9. Natural completion is a play, never a skip
 
@@ -329,6 +415,44 @@ or the user move, before any UI work; rows survive process death by
 construction (sqflite commit). Verified indirectly: events recorded over
 ~80 minutes of playback were all present in `pending_events` when the manual
 sync ran (worker logged each of the 11 events).
+
+### 26. Track upsert is UPDATE-first, and a re-download must invalidate the cached URI
+
+`DatabaseHelper.kt` `insertOrUpdateTrack`: an existing `synced_tracks` row is
+UPDATEd (never deleted-and-reinserted); `invalidateTrackContentUri(trackId)`
+nulls the cached `content_uri`; `BackgroundSyncWorker` calls it after every
+download.
+
+**WHY:** re-downloading a track creates a **new MediaStore document id**; the
+old cached URI points at the deleted document and is unplayable. Without the
+invalidation the resolver keeps serving a dead URI (or falls back to the
+O(directory-size) walk forever for that track). Device-verified 2026-09-28:
+deleted a file, let a sync re-download it, and a URI diff of all 95 cached
+URIs showed exactly one change — the re-downloaded track's. Resolver log:
+"33 cached, 0 walked (33 tracks)".
+
+**BREAKS IF UNDONE:** re-downloaded tracks are unplayable until the next
+manual walk, or playback silently degrades to a full directory walk per queue.
+
+### 27. Tracks removed server-side stay local; the server library is in external flux
+
+A track that disappears from all selected server playlists is dropped from
+`playlist_tracks` but **kept** in `synced_tracks` (and its file stays on
+disk) unless `prefs "flutter.delete_orphaned_files"` is true (default false —
+an explicit Sync Options toggle). The server is curated by other users: during
+Phase 7 the Soul playlist shrank 62→59→55 across syncs, and four Brass/Soul
+tracks vanished server-side mid-verification.
+
+**WHY:** this looked twice like a sync defect ("0 downloads despite deleted
+files" — the deleted tracks were no longer download candidates; "Soul lost
+tracks" — they were never deleted locally). It is not: the app's job is to
+track membership, and local files are the user's. The v6 migration's orphan
+cleanup is about `sync_history_playlists` children (see entry 8), **not**
+about `synced_tracks` — do not conflate the two when reading old notes.
+
+**BREAKS IF UNDONE:** "fixing" this by deleting local rows/files on
+membership loss would destroy the user's library whenever another user edits
+a shared playlist.
 
 ---
 
@@ -473,6 +597,24 @@ crash the second mount (invariant 7's failure mode).
 
 **BREAKS IF UNDONE:** stale or absent indicators on lists mounted after
 playback started; or "Stream has already been listened to" when a row re-mounts.
+
+### 28. The queue sheet list is a `ReorderableListView` — fast swipes reorder the queue
+
+The queue sheet rows are `Dismissible` children of a `ReorderableListView`.
+A fast, long swipe (observed: ≥1200px in ≤400ms) is interpreted as a reorder
+drag, not a scroll, and **silently rewrites the live shuffle permutation**
+(which then persists via invariant 25). Also: the sheet auto-scrolls to the
+current row on open — scroll to the absolute top before reading the order.
+
+**WHY:** during Phase 7 verification the "restored queue order" appeared
+corrupted three times before the reorders were identified as the cause; the
+expected-order computation was right, the device order had legitimately
+changed. For UI automation: scroll the queue with short swipes (~400px,
+≥300ms), or read the order from the DB (`playback_state.queue_ids` +
+`shuffle_indices`) instead of the sheet.
+
+**BREAKS IF UNDONE:** verification reports chase a phantom ordering bug; or a
+casual UI test silently scrambles the user's queue.
 
 ---
 

@@ -75,9 +75,38 @@ class DatabaseHelper(private val context: Context) {
             put("disc_number", track.discNumber)
             put("year", track.year)
             put("artwork_url", track.artworkUrl)
-            put("artwork_path", track.artworkPath)
+            // artwork_path and content_uri are only written when non-null.
+            // The write is UPDATE-first (not INSERT OR REPLACE): REPLACE
+            // deletes the conflicting row and inserts a fresh one, so an
+            // omitted column there does not preserve it — it takes the
+            // column default, which blanked the cached content_uri on every
+            // download.
+            if (track.artworkPath != null) put("artwork_path", track.artworkPath)
+            if (track.contentUri != null) put("content_uri", track.contentUri)
         }
-        db.insertWithOnConflict("synced_tracks", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+        val updated = db.update("synced_tracks", values, "id = ?", arrayOf(track.id.toString()))
+        if (updated == 0) {
+            db.insert("synced_tracks", null, values)
+        }
+        db.close()
+    }
+
+    /**
+     * Explicitly clears a track's cached content URI.
+     *
+     * The download path calls this when a (re-)downloaded file's document-ID
+     * resolution fails: the new file has a new document id, so a URI cached
+     * from a previous download is stale and must not survive — now that the
+     * upsert preserves omitted columns, nothing else would clear it.
+     */
+    fun invalidateTrackContentUri(trackId: Int) {
+        val db = openDatabase()
+        db.update(
+            "synced_tracks",
+            ContentValues().apply { putNull("content_uri") },
+            "id = ?",
+            arrayOf(trackId.toString())
+        )
         db.close()
     }
 

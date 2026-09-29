@@ -726,8 +726,38 @@ restarts.
 2. On sync completion, refresh `BrowseProvider` and reconcile the live queue:
    drop tracks that were deleted; if the current track was deleted, advance.
    Never interrupt playback otherwise (C2, C3).
-3. Invalidate `content_uri` for any track the sync worker re-downloads, so a
-   changed document ID cannot leave a stale URI behind.
+3. **Make `content_uri` blanking deliberate instead of accidental.** Two halves
+   of the same defect, in the same file:
+
+   **(a) Stop the upsert blanking it.** Kotlin
+   `DatabaseHelper.insertOrUpdateTrack` (`DatabaseHelper.kt:60-82`) writes via
+   `insertWithOnConflict(..., CONFLICT_REPLACE)` and omits `content_uri` from the
+   `ContentValues`. **`CONFLICT_REPLACE` deletes the conflicting row and inserts
+   a new one**, so omitting a column does *not* preserve it — the old row is gone
+   and the new one takes the column default. Leaving a column out cannot mean
+   "keep it" while the write is an INSERT OR REPLACE.
+
+   Change the write so omission means preserve. Preferred: **UPDATE first, INSERT
+   only if zero rows affected**, building the `ContentValues` from the
+   always-known metadata and adding `content_uri` / `artwork_path` **only when
+   non-null**. Alternatives if that proves awkward: `INSERT … ON CONFLICT(id) DO
+   UPDATE SET …` (check the SQLite version at the project's minSdk first), or
+   read-merge-replace, which costs a read per track and is the weakest option.
+
+   `artwork_path` has the same exposure — it *is* written (`:78`), but as
+   `track.artworkPath`, which the worker passes as `null` at the download site.
+   Confirm whether anything populates that column; if so it is being blanked on
+   every re-sync too.
+
+   **(b) Keep deliberate invalidation explicit.** A track that is genuinely
+   **re-downloaded** gets a new document ID, so its `content_uri` must be
+   cleared — but as an explicit write of `null`, not as a side effect of the
+   upsert.
+
+   **Verify:** sync a playlist, confirm `content_uri` is populated and playback
+   starts without a resolver walk; re-sync **without** deleting the file and
+   confirm the URI survives; then delete the local file, re-sync so the track is
+   genuinely re-downloaded, and confirm the URI is refreshed rather than stale.
 4. Surface sync errors as an app-bar badge plus a dismissible banner. (The
    playback-error snackbar is built in Phase 4.)
 5. **Fix the `sync_history` schema first — nothing else in D3 can work until it
@@ -769,11 +799,28 @@ restarts.
    them when absent. The migration must tolerate a column that already exists,
    since every pre-v0.1.8 DB has them.
 
-   Verify **both** shapes, since each proves something the other cannot:
+   **It also leaks orphan rows — clean them up.** Confirmed by pulling the DB
+   off a fresh install on 2026-09-27: `sync_history` had **0 rows** while
+   `sync_history_playlists` had **5, every one with `sync_id = -1`**. The failed
+   parent insert returns `-1`, and the worker writes the child rows anyway with
+   that as their foreign key. Nothing stops it because sqflite leaves
+   `PRAGMA foreign_keys` **off** by default, so the FK declared in `_createDB` is
+   never enforced. Every sync on an affected install adds more.
+
+   So the fix has three parts: add the columns to `_createDB`, add a v6 migration
+   that adds them when absent, and **delete the orphans** (`DELETE FROM
+   sync_history_playlists WHERE sync_id NOT IN (SELECT id FROM sync_history)` —
+   or simply `WHERE sync_id < 0`). Consider whether enabling `foreign_keys` is
+   worth it; if you do, audit the other tables first, because it changes
+   behaviour everywhere at once and that is a bigger change than this item.
+
+   Verify **all three**, since each proves something the others cannot:
    - a DB shaped like a fresh v0.1.8 install (columns absent) → upgrade → sync →
      a history row appears. This is the path the bug actually lives on.
    - a DB that came up through the `< 3` migration (columns present) → upgrade →
      sync → still works, i.e. the v6 migration did not fail on existing columns.
+   - after the migration, `sync_history_playlists` has no rows whose `sync_id`
+     has no parent, and a subsequent sync writes a child row with a real one.
 
 6. Show a pending-events count in the drawer or Sync screen (D3), and render
    `plays_synced` / `skips_synced` on the History screen. Note that since Phase
@@ -800,6 +847,192 @@ restarts.
 the SAF folder so the error path genuinely fires; confirm the skip notice appears
 and playback continues, then repeat with the deleted file as the last track in
 the queue.
+
+---
+
+### Phase 8 — Track ratings (view, edit, bidirectional sync)
+
+**Goal:** a five-star rating with half-star precision on Now Playing, synced both
+ways, server wins on conflict.
+
+Depends on Phase 5's `NowPlayingSheet` and Phase 6's row work. Nothing in
+Phases 2–7 depends on it.
+
+**Confirmed against the OwnTone JSON API docs:** `rating` is an integer **0–100**
+on the track object, and `PUT /api/library/tracks/{id}?rating=N` is documented and
+settable — the same query-parameter shape `OwnToneApiClient.updateTrackStats`
+already uses. Half-stars map onto 0–100 in tens (0.5★=10 … 5★=100), no rounding
+loss. `Track.rating` already exists in the Dart API model
+(`lib/data/models/track.dart:47`) and is parsed off the wire, then dropped at the
+`Track` → `SyncedTrack` boundary. There is no DB column, no Kotlin field, no UI.
+
+**Locked interaction design (user-specified):**
+
+| Aspect | Decision |
+|---|---|
+| Scale | 5 stars, half-star steps → `rating = stars × 20` |
+| Zero | Reachable by dragging fully left; stored and pushed as 0. **No unrated-vs-zero distinction** — both render as five empty stars |
+| Gesture | Press-and-drag, **relative**: grab the current rating, horizontal movement adjusts it, a full screen-width sweep spans 0–5 (half-star ≈ 10% of width) |
+| Vertical movement | Ignored while pressed, so the finger can move clear of the stars |
+| Commit | On release |
+| Placement | Overlaid on the current track's artwork, **hidden by default**, shown by tapping the artwork — HTML5-video-controls behaviour (tap toggles, auto-hide after a few seconds idle) |
+| Other surfaces | Read-only stars on track rows; `Rate…` in the row ⋮ menu opening the same control |
+| Write timing | Durable locally at once; the **sync worker** pushes at the next sync |
+| Conflicts | **Server wins** |
+
+#### Schema — DB version 7
+
+One column on `synced_tracks`: `rating INTEGER NOT NULL DEFAULT 0` — the
+displayed value, updated optimistically on edit.
+
+One new table, **general over fields** so future field edits reuse it rather than
+growing a parallel mechanism:
+
+```sql
+CREATE TABLE pending_track_edits (
+  track_id   INTEGER NOT NULL,
+  field      TEXT    NOT NULL,   -- 'rating' now; 'usermark' later
+  new_value  TEXT    NOT NULL,   -- stringified; `field` determines interpretation
+  base_value TEXT    NOT NULL,   -- server's value when the edit was made
+  updated_at INTEGER NOT NULL,   -- epoch ms
+  PRIMARY KEY (track_id, field)
+)
+```
+
+No FK to `synced_tracks` — an edit must survive local deletion of the track,
+since the server still has it. (Note also that `foreign_keys` is off by default,
+so a declared FK would not be enforced anyway — see Phase 7 item 5.)
+
+**The composite primary key gives last-write-wins for free.** A drag passing
+through four values leaves one row, not four.
+
+**`base_value` is the baseline, carried on the edit row rather than as a
+`server_<field>` column per field.** This is what makes the design generalise:
+adding another field later needs no new baseline column.
+
+State is unambiguous:
+- **no pending edit** — `synced_tracks.rating` *is* the last-known server value
+- **pending edit** — `synced_tracks.rating` is the user's value (so display stays
+  a plain column read, no join on hot paths); `base_value` is what the server had
+
+**Critical upsert rule:** when the row already exists, **preserve the original
+`base_value`** and overwrite only `new_value` and `updated_at`. Overwriting
+`base_value` with the user's own previous edit destroys server-change detection —
+the baseline must stay anchored to server truth. This is a one-line mistake with
+an invisible failure mode.
+
+**Why not `pending_events`:** it holds *accumulative* events (three plays = +3;
+each row is independent data), has no payload column, deletes an event after 5
+failures (`BackgroundSyncWorker.kt:954-958` — fine for a play count, wrong for a
+deliberate user edit), and its `when (event.eventType)` has no `else`, so an
+unrecognised type fails silently. Field edits are *last-write-wins state*, a
+different thing.
+
+#### Reconciliation — during sync, zero extra HTTP
+
+`BackgroundSyncWorker.kt` already holds both sides at ~line 425: `uniqueTracks`
+(fresh from `getPlaylistTracks`) and `existingTracks` (a `Map<Int, SyncedTrack>`
+from the DB). Insert the pass there. Let **S** = the server's current value and
+**E** = the `pending_track_edits` row for `(track_id, 'rating')`, if any:
+
+| Condition | Meaning | Action |
+|---|---|---|
+| no `E`, `S != synced_tracks.rating` | server changed, no local edit | pull: set `rating = S` |
+| no `E`, `S == synced_tracks.rating` | nothing changed | nothing |
+| `E` exists, `S != E.base_value` | server changed (whether or not local did) | **server wins** — set `rating = S`, **delete `E`** |
+| `E` exists, `S == E.base_value` | local edit only | `PUT`; on success **delete `E`** (`rating` already holds it) |
+
+Row three implements server-precedence without needing to detect "both changed"
+as a separate case. Deleting `E` **only on a successful PUT** is what makes a
+failed push retry indefinitely — no 5-strike data loss.
+
+**Coverage sweep (required).** The loop only sees tracks in currently selected
+playlists, so an edit on a track that dropped out of every synced playlist would
+never push. After the playlist loop, iterate any remaining `pending_track_edits`
+rows and apply the same rules, fetching the server value per track via the
+existing `getTrack(trackId)` (`OwnToneApiClient.kt:243`). Normally zero rows,
+therefore zero requests.
+
+**Pushing: use the bulk endpoint.** `PUT /api/library/tracks` with body
+`{ "tracks": [ { "id": 1, "rating": 100 }, … ] }` sends every pending edit in one
+request. Success is `204 No Content`. **On failure fall back to individual
+`PUT /api/library/tracks/{id}?rating=N` calls** so one rejected track does not
+strand the rest; delete each edit row only when its own write succeeded. Note
+this body is JSON, unlike `updateTrackStats`, which sends a zero-byte body with
+query params — do not copy that method wholesale.
+
+#### The trap: existing rows are never refreshed
+
+Track rows are written **only inside the download loop**
+(`BackgroundSyncWorker.kt:509-529`), so a track already on disk never has its row
+updated. Pulling server ratings needs a **targeted** update of the rating column
+only — and after Phase 7 item 3, `insertOrUpdateTrack` will preserve omitted
+columns, but a narrow `updateTrackRating` is still the right tool.
+
+#### Files
+
+**Dart:** `database_helper.dart` (bump to 7, add the column and table, add the
+migration) · `local_database_repository.dart` (`SyncedTrack.rating`; upsert and
+read helpers for `pending_track_edits`, honouring the preserve-`base_value`
+rule) · `lib/presentation/widgets/star_rating.dart` **new** (an interactive
+`RatingControl` and a compact read-only `StarRatingDisplay`) · `NowPlayingSheet`
+(artwork tap-to-toggle overlay) · `library_rows.dart` (read-only stars, `Rate…`
+in the ⋮ menu).
+
+**Kotlin:** `OwnToneApiClient.kt` (`rating: Int = 0` on the `Track` data class;
+a bulk-push method — no read-modify-write `getTrack`, since rating is absolute,
+not a delta) · `DatabaseHelper.kt` (`SyncedTrack.rating`, `fromCursor`, a narrow
+`updateTrackRating`, and `pending_track_edits` accessors) · `BackgroundSyncWorker.kt`
+(the reconciliation pass and the sweep).
+
+#### Verify
+
+Gesture first — it is the part most likely to need rework:
+1. Tap artwork → stars appear; tap again → hide; idle → auto-hide.
+2. Press and drag right → rating rises in half-star steps; a full screen-width
+   sweep covers 0→5.
+3. While pressed, move vertically off the star row → rating unchanged, gesture
+   not cancelled.
+4. Release → value persists. Drag fully left → 0, five empty stars.
+
+Round trip:
+5. Rate a track 3.5★, sync, check that track in the OwnTone web UI — must read 70.
+6. Change a rating **on the server**, sync, app shows the new value.
+7. **Conflict:** change the same track's rating on the server *and* in the app,
+   then sync → the server's value wins in both places.
+8. Rate a track offline, force-stop, reopen → rating still shown. Restore
+   network, sync, confirm it reaches the server.
+9. Re-edit the same track twice before syncing → one row, and the push still
+   detects a server-side change correctly (the `base_value` rule).
+10. A sync that changes no ratings issues no rating PUTs at all.
+11. Playback still works for tracks whose rating was updated (catches accidental
+    `content_uri` blanking).
+
+#### Keep it general while building it
+
+- Do not hard-code `'rating'` outside the call sites. Schema, upsert helper,
+  reconciliation loop and accessors all take `field` as a parameter.
+- `new_value` / `base_value` stay `TEXT`. Rating stores `"70"`; a future field
+  stores its own representation. No typed column per type.
+- Keep the reconciliation rules field-agnostic — they only compare `S` against
+  `base_value`.
+- Do **not** build a generic field-edit UI. Generality belongs in storage and
+  sync; the UI stays rating-specific until another field is scheduled.
+
+**Adding a future field needs:** the field on the Kotlin `Track` class so `S` can
+be read, its PUT parameter name, a `synced_tracks` column for last-known server
+truth, and UI. The settable set is closed and small — `PUT
+/api/library/tracks/{id}` accepts exactly `rating`, `play_count`, `skip_count`,
+`usermark`, `time_played`, `time_skipped`.
+
+**Tag editing is NOT possible with this API — do not plan for it.** `title`,
+`artist`, `album`, `album_artist`, `genre` and `year` are not writable.
+`PUT /api/queue/items/{id}` *does* accept them, but that edits an ephemeral
+**queue item** (intended for overriding internet-radio metadata) and never
+touches the library. The only other route would be editing file tags on disk plus
+`PUT /api/rescan` — but this app holds synced *copies on the phone*, not the
+server's originals, so local edits could never propagate. Server-side tag editing
+needs an upstream API change. See `.agent/backlog.md`.
 
 ---
 
@@ -833,7 +1066,9 @@ the queue.
 | `android/.../MediaNotificationListener.kt` | **Delete** (phase 0) |
 | `android/.../MainActivity.kt` | **Revise**: drop listener + player event channels, faster `buildContentUri` |
 | `android/app/src/main/AndroidManifest.xml` | **Revise**: drop listener service and permission |
-| `android/.../BackgroundSyncWorker.kt` | **Revise**: remove the event-upload gate (phase 0.5). **Additive**: invalidate `content_uri` on re-download (phase 7) |
+| `android/.../BackgroundSyncWorker.kt` | **Revise**: remove the event-upload gate (phase 0.5). **Additive**: explicit `content_uri` invalidation on re-download (phase 7); rating reconciliation pass + coverage sweep (phase 8) |
+| `android/.../DatabaseHelper.kt` | **Revise**: fix `insertOrUpdateTrack` blanking omitted columns under `CONFLICT_REPLACE` (phase 7). **Additive**: `rating`, narrow `updateTrackRating`, `pending_track_edits` accessors (phase 8) |
+| `lib/presentation/widgets/star_rating.dart` | **New** (phase 8) |
 | `lib/data/repositories/owntone_api_repository.dart`, `file_system_repository.dart` | **Unchanged** |
 
 ---

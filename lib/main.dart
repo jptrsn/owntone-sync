@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:audio_service/audio_service.dart';
@@ -25,6 +27,7 @@ Future<void> main() async {
   final playbackController = PlaybackController(
     handler: audioHandler,
     resolver: TrackUriResolver(dbRepo: dbRepo),
+    dbRepo: dbRepo,
   );
   // Records play/skip events straight into pending_events. Lives for the
   // process lifetime, like the handler.
@@ -36,6 +39,16 @@ Future<void> main() async {
     consumeUserInitiatedTransition: audioHandler.consumeUserInitiatedTransition,
     insertEvent: dbRepo.insertEvent,
   ).start();
+  // A8: persist queue/state changes, and restore the previous session's
+  // queue (paused) if one was persisted. The restore is deliberately NOT
+  // awaited: a cold content-URI cache makes resolution slow, and it must not
+  // block the first frame. The restored queue simply appears once ready.
+  playbackController.start();
+  unawaited(
+    playbackController.restorePlaybackState().catchError((Object e) {
+      debugPrint('[main] restorePlaybackState failed: $e');
+    }),
+  );
   runApp(MyApp(playbackController: playbackController));
 }
 

@@ -19,7 +19,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -98,6 +98,10 @@ class DatabaseHelper {
     ''');
 
     // Table for sync history
+    // plays_synced/skips_synced must exist here as well as in the v2->v3
+    // migration: a fresh install calls _createDB directly and never runs the
+    // old-version migrations, so omitting them here left fresh installs with
+    // a table the Kotlin worker's INSERT cannot write to.
     await db.execute('''
       CREATE TABLE sync_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,7 +112,9 @@ class DatabaseHelper {
         tracks_deleted INTEGER NOT NULL DEFAULT 0,
         error_message TEXT,
         duration_ms INTEGER,
-        trigger_type TEXT NOT NULL
+        trigger_type TEXT NOT NULL,
+        plays_synced INTEGER DEFAULT NULL,
+        skips_synced INTEGER DEFAULT NULL
       )
     ''');
 
@@ -122,6 +128,26 @@ class DatabaseHelper {
         tracks_in_playlist INTEGER NOT NULL DEFAULT 0,
         error_message TEXT,
         FOREIGN KEY (sync_id) REFERENCES sync_history (id) ON DELETE CASCADE
+      )
+    ''');
+
+    // Single-row (id = 1) table holding the playback state to restore on
+    // cold start (A8): the queue as track IDs in base order, the current
+    // track, the position, shuffle/repeat, and the queue origin. A table
+    // rather than SharedPreferences because queues can be long.
+    await db.execute('''
+      CREATE TABLE playback_state (
+        id INTEGER PRIMARY KEY NOT NULL DEFAULT 1,
+        queue_ids TEXT NOT NULL,
+        current_track_id INTEGER,
+        position_ms INTEGER NOT NULL DEFAULT 0,
+        shuffle_enabled INTEGER NOT NULL DEFAULT 0,
+        shuffle_indices TEXT NOT NULL DEFAULT '',
+        repeat_mode TEXT NOT NULL DEFAULT 'none',
+        origin_kind TEXT,
+        origin_id INTEGER,
+        origin_name TEXT,
+        updated_at INTEGER NOT NULL
       )
     ''');
 
@@ -185,6 +211,50 @@ class DatabaseHelper {
         "WHERE content_uri IS NOT NULL AND content_uri != '' "
         "AND content_uri NOT LIKE '%/tree/%'",
       );
+    }
+    if (oldVersion < 6) {
+      // sync_history was created WITHOUT plays_synced/skips_synced; only the
+      // v2->v3 migration adds them, so a fresh install (which runs _createDB
+      // at the current version) never got them. The worker's INSERT failed on
+      // those DBs and no history rows were written. DBs that came up through
+      // the v3 migration already have the columns, so add only when absent.
+      final columns = await db.rawQuery('PRAGMA table_info(sync_history)');
+      final names = columns.map((c) => c['name'] as String).toSet();
+      if (!names.contains('plays_synced')) {
+        await db.execute(
+          'ALTER TABLE sync_history ADD COLUMN plays_synced INTEGER DEFAULT NULL',
+        );
+      }
+      if (!names.contains('skips_synced')) {
+        await db.execute(
+          'ALTER TABLE sync_history ADD COLUMN skips_synced INTEGER DEFAULT NULL',
+        );
+      }
+
+      // While the columns were missing the parent INSERT failed and returned
+      // -1, but the worker still wrote the playlist children with that as
+      // their sync_id (PRAGMA foreign_keys is off, so the FK is unenforced).
+      // Delete the orphans.
+      await db.execute(
+        'DELETE FROM sync_history_playlists '
+        'WHERE sync_id NOT IN (SELECT id FROM sync_history)',
+      );
+
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS playback_state (
+          id INTEGER PRIMARY KEY NOT NULL DEFAULT 1,
+          queue_ids TEXT NOT NULL,
+          current_track_id INTEGER,
+          position_ms INTEGER NOT NULL DEFAULT 0,
+          shuffle_enabled INTEGER NOT NULL DEFAULT 0,
+          shuffle_indices TEXT NOT NULL DEFAULT '',
+          repeat_mode TEXT NOT NULL DEFAULT 'none',
+          origin_kind TEXT,
+          origin_id INTEGER,
+          origin_name TEXT,
+          updated_at INTEGER NOT NULL
+        )
+      ''');
     }
   }
 

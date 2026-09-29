@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:rxdart/rxdart.dart';
 
 import '../../data/repositories/local_database_repository.dart';
@@ -65,17 +66,38 @@ class PositionData {
 ///
 /// The handler owns the queue; this controller forwards intents and
 /// re-exposes the handler's streams. It never holds a Dart-side queue list.
-class PlaybackController {
+///
+/// Also owns A8 persistence: [start] subscribes to the handler's sequence
+/// and state streams and writes a [PlaybackStateRecord] on every queue,
+/// track, shuffle/repeat, position, and app-lifecycle change;
+/// [restorePlaybackState] brings it back (paused) on cold start.
+class PlaybackController with WidgetsBindingObserver {
   PlaybackController({
     required OwnToneAudioHandler handler,
     required TrackUriResolver resolver,
+    required LocalDatabaseRepository dbRepo,
   }) : _handler = handler,
        _resolver = resolver,
+       _dbRepo = dbRepo,
        _originController = BehaviorSubject<QueueOrigin?>.seeded(null);
 
   final OwnToneAudioHandler _handler;
   final TrackUriResolver _resolver;
+  final LocalDatabaseRepository _dbRepo;
   final BehaviorSubject<QueueOrigin?> _originController;
+
+  bool _started = false;
+
+  // A8 persistence state
+  bool _hasQueue = false;
+  SequenceSnapshot _latestSnapshot =
+      const SequenceSnapshot(baseIds: [], shuffleIndices: []);
+  int? _persistedCurrentId;
+  Duration _latestPosition = Duration.zero;
+  int _lastPersistedPositionMs = -1;
+  AudioServiceShuffleMode _lastShuffleMode = AudioServiceShuffleMode.none;
+  AudioServiceRepeatMode _lastRepeatMode = AudioServiceRepeatMode.none;
+  bool _modesSeen = false;
   StreamSubscription<PositionData>? _positionDataSubscription;
   final BehaviorSubject<PositionData> _positionDataSubject =
       BehaviorSubject<PositionData>();
@@ -106,6 +128,16 @@ class PlaybackController {
 
   /// Tracks that failed to play and were auto-advanced past (A9).
   Stream<MediaItem> get skippedTrack => _handler.skippedTrackStream;
+
+  /// The queue stopped on its own because nothing left was playable (A9).
+  Stream<QueueExhaustedReason> get queueExhausted =>
+      _handler.queueExhaustedStream;
+
+  /// Drops queued tracks whose id is not in [aliveTrackIds] (sync
+  /// reconciliation on sync completion). Advances past the current track if
+  /// it was dropped; never interrupts otherwise.
+  Future<void> reconcileQueue(Set<int> aliveTrackIds) =>
+      _handler.reconcileQueue(aliveTrackIds);
 
   /// The origin of the queue currently loaded into the handler.
   QueueOrigin? get currentOrigin => _originController.value;
@@ -277,6 +309,208 @@ class PlaybackController {
       if (uri == null) continue;
       await _handler.addQueueItem(_toMediaItem(track, uri));
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // A8: persistence and cold-start restore
+  // ---------------------------------------------------------------------------
+
+  /// Begins persistence. Idempotent; call once at startup, before
+  /// [restorePlaybackState] so a restored queue is tracked from its first
+  /// mutation. The controller is a process-lifetime object (like the
+  /// handler), so the subscriptions are never cancelled.
+  void start() {
+    if (_started) return;
+    _started = true;
+    WidgetsBinding.instance.addObserver(this);
+    _handler.sequenceSnapshotStream.listen(_onSequenceSnapshot);
+    _handler.playbackState.listen(_onPlaybackStateChanged);
+    positionData.listen(_onPositionTick);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The process may die in paused/hidden; flush the current state first.
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      unawaited(_persist());
+    }
+  }
+
+  void _onSequenceSnapshot(SequenceSnapshot snap) {
+    final wasNonEmpty = _hasQueue;
+    _hasQueue = snap.baseIds.isNotEmpty;
+    _latestSnapshot = snap;
+    if (!_hasQueue) {
+      // A non-empty queue becoming empty (clear queue, or the last track was
+      // reconciled away) clears the persisted state. An empty snapshot with
+      // no prior queue is the cold-start seed and must not wipe a row that
+      // [restorePlaybackState] has not read yet.
+      _persistedCurrentId = null;
+      if (wasNonEmpty) unawaited(_dbRepo.clearPlaybackState());
+      return;
+    }
+    final i = snap.currentIndex;
+    _persistedCurrentId =
+        (i != null && i >= 0 && i < snap.baseIds.length)
+            ? snap.baseIds[i]
+            : null;
+    // A track change resets the live position; do not persist the previous
+    // track's position under the new one.
+    _latestPosition = Duration.zero;
+    _lastPersistedPositionMs = -1;
+    unawaited(_persist());
+  }
+
+  void _onPlaybackStateChanged(PlaybackState state) {
+    if (!_modesSeen) {
+      _lastShuffleMode = state.shuffleMode;
+      _lastRepeatMode = state.repeatMode;
+      _modesSeen = true;
+      return;
+    }
+    if (state.shuffleMode == _lastShuffleMode &&
+        state.repeatMode == _lastRepeatMode) {
+      return;
+    }
+    _lastShuffleMode = state.shuffleMode;
+    _lastRepeatMode = state.repeatMode;
+    unawaited(_persist());
+  }
+
+  void _onPositionTick(PositionData data) {
+    _latestPosition = data.position;
+    if (!_hasQueue || _lastPersistedPositionMs < 0) return;
+    final delta = (data.position.inMilliseconds - _lastPersistedPositionMs).abs();
+    if (delta < 5000) return;
+    unawaited(_persist());
+  }
+
+  Future<void> _persist() async {
+    if (!_hasQueue) return;
+    final snap = _latestSnapshot;
+    final state = _handler.playbackState.value;
+    final origin = currentOrigin;
+    try {
+      await _dbRepo.savePlaybackState(
+        PlaybackStateRecord(
+          queueIds: List<int>.unmodifiable(snap.baseIds),
+          currentTrackId: _persistedCurrentId,
+          positionMs: _latestPosition.inMilliseconds,
+          shuffleEnabled: state.shuffleMode == AudioServiceShuffleMode.all,
+          shuffleIndices: List<int>.unmodifiable(snap.shuffleIndices),
+          repeatMode: state.repeatMode.name,
+          originKind: origin?.kind.name,
+          originId: origin?.id,
+          originName: origin?.displayName,
+        ),
+      );
+      _lastPersistedPositionMs = _latestPosition.inMilliseconds;
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[PlaybackController] persist failed: $e');
+      }
+    }
+  }
+
+  /// A8 cold-start restore: reloads the persisted queue, origin, current
+  /// track, position, shuffle permutation, and repeat mode, and leaves the
+  /// player paused. No-op when nothing is persisted; never throws. Tracks
+  /// that no longer exist are dropped, and the permutation is remapped onto
+  /// the surviving tracks.
+  Future<void> restorePlaybackState() async {
+    try {
+      final record = await _dbRepo.loadPlaybackState();
+      if (record == null || record.queueIds.isEmpty) return;
+
+      final tracks = <SyncedTrack>[];
+      for (final id in record.queueIds) {
+        if (id <= 0) continue;
+        final track = await _dbRepo.getTrackById(id);
+        if (track != null) tracks.add(track);
+      }
+      if (tracks.isEmpty) {
+        await _dbRepo.clearPlaybackState();
+        return;
+      }
+
+      final uris = await _resolver.resolveCollection(tracks);
+      final playable = tracks.where((t) => uris[t.id] != null).toList();
+      if (playable.isEmpty) {
+        await _dbRepo.clearPlaybackState();
+        return;
+      }
+
+      var startIndex = 0;
+      final currentId = record.currentTrackId;
+      if (currentId != null) {
+        final i = playable.indexWhere((t) => t.id == currentId);
+        if (i >= 0) startIndex = i;
+      }
+
+      // Remap the persisted permutation (old base indices) onto the
+      // surviving tracks, which keep their relative base order.
+      final newBaseOf = <int, int>{
+        for (var i = 0; i < playable.length; i++) playable[i].id: i,
+      };
+      final perm = <int>[];
+      for (final oldIdx in record.shuffleIndices) {
+        if (oldIdx < record.queueIds.length) {
+          final newIdx = newBaseOf[record.queueIds[oldIdx]];
+          if (newIdx != null) perm.add(newIdx);
+        }
+      }
+      for (var i = 0; i < playable.length; i++) {
+        if (!perm.contains(i)) perm.add(i);
+      }
+
+      final items = playable.map((t) => _toMediaItem(t, uris[t.id]!)).toList();
+      final origin = _originFromRecord(record);
+      if (origin != null) _originController.add(origin);
+      await _handler.restoreCollection(
+        tracks: items,
+        startIndex: startIndex,
+        position: Duration(milliseconds: record.positionMs),
+        repeatMode: AudioServiceRepeatMode.values.firstWhere(
+          (m) => m.name == record.repeatMode,
+          orElse: () => AudioServiceRepeatMode.none,
+        ),
+        shuffleEnabled: record.shuffleEnabled &&
+            perm.length == playable.length,
+        shuffleIndices: perm,
+      );
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[PlaybackController] restore failed: $e');
+      }
+    }
+  }
+
+  QueueOrigin? _originFromRecord(PlaybackStateRecord record) {
+    final QueueOriginKind kind;
+    switch (record.originKind) {
+      case 'playlist':
+        kind = QueueOriginKind.playlist;
+        break;
+      case 'album':
+        kind = QueueOriginKind.album;
+        break;
+      case 'artist':
+        kind = QueueOriginKind.artist;
+        break;
+      case 'allTracks':
+        kind = QueueOriginKind.allTracks;
+        break;
+      case 'search':
+        kind = QueueOriginKind.search;
+        break;
+      default:
+        return null;
+    }
+    return QueueOrigin(
+      kind: kind,
+      id: record.originId,
+      displayName: record.originName ?? '',
+    );
   }
 
   MediaItem _toMediaItem(SyncedTrack track, String uri) {
