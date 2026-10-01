@@ -174,6 +174,7 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
                     collection: _tracks,
                     index: index,
                     origin: _origin,
+                    onRatingChanged: _loadTracks,
                     leading: track.trackNumber > 0
                         ? Text(
                             '${track.trackNumber}',

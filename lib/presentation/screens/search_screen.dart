@@ -140,6 +140,7 @@ class _SearchScreenState extends State<SearchScreen> {
               // Search results are themselves the visible list, so a tapped
               // track plays in context over the other track results.
               origin: QueueOrigin.search(_query),
+              onRatingChanged: () => _search(_query),
             ),
         ],
       ],

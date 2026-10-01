@@ -683,6 +683,48 @@ quotes).
 
 ---
 
+### 29. For a rendering bug, attach `flutter run`. Screencaps cannot see exceptions.
+
+If a screen renders blank, wrong, or not at all, **the first action is to run
+`flutter run -d emulator-5554` attached in a terminal and reproduce with the
+console in front of you.** Framework errors print there in full — the assertion,
+the failing widget, and the widget-tree path to it — usually identifying the
+cause in one line.
+
+Do **not** start by bisecting with screencaps and pixel counts. A pixel count
+can tell you *that* nothing rendered; it can never tell you *why*, and it looks
+identical for a layout assert, a thrown build, an empty stream and a
+zero-size box.
+
+**Two traps that make the console look clean when it is not:**
+
+- **Framework errors log under the tag `E/flutter`.** A logcat filter matching
+  `" flutter "` (with spaces), or any tag pattern that does not match `E/flutter`,
+  returns a "clean" capture while the exception is right there. Phase 8 lost most
+  of a session to exactly this.
+- **`uiautomator dump` returns an empty window while the Now Playing sheet is
+  open** — its position ticker keeps the window perpetually "busy" (see invariant
+  17). So the two instruments most likely to be reached for both fail silently on
+  the same screen.
+
+**WHY:** Phase 8's blank sheet was a one-line `BoxConstraints` assertion —
+`Stack(fit: StackFit.expand)` placed directly in the sheet's vertical `ListView`,
+which gives unbounded height, so `performLayout` asserted and blanked the entire
+body. The attached console named it immediately. Hours of A/B builds, stash
+cycles and pixel analysis had not.
+
+**BREAKS IF UNDONE:** the fix is the `SizedBox(width: w, height: w)` wrapping
+that `Stack` in `_AlbumArtWithRating` (`player_screen.dart`). It looks like
+redundant nesting and is not — remove it and the Now Playing sheet renders
+completely blank again, with no visible error. Any `StackFit.expand`,
+`Positioned.fill`, or unconstrained `AspectRatio` added to a widget that lives
+in that `ListView` needs the same bounding.
+
+**See also** protocol §4: a negative result from your own harness is a claim
+about two things — the feature and the harness.
+
+---
+
 ## Maintaining this file
 
 **Every phase, before writing your report:** promote anything a future phase

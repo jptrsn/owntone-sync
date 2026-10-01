@@ -19,7 +19,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -69,7 +69,25 @@ class DatabaseHelper {
         year INTEGER NOT NULL DEFAULT 0,
         artwork_url TEXT NOT NULL DEFAULT '',
         artwork_path TEXT DEFAULT '',
-        content_uri TEXT DEFAULT ''
+        content_uri TEXT DEFAULT '',
+        rating INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+
+    // Pending field edits (last-write-wins state, unlike the accumulative
+    // pending_events). The composite primary key gives one row per
+    // (track, field) for free; base_value anchors the edit to the server
+    // value it was made against so the sync worker can detect server-side
+    // changes (server wins on conflict). No FK on purpose: an edit must
+    // survive local deletion of the track, since the server still has it.
+    await db.execute('''
+      CREATE TABLE pending_track_edits (
+        track_id   INTEGER NOT NULL,
+        field      TEXT    NOT NULL,
+        new_value  TEXT    NOT NULL,
+        base_value TEXT    NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (track_id, field)
       )
     ''');
 
@@ -253,6 +271,29 @@ class DatabaseHelper {
           origin_id INTEGER,
           origin_name TEXT,
           updated_at INTEGER NOT NULL
+        )
+      ''');
+    }
+    if (oldVersion < 7) {
+      // Track ratings: a last-known-value column on synced_tracks (updated
+      // optimistically on edit, pulled/pushed by the sync worker) plus the
+      // pending_track_edits table carrying unpushed edits.
+      final columns = await db.rawQuery('PRAGMA table_info(synced_tracks)');
+      final names = columns.map((c) => c['name'] as String).toSet();
+      if (!names.contains('rating')) {
+        await db.execute(
+          'ALTER TABLE synced_tracks ADD COLUMN rating INTEGER NOT NULL DEFAULT 0',
+        );
+      }
+
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS pending_track_edits (
+          track_id   INTEGER NOT NULL,
+          field      TEXT    NOT NULL,
+          new_value  TEXT    NOT NULL,
+          base_value TEXT    NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (track_id, field)
         )
       ''');
     }

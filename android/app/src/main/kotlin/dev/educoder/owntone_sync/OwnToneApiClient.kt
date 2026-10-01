@@ -3,8 +3,10 @@ package dev.educoder.owntone_sync
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -30,6 +32,7 @@ class OwnToneApiClient(
     private val playlistsAdapter = moshi.adapter(PlaylistsResponse::class.java)
     private val tracksAdapter = moshi.adapter(TracksResponse::class.java)
     private val trackAdapter = moshi.adapter(Track::class.java)
+    private val bulkTrackUpdateAdapter = moshi.adapter(BulkTrackUpdate::class.java)
 
     // Data classes matching API responses
     @JsonClass(generateAdapter = true)
@@ -72,10 +75,24 @@ class OwnToneApiClient(
         val year: Int,
         @Json(name = "artwork_url") val artworkUrl: String?,
         @Json(name = "album_id") val albumId: String,
+        @Json(name = "rating") val rating: Int = 0,
         @Json(name = "play_count") val playCount: Int = 0,
         @Json(name = "skip_count") val skipCount: Int = 0,
         @Json(name = "time_played") val timePlayed: String? = null,
         @Json(name = "time_skipped") val timeSkipped: String? = null
+    )
+
+    // Body for the bulk track update. Rating is absolute (0-100), not a
+    // delta, so there is no read-modify-write here (unlike updateTrackStats).
+    @JsonClass(generateAdapter = true)
+    data class BulkTrackUpdate(
+        val tracks: List<BulkTrackUpdateItem>
+    )
+
+    @JsonClass(generateAdapter = true)
+    data class BulkTrackUpdateItem(
+        val id: Int,
+        val rating: Int
     )
 
     fun getPlaylists(limit: Int = 1000): PlaylistsResponse {
@@ -248,6 +265,44 @@ class OwnToneApiClient(
             val body = response.body?.string() ?: throw IOException("Empty response")
             return trackAdapter.fromJson(body)
                 ?: throw IOException("Failed to parse track response")
+        }
+    }
+
+    /**
+     * Sets a single track's rating (0-100). Query-parameter shape with a
+     * zero-byte body, same convention as updateTrackStats.
+     */
+    fun updateTrackRating(trackId: Int, rating: Int) {
+        val request = Request.Builder()
+            .url("$baseUrl/api/library/tracks/$trackId?rating=$rating")
+            .put(ByteArray(0).toRequestBody())
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("Failed to set rating for track $trackId: ${response.code} ${response.message}")
+            }
+        }
+    }
+
+    /**
+     * Sets the ratings of several tracks in one request. The API docs list
+     * 204 No Content as the success code; the server at 192.168.1.13
+     * returns 200, so any 2xx is accepted. Throws on failure so the caller
+     * can fall back to per-track PUTs.
+     */
+    fun updateTrackRatings(ratings: Map<Int, Int>) {
+        if (ratings.isEmpty()) return
+        val body = BulkTrackUpdate(ratings.map { (id, rating) -> BulkTrackUpdateItem(id, rating) })
+        val request = Request.Builder()
+            .url("$baseUrl/api/library/tracks")
+            .put(bulkTrackUpdateAdapter.toJson(body).toRequestBody("application/json".toMediaType()))
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("Failed to bulk-update track ratings: ${response.code} ${response.message}")
+            }
         }
     }
 }

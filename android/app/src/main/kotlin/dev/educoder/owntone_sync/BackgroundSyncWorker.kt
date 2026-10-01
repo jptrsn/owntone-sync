@@ -315,6 +315,26 @@ class BackgroundSyncWorker(
             Log.i(TAG, "Syncing pending play/skip events")
             eventSyncResult = syncEvents(applicationContext, worker, apiClient, dbHelper)
 
+            // Track ratings (Phase 8): snapshot the pending rating edits
+            // once, before the playlist loop. The pass below touches the v7
+            // schema (the pending_track_edits table AND the
+            // synced_tracks.rating column), and this worker opens the DB
+            // without migrating, so if either is absent (a scheduled sync
+            // that runs before the app has launched once after an update)
+            // the whole rating pass is skipped and the rest of the sync
+            // proceeds normally.
+            val ratingPassActive = dbHelper.hasRatingSupport()
+            if (!ratingPassActive) {
+                Log.w(TAG, "Rating sync skipped: v7 schema not present (pending_track_edits table or synced_tracks.rating column missing)")
+            }
+            val pendingRatingEdits: MutableMap<Int, DatabaseHelper.PendingTrackEdit> =
+                if (ratingPassActive) {
+                    dbHelper.getPendingTrackEdits("rating").associateTo(mutableMapOf()) { it.trackId to it }
+                } else {
+                    mutableMapOf()
+                }
+            val ratingPush = mutableMapOf<Int, Int>()
+
             // Get selected playlist IDs - Flutter stores StringList with special encoding
             val playlistIdsString = prefs.getString("flutter.selected_playlist_ids", null)
             if (playlistIdsString == null || playlistIdsString.isEmpty()) {
@@ -424,6 +444,44 @@ class BackgroundSyncWorker(
                     // Get existing tracks from database with timeout
                     val existingTracks = withTimeout(30000, "Querying database for existing tracks") {
                         dbHelper.getTracksByIds(uniqueTrackIds)
+                    }
+
+                    // Rating reconciliation (Phase 8): both sides are already
+                    // in hand here, so this costs no extra HTTP. S is the
+                    // server rating on the freshly fetched track; E is the
+                    // pending edit (if any), whose base_value is the server
+                    // value when the user's edit was made.
+                    //   no E,  S != local  -> server changed: pull S
+                    //   no E,  S == local  -> nothing
+                    //   E,     S != base   -> server changed: server wins, drop E
+                    //   E,     S == base   -> local edit only: queue the push
+                    if (ratingPassActive) {
+                        for (track in uniqueTracks) {
+                            val local = existingTracks[track.id] ?: continue
+                            val edit = pendingRatingEdits[track.id]
+                            val serverRating = track.rating
+                            if (edit == null) {
+                                if (serverRating != local.rating) {
+                                    dbHelper.updateTrackRating(track.id, serverRating)
+                                }
+                            } else {
+                                val base = edit.baseValue.toIntOrNull()
+                                if (base != null && serverRating == base) {
+                                    // Push the user's value, not S: they can
+                                    // differ (that is the whole point of the
+                                    // edit), and the edit row is the record
+                                    // of what the user set.
+                                    edit.newValue.toIntOrNull()?.let { ratingPush[track.id] = it }
+                                } else {
+                                    // The server changed since the edit (or
+                                    // the baseline is unreadable): server
+                                    // wins in both places.
+                                    dbHelper.updateTrackRating(track.id, serverRating)
+                                    dbHelper.deletePendingTrackEdit(track.id, "rating")
+                                    pendingRatingEdits.remove(track.id)
+                                }
+                            }
+                        }
                     }
 
                     // Determine which tracks to download
@@ -596,6 +654,58 @@ class BackgroundSyncWorker(
                     "tracks_in_playlist" to tracksInPlaylist,
                     "error_message" to playlistError
                 ))
+            }
+
+            // Rating coverage sweep (Phase 8): the playlist loop only sees
+            // tracks in currently selected playlists, so an edit on a track
+            // that dropped out of every synced playlist (membership is
+            // server-curated) would never push. Apply the same rules to the
+            // remaining edit rows, fetching the server value per track.
+            // Normally zero rows, therefore zero requests.
+            if (ratingPassActive && !syncCancelled) {
+                for ((trackId, edit) in pendingRatingEdits.toList()) {
+                    if (trackId in ratingPush) continue
+                    try {
+                        val serverRating = apiClient.getTrack(trackId).rating
+                        val base = edit.baseValue.toIntOrNull()
+                        if (base != null && serverRating == base) {
+                            edit.newValue.toIntOrNull()?.let { ratingPush[trackId] = it }
+                        } else {
+                            // Server wins. The local row may no longer exist
+                            // (orphan cleanup); the update is a no-op then.
+                            dbHelper.updateTrackRating(trackId, serverRating)
+                            dbHelper.deletePendingTrackEdit(trackId, "rating")
+                        }
+                    } catch (e: Exception) {
+                        // Leave the row in place: the next sync retries.
+                        Log.e(TAG, "Rating sweep failed for track $trackId", e)
+                    }
+                }
+            }
+
+            // Push the queued rating edits: one bulk request, falling back
+            // to per-track PUTs so one rejected track does not strand the
+            // rest. Each edit row is deleted only when its own write
+            // succeeded, so a failed push retries indefinitely (no
+            // strike-out data loss, unlike pending_events).
+            if (ratingPassActive && !syncCancelled && ratingPush.isNotEmpty()) {
+                try {
+                    apiClient.updateTrackRatings(ratingPush)
+                    for (trackId in ratingPush.keys) {
+                        dbHelper.deletePendingTrackEdit(trackId, "rating")
+                    }
+                    Log.i(TAG, "Pushed ${ratingPush.size} track rating(s) in one bulk request")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Bulk rating push failed, falling back to per-track PUTs", e)
+                    for ((trackId, rating) in ratingPush) {
+                        try {
+                            apiClient.updateTrackRating(trackId, rating)
+                            dbHelper.deletePendingTrackEdit(trackId, "rating")
+                        } catch (e2: Exception) {
+                            Log.e(TAG, "Failed to push rating for track $trackId; will retry next sync", e2)
+                        }
+                    }
+                }
             }
 
             var tracksDeleted = 0

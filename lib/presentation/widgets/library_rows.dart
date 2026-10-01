@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:audio_service/audio_service.dart';
@@ -10,6 +11,7 @@ import '../services/collection_playback.dart';
 import '../screens/album_detail_screen.dart';
 import '../screens/artist_detail_screen.dart';
 import '../screens/playlist_detail_screen.dart';
+import 'star_rating.dart';
 
 /// Up to two leading initials of an artist name, for generated avatar tiles.
 String artistInitials(String name) {
@@ -171,6 +173,10 @@ class TrackRow extends StatelessWidget {
   final String? secondary;
   final bool showContextMenu;
 
+  /// Invoked after the "Rate…" sheet is dismissed (whether or not a rating
+  /// changed), so the owning list can reload the row's star display.
+  final VoidCallback? onRatingChanged;
+
   const TrackRow({
     super.key,
     required this.track,
@@ -180,6 +186,7 @@ class TrackRow extends StatelessWidget {
     this.leading,
     this.secondary,
     this.showContextMenu = true,
+    this.onRatingChanged,
   });
 
   Future<void> _playNext(BuildContext context) async {
@@ -200,6 +207,68 @@ class TrackRow extends StatelessWidget {
         SnackBar(content: Text('Added "${track.title}" to queue')),
       );
     }
+  }
+
+  /// The row's "Rate…" action: the same interactive control as the Now
+  /// Playing overlay, opened over the track's current rating. The rating is
+  /// committed on release (durable locally; the sync worker pushes it at the
+  /// next sync). The list reloads when the sheet is dismissed.
+  Future<void> _showRateSheet(BuildContext context) async {
+    final repo = LocalDatabaseRepository();
+    final current = await repo.getTrackById(track.id);
+    if (!context.mounted || current == null) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                current.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(sheetContext).textTheme.titleMedium,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                current.artist,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(sheetContext).textTheme.bodySmall,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              RatingControl(
+                rating: current.rating,
+                onCommit: (rating) =>
+                    unawaited(repo.setTrackRating(current.id, rating)),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Release to save \u00b7 synced on next sync',
+                style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(
+                      color: Colors.grey[600],
+                    ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => Navigator.of(sheetContext).pop(),
+                  child: const Text('Done'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (context.mounted) onRatingChanged?.call();
   }
 
   void _goToAlbum(BuildContext context) {
@@ -236,6 +305,11 @@ class TrackRow extends StatelessWidget {
         icon: Icons.add,
         label: 'Add to queue',
         onTap: () => _addToQueue(context),
+      ),
+      _RowMenuAction(
+        icon: Icons.star,
+        label: 'Rate\u2026',
+        onTap: () => _showRateSheet(context),
       ),
       _RowMenuAction(
         icon: Icons.album,
@@ -297,6 +371,14 @@ class TrackRow extends StatelessWidget {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Read-only stars; shown only above zero (zero and unrated are
+              // the same state per spec, and rendering five empty stars on
+              // every row would just be noise).
+              if (track.rating > 0)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: StarRatingDisplay(rating: track.rating, size: 13),
+                ),
               Text(
                 formatTrackDuration(track.lengthMs),
                 style: Theme.of(context).textTheme.bodySmall,

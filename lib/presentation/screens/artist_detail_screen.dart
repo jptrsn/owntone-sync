@@ -184,6 +184,7 @@ class _ArtistDetailScreenState extends State<ArtistDetailScreen> {
                           index: indexById[track.id]!,
                           origin: _origin,
                           secondary: track.album,
+                          onRatingChanged: _loadTracks,
                         ),
                       const Divider(),
                     ],

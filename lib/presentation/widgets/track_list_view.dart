@@ -26,6 +26,7 @@ class TrackListView extends StatelessWidget {
               collection: provider.tracks,
               index: index,
               origin: const QueueOrigin.allTracks(),
+              onRatingChanged: provider.refresh,
             );
           },
         );

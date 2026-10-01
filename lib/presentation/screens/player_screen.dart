@@ -5,9 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:provider/provider.dart';
 
+import '../../data/repositories/local_database_repository.dart';
 import '../controllers/playback_controller.dart';
+import '../providers/browse_provider.dart';
 import '../services/audio_handler.dart';
 import '../widgets/queue_sheet.dart';
+import '../widgets/star_rating.dart';
 import 'album_detail_screen.dart';
 import 'artist_detail_screen.dart';
 
@@ -34,10 +37,16 @@ class NowPlayingSheet extends StatefulWidget {
 
 class _NowPlayingSheetState extends State<NowPlayingSheet> {
   late final PlaybackController _controller;
+  // Captured in initState (like _controller): an ancestor lookup during
+  // dispose is unsafe once the tree is deactivated.
+  late final BrowseProvider _browseProvider;
   StreamSubscription<MediaItem>? _skippedTrackSubscription;
   StreamSubscription<QueueExhaustedReason>? _queueExhaustedSubscription;
   String? _lastNoticeTrackId;
   DateTime? _lastNoticeAt;
+  // True once a rating was committed while this sheet was open; the library
+  // list under the sheet holds stale row data and is refreshed on dismiss.
+  bool _ratingCommitted = false;
   // The sheet's OWN messenger. `ScaffoldMessenger.of(this.context)` would
   // resolve to an ancestor messenger (the nearest one above the route),
   // whose snackbar renders behind this sheet's barrier — invisible. The key
@@ -51,6 +60,7 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
     // Captured here (not read in dispose): looking up an ancestor during
     // dispose is unsafe once the element tree is deactivated.
     _controller = context.read<PlaybackController>();
+    _browseProvider = context.read<BrowseProvider>();
     // While this sheet is open it owns the A9 skipped-track notice; the
     // Library screen suppresses its own so exactly one notice is shown.
     _controller.nowPlayingSheetOpen.value = true;
@@ -68,7 +78,16 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
     _skippedTrackSubscription?.cancel();
     _queueExhaustedSubscription?.cancel();
     _controller.nowPlayingSheetOpen.value = false;
+    if (_ratingCommitted) _browseProvider.refresh();
     super.dispose();
+  }
+
+  /// A rating was committed on the artwork overlay: persist it locally (the
+  /// sync worker pushes it at the next sync) and flag the library for a
+  /// refresh when this sheet is dismissed.
+  void _onRatingCommitted(int trackId, int rating) {
+    _ratingCommitted = true;
+    unawaited(LocalDatabaseRepository().setTrackRating(trackId, rating));
   }
 
   /// A9: the queue ran out of playable tracks, rendered on this sheet's own
@@ -206,7 +225,10 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    _buildAlbumArt(item.artUri),
+                    _AlbumArtWithRating(
+                      item: item,
+                      onRatingCommitted: _onRatingCommitted,
+                    ),
                     const SizedBox(height: 24),
                     _buildTrackInfo(context, item),
                     const SizedBox(height: 16),
@@ -225,38 +247,12 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
     );
   }
 
-  ImageProvider _artImageProvider(Uri? artUri) {
-    if (artUri != null && artUri.scheme == 'file') {
-      final file = File(artUri.toFilePath());
-      if (file.existsSync()) {
-        return FileImage(file);
-      }
-    }
-    return const AssetImage('assets/images/placeholder_album_art.png');
-  }
-
   String? _artFilePath(Uri? artUri) {
     if (artUri != null && artUri.scheme == 'file') {
       final path = artUri.toFilePath();
       if (File(path).existsSync()) return path;
     }
     return null;
-  }
-
-  Widget _buildAlbumArt(Uri? artUri) {
-    final width = MediaQuery.sizeOf(context).width * 0.55;
-    return Hero(
-      tag: nowPlayingArtworkHeroTag,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: Image(
-          image: _artImageProvider(artUri),
-          fit: BoxFit.cover,
-          width: width,
-          height: width,
-        ),
-      ),
-    );
   }
 
   Widget _buildTrackInfo(BuildContext context, MediaItem item) {
@@ -417,6 +413,164 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
           ],
         );
       },
+    );
+  }
+}
+
+ImageProvider _artImageProvider(Uri? artUri) {
+  if (artUri != null && artUri.scheme == 'file') {
+    final file = File(artUri.toFilePath());
+    if (file.existsSync()) {
+      return FileImage(file);
+    }
+  }
+  return const AssetImage('assets/images/placeholder_album_art.png');
+}
+
+/// The Now Playing artwork with a tap-to-toggle rating overlay (HTML5
+/// video-controls behaviour): tapping the artwork reveals the star control,
+/// tapping again hides it, and it auto-hides after a few seconds idle. The
+/// auto-hide timer is suspended while a rating drag is in progress and
+/// re-armed after release. The rating loads from the local DB for the current
+/// track and reloads whenever the track changes.
+class _AlbumArtWithRating extends StatefulWidget {
+  final MediaItem item;
+  final void Function(int trackId, int rating) onRatingCommitted;
+
+  const _AlbumArtWithRating({
+    required this.item,
+    required this.onRatingCommitted,
+  });
+
+  @override
+  State<_AlbumArtWithRating> createState() => _AlbumArtWithRatingState();
+}
+
+class _AlbumArtWithRatingState extends State<_AlbumArtWithRating> {
+  int? _trackId;
+  int _rating = 0;
+  bool _loaded = false;
+  bool _visible = false;
+  bool _dragging = false;
+  Timer? _hideTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _trackId = int.tryParse(widget.item.id);
+    _loadRating();
+  }
+
+  @override
+  void didUpdateWidget(_AlbumArtWithRating oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.id != widget.item.id) {
+      _hideTimer?.cancel();
+      _trackId = int.tryParse(widget.item.id);
+      _loaded = false;
+      _dragging = false;
+      setState(() => _visible = false);
+      _loadRating();
+    }
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadRating() async {
+    final id = _trackId;
+    if (id == null) return;
+    final track = await LocalDatabaseRepository().getTrackById(id);
+    // The track may have changed (or the sheet closed) while the read was
+    // in flight; only apply the result for the track we started reading for.
+    if (!mounted || int.tryParse(widget.item.id) != id) return;
+    setState(() {
+      _rating = track?.rating ?? 0;
+      _loaded = true;
+    });
+  }
+
+  void _hide() {
+    if (!mounted) return;
+    setState(() => _visible = false);
+  }
+
+  void _toggle() {
+    if (_dragging) return;
+    _hideTimer?.cancel();
+    setState(() => _visible = !_visible);
+    if (_visible) {
+      _hideTimer = Timer(const Duration(seconds: 5), _hide);
+    }
+  }
+
+  void _onDragStart() {
+    _dragging = true;
+    _hideTimer?.cancel();
+  }
+
+  void _onRelease(int settled) {
+    _dragging = false;
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(seconds: 3), _hide);
+    if (settled != _rating) {
+      final id = _trackId;
+      if (id == null) return;
+      _rating = settled;
+      widget.onRatingCommitted(id, settled);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Bounded square: this widget sits in a vertical ListView (unbounded
+    // height), so a StackFit.expand Stack must be size-constrained here or
+    // it asserts in performLayout and blanks the sheet.
+    final width = MediaQuery.sizeOf(context).width * 0.55;
+    return Hero(
+      tag: nowPlayingArtworkHeroTag,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _toggle,
+          child: SizedBox(
+            width: width,
+            height: width,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Image(
+                  image: _artImageProvider(widget.item.artUri),
+                  fit: BoxFit.cover,
+                ),
+                if (_visible && _loaded)
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black38,
+                        borderRadius: BorderRadius.circular(28),
+                      ),
+                      child: RatingControl(
+                        rating: _rating,
+                        onDragStart: _onDragStart,
+                        onTap: _toggle,
+                        onCommit: _onRelease,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

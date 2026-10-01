@@ -60,6 +60,11 @@ class SyncedTrack {
   final String? artworkPath;
   final String? contentUri;
 
+  /// 0-100. The last-known server value when no edit is pending; the user's
+  /// value while a pending_track_edits row for this track exists (so display
+  /// stays a plain column read).
+  final int rating;
+
   SyncedTrack({
     required this.id,
     required this.title,
@@ -78,6 +83,7 @@ class SyncedTrack {
     this.artworkUrl = '',
     this.artworkPath,
     this.contentUri,
+    this.rating = 0,
   });
 
   Map<String, dynamic> toMap() {
@@ -99,6 +105,7 @@ class SyncedTrack {
       'artwork_url': artworkUrl,
       'artwork_path': artworkPath,
       'content_uri': contentUri,
+      'rating': rating,
     };
   }
 
@@ -121,6 +128,7 @@ class SyncedTrack {
       artworkUrl: map['artwork_url'] as String? ?? '',
       artworkPath: map['artwork_path'] as String?,
       contentUri: map['content_uri'] as String?,
+      rating: map['rating'] as int? ?? 0,
     );
   }
 }
@@ -233,6 +241,19 @@ class PlaybackStateRecord {
       originName: map['origin_name'] as String?,
     );
   }
+}
+
+/// A pending field-edit row from `pending_track_edits`.
+class PendingTrackEditRow {
+  final String baseValue;
+  final String newValue;
+  final int updatedAt;
+
+  PendingTrackEditRow({
+    required this.baseValue,
+    required this.newValue,
+    required this.updatedAt,
+  });
 }
 
 /// Grouped results of a library search.
@@ -354,6 +375,121 @@ class LocalDatabaseRepository {
           {'content_uri': entry.value},
           where: 'id = ?',
           whereArgs: [entry.key],
+        );
+      }
+    });
+  }
+
+  // Pending track-edit operations (last-write-wins field edits; the
+  // composite primary key (track_id, field) keeps one row per field).
+
+  Future<PendingTrackEditRow?> getPendingTrackEdit(
+    int trackId,
+    String field,
+  ) async {
+    final db = await _dbHelper.database;
+    final rows = await db.query(
+      'pending_track_edits',
+      where: 'track_id = ? AND field = ?',
+      whereArgs: [trackId, field],
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return PendingTrackEditRow(
+      baseValue: row['base_value'] as String,
+      newValue: row['new_value'] as String,
+      updatedAt: row['updated_at'] as int,
+    );
+  }
+
+  Future<void> insertPendingTrackEdit({
+    required int trackId,
+    required String field,
+    required String newValue,
+    required String baseValue,
+  }) async {
+    final db = await _dbHelper.database;
+    await db.insert('pending_track_edits', {
+      'track_id': trackId,
+      'field': field,
+      'new_value': newValue,
+      'base_value': baseValue,
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  /// Overwrites only `new_value`/`updated_at` of an existing edit. The
+  /// original `base_value` is preserved — it stays anchored to the server
+  /// truth the first edit was made against, which is what lets the sync
+  /// worker detect a later server-side change. Overwriting it with the
+  /// user's previous value destroys that detection.
+  Future<void> updatePendingTrackEditValue({
+    required int trackId,
+    required String field,
+    required String newValue,
+  }) async {
+    final db = await _dbHelper.database;
+    await db.update(
+      'pending_track_edits',
+      {'new_value': newValue, 'updated_at': DateTime.now().millisecondsSinceEpoch},
+      where: 'track_id = ? AND field = ?',
+      whereArgs: [trackId, field],
+    );
+  }
+
+  /// Sets the rating (0-100) of [trackId] locally and records it as a
+  /// pending edit so the sync worker pushes it at the next sync.
+  ///
+  /// While a pending edit exists, [SyncedTrack.rating] holds the user's
+  /// value (display stays a plain column read); the edit row's `base_value`
+  /// holds what the server had when the first edit was made.
+  Future<void> setTrackRating(int trackId, int rating) async {
+    final clamped = rating.clamp(0, 100);
+    final db = await _dbHelper.database;
+    await db.transaction((txn) async {
+      final existing = await txn.query(
+        'pending_track_edits',
+        columns: ['base_value'],
+        where: 'track_id = ? AND field = ?',
+        whereArgs: [trackId, 'rating'],
+      );
+      String baseValue;
+      if (existing.isEmpty) {
+        // No pending edit: the rating column IS the last-known server value.
+        // Read it BEFORE the update below.
+        final rows = await txn.query(
+          'synced_tracks',
+          columns: ['rating'],
+          where: 'id = ?',
+          whereArgs: [trackId],
+        );
+        final current = rows.isEmpty ? 0 : (rows.first['rating'] as int? ?? 0);
+        if (current == clamped) return; // No-op release: nothing to record.
+        baseValue = '$current';
+      } else {
+        baseValue = existing.first['base_value'] as String;
+      }
+      await txn.update(
+        'synced_tracks',
+        {'rating': clamped},
+        where: 'id = ?',
+        whereArgs: [trackId],
+      );
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (existing.isEmpty) {
+        await txn.insert('pending_track_edits', {
+          'track_id': trackId,
+          'field': 'rating',
+          'new_value': '$clamped',
+          'base_value': baseValue,
+          'updated_at': now,
+        });
+      } else {
+        await txn.update(
+          'pending_track_edits',
+          {'new_value': '$clamped', 'updated_at': now},
+          where: 'track_id = ? AND field = ?',
+          whereArgs: [trackId, 'rating'],
         );
       }
     });

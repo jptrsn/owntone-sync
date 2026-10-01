@@ -83,11 +83,116 @@ class DatabaseHelper(private val context: Context) {
             // download.
             if (track.artworkPath != null) put("artwork_path", track.artworkPath)
             if (track.contentUri != null) put("content_uri", track.contentUri)
+            // rating is deliberately omitted from the UPDATE path: an
+            // existing row may carry the user's unpushed rating, and the
+            // upsert must preserve it. It is added only for the INSERT of a
+            // brand-new row below, where no local edit can exist yet and the
+            // server's rating is the only truth available (without this a
+            // freshly downloaded track would show 0 stars until the next
+            // sync's pull).
         }
         val updated = db.update("synced_tracks", values, "id = ?", arrayOf(track.id.toString()))
         if (updated == 0) {
+            if (hasColumn("synced_tracks", "rating")) {
+                values.put("rating", track.rating)
+            }
             db.insert("synced_tracks", null, values)
         }
+        db.close()
+    }
+
+    private fun hasColumn(table: String, column: String): Boolean {
+        val db = openDatabase()
+        return try {
+            val cursor = db.rawQuery("PRAGMA table_info($table)", null)
+            var found = false
+            while (cursor.moveToNext()) {
+                if (cursor.getString(1) == column) {
+                    found = true
+                    break
+                }
+            }
+            cursor.close()
+            found
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * True when the v7 rating schema is present: BOTH the
+     * pending_track_edits table and the synced_tracks.rating column. The
+     * worker opens the DB without migrating, so a scheduled sync that runs
+     * before the app has launched once after an update can hit a v6 schema;
+     * either half missing means the whole rating pass must be skipped.
+     */
+    fun hasRatingSupport(): Boolean {
+        val db = openDatabase()
+        return try {
+            val tableCursor = db.rawQuery(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pending_track_edits'",
+                null
+            )
+            val hasTable = tableCursor.moveToFirst()
+            tableCursor.close()
+            if (!hasTable) return false
+            val colCursor = db.rawQuery("PRAGMA table_info(synced_tracks)", null)
+            var hasRatingColumn = false
+            while (colCursor.moveToNext()) {
+                if (colCursor.getString(1) == "rating") {
+                    hasRatingColumn = true
+                    break
+                }
+            }
+            colCursor.close()
+            hasRatingColumn
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * Narrow rating-only update: pulls the server value onto an existing
+     * row without touching any other column (a full insertOrUpdateTrack
+     * would rewrite download metadata and is only used in the download
+     * loop). A no-op when the track has no local row.
+     */
+    fun updateTrackRating(trackId: Int, rating: Int) {
+        val db = openDatabase()
+        db.update(
+            "synced_tracks",
+            ContentValues().apply { put("rating", rating) },
+            "id = ?",
+            arrayOf(trackId.toString())
+        )
+        db.close()
+    }
+
+    fun getPendingTrackEdits(field: String): List<PendingTrackEdit> {
+        val db = openDatabase()
+        val edits = mutableListOf<PendingTrackEdit>()
+        val cursor = db.query(
+            "pending_track_edits",
+            null,
+            "field = ?",
+            arrayOf(field),
+            null, null, null
+        )
+        while (cursor.moveToNext()) {
+            edits.add(PendingTrackEdit.fromCursor(cursor))
+        }
+        cursor.close()
+        db.close()
+        return edits
+    }
+
+    fun deletePendingTrackEdit(trackId: Int, field: String) {
+        val db = openDatabase()
+        db.delete(
+            "pending_track_edits",
+            "track_id = ? AND field = ?",
+            arrayOf(trackId.toString(), field)
+        )
         db.close()
     }
 
@@ -351,7 +456,8 @@ class DatabaseHelper(private val context: Context) {
         val year: Int,
         val artworkUrl: String,
         val artworkPath: String?,
-        val contentUri: String? = null
+        val contentUri: String? = null,
+        val rating: Int = 0
     ) {
         companion object {
             fun fromCursor(cursor: Cursor) = SyncedTrack(
@@ -371,7 +477,33 @@ class DatabaseHelper(private val context: Context) {
                 year = cursor.getInt(cursor.getColumnIndexOrThrow("year")),
                 artworkUrl = cursor.getString(cursor.getColumnIndexOrThrow("artwork_url")) ?: "",
                 artworkPath = cursor.getString(cursor.getColumnIndexOrThrow("artwork_path")),
-                contentUri = cursor.getString(cursor.getColumnIndexOrThrow("content_uri"))
+                contentUri = cursor.getString(cursor.getColumnIndexOrThrow("content_uri")),
+                // Tolerant read: on a pre-v7 DB (worker ran before the app
+                // has launched once after the update) the column is absent
+                // and every other caller of fromCursor must still work.
+                rating = cursor.getColumnIndex("rating").let {
+                    if (it >= 0) cursor.getInt(it) else 0
+                }
+            )
+        }
+    }
+
+    // A pending field edit (last-write-wins state). new_value/base_value are
+    // stringified: `field` determines the interpretation.
+    data class PendingTrackEdit(
+        val trackId: Int,
+        val field: String,
+        val newValue: String,
+        val baseValue: String,
+        val updatedAt: Long
+    ) {
+        companion object {
+            fun fromCursor(cursor: Cursor) = PendingTrackEdit(
+                trackId = cursor.getInt(cursor.getColumnIndexOrThrow("track_id")),
+                field = cursor.getString(cursor.getColumnIndexOrThrow("field")) ?: "",
+                newValue = cursor.getString(cursor.getColumnIndexOrThrow("new_value")) ?: "",
+                baseValue = cursor.getString(cursor.getColumnIndexOrThrow("base_value")) ?: "",
+                updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at"))
             )
         }
     }
