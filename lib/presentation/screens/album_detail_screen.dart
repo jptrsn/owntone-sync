@@ -32,13 +32,29 @@ class AlbumDetailScreen extends StatefulWidget {
 
 class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
   final LocalDatabaseRepository _dbRepo = LocalDatabaseRepository();
+  late final PlaybackController _controller;
   List<SyncedTrack> _tracks = [];
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
+    _controller = context.read<PlaybackController>();
     _loadTracks();
+    // A rating can be committed on the Now Playing sheet while this screen
+    // is mounted underneath it; the sheet only refreshes the BrowseProvider,
+    // so reload our own list when the sheet closes.
+    _controller.nowPlayingSheetOpen.addListener(_onSheetClosed);
+  }
+
+  void _onSheetClosed() {
+    if (!_controller.nowPlayingSheetOpen.value) _loadTracks();
+  }
+
+  @override
+  void dispose() {
+    _controller.nowPlayingSheetOpen.removeListener(_onSheetClosed);
+    super.dispose();
   }
 
   Future<void> _loadTracks() async {

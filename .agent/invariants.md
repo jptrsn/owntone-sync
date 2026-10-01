@@ -456,6 +456,30 @@ a shared playlist.
 
 ---
 
+### 30. Rating reconciliation only reaches tracks in selected playlists, or with pending edits
+
+`BackgroundSyncWorker` adjusts ratings in two passes: (a) the playlist loop,
+which sees every track of the currently selected playlists, and (b) the
+coverage sweep, which iterates **only `pending_track_edits` rows** (one
+`getTrack` per remaining edit) and pushes the ones whose `base_value` still
+matches the server. A track with no pending edit that is in no selected
+playlist is never touched: its local `rating` silently diverges from the
+server until it (or an edit on it) re-enters scope. Phase 8 verification saw
+exactly this: 874/876, dropped out of the selected playlists, kept stale
+local ratings through several syncs with no log line.
+
+**WHY:** this reads like a sync defect ("server 55, local 80, and it just
+sits there") but it is the designed scope: local library = selected playlists
++ local edits. Do not "fix" it by sweeping the whole `synced_tracks` table
+each sync — that would add one HTTP request per track per sync.
+
+**BREAKS IF UNDONE:** widening the sweep to all local tracks, or deleting
+`pending_track_edits` rows outside the push-success path, would either hammer
+the server or strand user edits (the row is the retry record — see the
+worker's comment: a failed push must keep the row for the next sync).
+
+---
+
 ## UI
 
 ### 16. `PlayerScaffold` docks the mini player as a layout child (Column), never an overlay
@@ -618,6 +642,30 @@ casual UI test silently scrambles the user's queue.
 
 ---
 
+### 31. Detail/search screens reload their list when the Now Playing sheet closes
+
+The Now Playing sheet commits a rating via `PlaybackController`, which only
+notifies the `BrowseProvider` (library/search *index* data). The
+**detail screens keep their own `_tracks` list** (`playlist_detail_screen`,
+`album_detail_screen`, `artist_detail_screen`) and the search screen keeps
+`_result`; none of them watch the rating. Each of the four now holds
+`late final PlaybackController _controller`, adds a listener on
+`nowPlayingSheetOpen` in `initState`, and re-runs its own `_loadTracks()` /
+`_search(_query)` when the flag goes false (listener removed in `dispose`).
+
+**WHY:** Phase 8 verification found that rating a track on the sheet and
+closing it left the row behind the sheet showing the **stale** "Rated x of 5"
+(or no rating) until a manual refresh — the sheet updated, the screen under
+it did not. The fix is the sheet-close reload above.
+
+**BREAKS IF UNDONE:** removing the listener (or the `nowPlayingSheetOpen`
+flag flips in `player_screen.dart`) re-opens the stale-rating gap: the user
+rates a song, the star on the row doesn't change, and it looks broken. Any
+new screen that keeps its own track list and sits under the sheet needs the
+same wiring.
+
+---
+
 ## Environment
 
 ### 10. The OwnTone server is at `192.168.1.13`
@@ -722,6 +770,56 @@ in that `ListView` needs the same bounding.
 
 **See also** protocol §4: a negative result from your own harness is a claim
 about two things — the feature and the harness.
+
+---
+
+### 32. The emulator can wedge Flutter list painting mid-session (UNKNOWN cause)
+
+Observed once, in Phase 8 verification, after an airplane-mode on/off cycle
+plus force-stop relaunches: `ListView`/`ListView.builder` rendered **only the
+first item** (library playlists: 1 of 2 rows; search results: the section
+header but 0 rows) while a plain-`Scaffold` screen (the Sync screen) rendered
+all of its rows fine. Established at the time:
+
+- No framework error, no cast/overflow, in an attached `flutter run` console.
+- Layout constraints were **correct** (`LayoutBuilder` inside the list printed
+  `h=706`/`h=772` with the right item count) — this was a **paint**, not a
+  layout, problem.
+- Reproduced under **both** the Impeller/OpenGLES backend and
+  `--enable-software-rendering`; survived an `adb reboot` of the emulator.
+- A **fresh element** recovered it: switching tabs (new `ListView` instance)
+  painted all rows immediately on that instance.
+- `uiautomator dump` returned **zero labels** for this app during the wedge
+  (while the system Settings app still dumped fine), so it also ate the
+  semantics tree.
+
+**WHY:** unknown — no code changed between the last good render and the first
+blank one; the trigger was an OS-level network toggle + process cycle, not an
+app edit. Do not attribute it to app code on the strength of correlation.
+
+**IF YOU SEE IT AGAIN:** (1) confirm with a `LayoutBuilder` print that
+constraints are sane before suspecting the widget; (2) try a fresh element
+(tab bounce) to un-stick painting and keep verifying; (3) as a last resort
+`adb reboot` the emulator; (4) record it as UNKNOWN in the phase report with
+the constraint evidence, per protocol §2 — do not invent a cause.
+
+---
+
+### 33. Trigger the background sync from the Sync screen, not the shell
+
+The `BackgroundSyncWorker` is a WorkManager unique work (`sync-task`,
+`androidx.work.workdb` under `no_backup/`). `adb shell cmd jobscheduler run -f
+<package> <jobId>` reports **"Could not find job N"** even though `dumpsys
+jobscheduler` shows the job registered — the CLI does not resolve
+WorkManager's composite job ids on this image. Do not burn time on it.
+
+**Drive a sync from the app instead:** drawer → Sync → the Sync button
+(top-right of the "N playlists selected" row). Watch `logcat -s
+BackgroundSyncWorker` for `Pushed N track rating(s)` / `Background sync
+completed`, and read the authoritative result from the API + DB, not the UI.
+Caveat: while a sync is running that same top-right slot holds a red
+**Cancel** button — a stray tap there cancels the run (and the rating push is
+skipped on cancel).
 
 ---
 

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../data/repositories/local_database_repository.dart';
 import '../controllers/playback_controller.dart';
@@ -19,13 +20,31 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _textController = TextEditingController();
+  late final PlaybackController _controller;
   Timer? _debounce;
   String _query = '';
   LibrarySearchResult? _result;
   bool _searching = false;
 
   @override
+  void initState() {
+    super.initState();
+    _controller = context.read<PlaybackController>();
+    // A rating can be committed on the Now Playing sheet while this screen
+    // is mounted underneath it; the sheet only refreshes the BrowseProvider,
+    // so rerun the search when the sheet closes.
+    _controller.nowPlayingSheetOpen.addListener(_onSheetClosed);
+  }
+
+  void _onSheetClosed() {
+    if (!_controller.nowPlayingSheetOpen.value && _query.isNotEmpty) {
+      _search(_query);
+    }
+  }
+
+  @override
   void dispose() {
+    _controller.nowPlayingSheetOpen.removeListener(_onSheetClosed);
     _debounce?.cancel();
     _textController.dispose();
     super.dispose();
