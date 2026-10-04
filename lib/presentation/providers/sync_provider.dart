@@ -404,7 +404,9 @@ class SyncProvider extends ChangeNotifier {
     }
   }
 
-  /// Update sync schedule
+  /// Update sync schedule. Throws if the schedule could not be registered
+  /// on the native side, so callers do not report a save that did not take
+  /// effect.
   Future<void> updateSyncSchedule(SyncSchedule schedule) async {
     _syncSchedule = schedule;
 
@@ -412,12 +414,13 @@ class SyncProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('sync_schedule', json.encode(schedule.toJson()));
 
-    // Update native worker
-    try {
-      const channel = MethodChannel('dev.educoder.owntone_sync/sync');
-      await channel.invokeMethod('updateSyncSchedule');
-    } catch (e) {
-      logger.e('Error updating sync schedule', error: e);
+    // Update native worker. The native side reports false when the
+    // WorkManager enqueue threw; a channel error throws on its own.
+    const channel = MethodChannel('dev.educoder.owntone_sync/sync');
+    final registered = await channel.invokeMethod<bool>('updateSyncSchedule');
+    if (registered != true) {
+      logger.e('Sync schedule was not registered on the native side');
+      throw Exception('Could not register sync schedule');
     }
 
     notifyListeners();

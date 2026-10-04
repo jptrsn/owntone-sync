@@ -1,7 +1,8 @@
 # OwnTone Sync — Player-First UX Specification
 
 **Status:** Draft for implementation
-**Supersedes:** `.agent/player-spec.md`, `.agent/play-music-plan.md`
+**Supersedes:** the original `player-spec.md` and `play-music-plan.md`, deleted
+2026-10-02 (recoverable from git history)
 **Companion document:** `.agent/player-refactor-plan.md` (how to get there)
 
 This document defines **what** we are building and **why**. It is deliberately

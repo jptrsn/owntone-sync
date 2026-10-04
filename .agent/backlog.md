@@ -67,3 +67,42 @@ server's `artwork_url` (an absolute URL on the OwnTone host) is the only
 source; every artwork display is a live network fetch. Offline artwork, or
 caching it on sync, would be new work — not a bug to fix, and not something a
 later phase silently "repairs" by writing the column.
+
+## Two remaining ways the scheduled-sync chain can still die
+
+The 2026-10-03 fix closed the two paths named in the blocker (illegal
+`setExpedited` pairing, and the missing re-arm on `catch (e: Exception)`).
+Code-path analysis during that fix found **two more** that were not touched:
+
+- **User-cancel of a running sync** — `CANCELLED_BY_APP` → `handleInterruption`
+  → `Result.success()`, with **no** `scheduleNextSync()`. Cancelling a sync
+  therefore stops all future scheduled syncs.
+- **`setForeground` refusal** — `ForegroundServiceStartNotAllowedException` →
+  `Result.failure()`, with **no** re-arm.
+
+Both leave the schedule displaying as enabled while nothing is queued, and —
+as before — only a manual sync revives it. Neither was introduced by the fix;
+both predate it and exist on released `main`.
+
+Lower severity than the fixed pair: user-cancel is deliberate (though the
+consequence is invisible and surprising), and `setForeground` refusal is rare.
+But the principle the code already states at the skip-today call site — *"skipping
+today must not break the recurring schedule"* — applies to every exit path, and
+only three of five currently honour it. The durable fix is to re-arm in a
+`finally`-style guarantee rather than per-path.
+
+## A sync where every playlist fails still reports success
+
+Found while trying to induce a sync failure for the 2026-10-03 chain test. Every
+per-playlist network call sits inside a per-iteration `try/catch`
+(`BackgroundSyncWorker.kt:406-648`), so an unreachable server is swallowed per
+playlist and the run completes as **success** with per-playlist errors recorded.
+It never reaches the outer `catch (e: Exception)`.
+
+Consequence: with the server down but reachable-ish (closed port), Sync History
+shows a completed sync that downloaded nothing. A missing server *URL* does throw
+and is handled correctly; a dead *server* does not.
+
+Worth deciding what the intended semantics are: a run where every playlist failed
+is arguably a failed sync, and should be surfaced as one rather than recorded as
+completed.

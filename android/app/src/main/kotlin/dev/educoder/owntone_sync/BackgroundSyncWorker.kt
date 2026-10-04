@@ -882,6 +882,18 @@ class BackgroundSyncWorker(
 
                 SyncProgressBroadcaster.dismissNotification(applicationContext)
                 SyncProgressBroadcaster.broadcastSyncComplete("failed", errorMessage)
+
+                // Re-arm the recurring schedule: a failed run must not kill
+                // the chain, same rule as the "skipping today" path above.
+                // Without this, one failure leaves no pending work and no
+                // retry (Result.failure() is terminal), and the recurring
+                // schedule dies permanently. Result.retry() was not used
+                // because it re-runs the same work and only re-arms the
+                // chain if a retry eventually succeeds via the success
+                // path - a failure that outlasts the retries leaves the
+                // schedule dead anyway.
+                scheduleNextSync()
+
                 Result.failure()
             }
         }

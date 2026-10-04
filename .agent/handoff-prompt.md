@@ -8,8 +8,7 @@ Run this once per phase, substituting the phase number. Phases are defined in
 ```
 You are implementing a refactor of this Flutter app, defined in four documents
 in this repo. Read ALL FOUR IN FULL before touching any code — they are
-authoritative and supersede anything in .agent/player-spec.md or
-.agent/play-music-plan.md (both obsolete; ignore them):
+authoritative:
 
   .agent/player-ux-spec.md        — what we are building and why, plus the
                                     user stories and acceptance criteria

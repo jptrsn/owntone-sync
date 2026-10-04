@@ -199,9 +199,10 @@ class MainActivity: AudioServiceActivity() {
                     result.success(true)
                 }
                 "updateSyncSchedule" -> {
-                    // Re-register worker when schedule changes
-                    registerBackgroundSync()
-                    result.success(true)
+                    // Re-register worker when schedule changes. Report
+                    // whether the schedule actually took effect so the Dart
+                    // side does not claim a save that the enqueue threw.
+                    result.success(registerBackgroundSync())
                 }
                 "isSyncRunning" -> {
                     try {
@@ -549,25 +550,31 @@ class MainActivity: AudioServiceActivity() {
         }
     }
 
-    private fun registerBackgroundSync() {
+    /**
+     * Registers the next scheduled sync from the saved schedule.
+     * Returns true when the schedule took effect (work enqueued, or all
+     * work cancelled for a disabled schedule) and false when it did not
+     * (no schedule saved, or the enqueue threw).
+     */
+    private fun registerBackgroundSync(): Boolean {
         val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
         val syncScheduleJson = prefs.getString("flutter.sync_schedule", null)
 
         if (syncScheduleJson == null) {
             Log.d("MainActivity", "No sync schedule configured")
-            return
+            return false
         }
 
         try {
             val moshi = Moshi.Builder().build()
             val adapter = moshi.adapter(SyncSchedule::class.java)
-            val schedule = adapter.fromJson(syncScheduleJson) ?: return
+            val schedule = adapter.fromJson(syncScheduleJson) ?: return false
 
             if (!schedule.enabled) {
                 // Cancel all work if sync is disabled
                 WorkManager.getInstance(applicationContext).cancelAllWorkByTag("sync-task")
                 Log.d("MainActivity", "Background sync disabled")
-                return
+                return true
             }
 
             // Calculate delay until next scheduled time
@@ -599,16 +606,16 @@ class MainActivity: AudioServiceActivity() {
                 )
                 .build()
 
-            // Use OneTimeWorkRequest with calculated delay and expedited flag
+            // Use a OneTimeWorkRequest with the calculated delay. No
+            // expedited flag: WorkManager rejects expedited work that also
+            // has an initial delay on API 31+ ("Expedited jobs cannot be
+            // delayed"), and a scheduled sync is not an immediate one.
+            // (The manual-sync request in triggerBackgroundSync has no
+            // initial delay, where setExpedited is legal, and keeps it.)
             val syncWorkRequest = OneTimeWorkRequestBuilder<BackgroundSyncWorker>()
                 .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
                 .setConstraints(constraints)
                 .addTag("sync-task")
-                .apply {
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                        setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                    }
-                }
                 .build()
 
             WorkManager.getInstance(applicationContext)
@@ -623,8 +630,10 @@ class MainActivity: AudioServiceActivity() {
             // Save expected sync time for missed sync detection
             prefs.edit().putString("flutter.expected_next_sync", scheduledTime.timeInMillis.toString()).apply()
 
+            return true
         } catch (e: Exception) {
             Log.e("MainActivity", "Error registering background sync", e)
+            return false
         }
     }
 

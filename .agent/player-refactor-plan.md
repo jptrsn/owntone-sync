@@ -3,7 +3,8 @@
 **Companion to:** `.agent/player-ux-spec.md` (what and why — read it first)
 **This document:** current-state defects, target architecture, and the ordered
 path from one to the other.
-**Supersedes:** `.agent/player-spec.md`, `.agent/play-music-plan.md`
+**Supersedes:** the original `player-spec.md` and `play-music-plan.md`, deleted
+2026-10-02 (recoverable from git history)
 
 ---
 
