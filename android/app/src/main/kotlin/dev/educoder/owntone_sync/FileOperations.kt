@@ -1,10 +1,13 @@
 package dev.educoder.owntone_sync
 
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
+import java.io.File
 import java.io.OutputStream
+import java.security.MessageDigest
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicInteger
 import android.system.ErrnoException
@@ -16,6 +19,83 @@ class FileOperations(private val context: Context) {
 
     companion object {
         private const val STREAM_BUFFER_SIZE = 262144 // 256KB
+        private const val ARTWORK_DIR_NAME = "artwork"
+    }
+
+    // ---------------------------------------------------------------------
+    // Artwork cache: content-addressed, app-private (NOT the SAF music
+    // folder). Artwork is derived data, not the user's media: no SAF grant,
+    // no content:// complexity, and Uri.file() works on the stored path.
+    // Files are named <sha256 of the bytes>.<ext>, so identical covers
+    // across an album collapse to one file automatically and compilations
+    // with genuinely different per-track art stay correct — no
+    // album-identity logic needed (album identity is ambiguous here).
+    // ---------------------------------------------------------------------
+
+    /**
+     * Reads the picture embedded in the audio file at [contentUri]
+     * (a content:// URI backed by the SAF tree grant — the same source
+     * the player uses). Returns null when the file has no embedded
+     * picture; throws when the file cannot be read, so the caller can
+     * fall back to the server without mistaking a read error for "no art".
+     *
+     * MediaMetadataRetriever is a native resource: it MUST be released
+     * per call or it leaks across a library-sized loop.
+     */
+    fun extractEmbeddedPicture(contentUri: Uri): ByteArray? {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, contentUri)
+            return retriever.embeddedPicture?.takeIf { it.isNotEmpty() }
+        } finally {
+            retriever.release()
+        }
+    }
+
+    /** File extension sniffed from image magic bytes. */
+    fun detectImageExtension(bytes: ByteArray): String {
+        return when {
+            bytes.size >= 3 &&
+                bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte() -> "jpg"
+            bytes.size >= 8 &&
+                bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
+                bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte() -> "png"
+            else -> "jpg"
+        }
+    }
+
+    /**
+     * Stores [bytes] in the content-addressed artwork cache and returns the
+     * absolute path, or null on failure (the caller then leaves the track
+     * unresolved for the next sync). The write goes through a temp file and
+     * rename so a crash cannot leave a truncated cache file: a hash-named
+     * file is only ever complete.
+     */
+    fun storeArtworkFile(bytes: ByteArray): String? {
+        if (bytes.isEmpty()) return null
+        return try {
+            val dir = File(context.filesDir, ARTWORK_DIR_NAME)
+            if (!dir.exists() && !dir.mkdirs()) {
+                Log.e("FileOperations", "Cannot create artwork directory: ${dir.absolutePath}")
+                return null
+            }
+            val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+            val hash = digest.joinToString("") { "%02x".format(it) }
+            val ext = detectImageExtension(bytes)
+            val target = File(dir, "$hash.$ext")
+            if (!target.exists()) {
+                val tmp = File(dir, "$hash.$ext.tmp")
+                tmp.writeBytes(bytes)
+                if (!tmp.renameTo(target)) {
+                    tmp.copyTo(target, overwrite = true)
+                    tmp.delete()
+                }
+            }
+            target.absolutePath
+        } catch (e: Exception) {
+            Log.e("FileOperations", "Failed to store artwork", e)
+            null
+        }
     }
 
     data class BatchDeleteResult(

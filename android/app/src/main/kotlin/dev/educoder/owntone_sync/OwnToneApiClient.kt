@@ -255,6 +255,38 @@ class OwnToneApiClient(
         }
     }
 
+    /**
+     * Fetches a track's artwork from the server. [artworkUrl] is the
+     * relative artwork_url from the track object (e.g. "/artwork/item/874");
+     * the baseUrl is prepended — the value is never an absolute URL.
+     *
+     * Returns null when the track has NO artwork. The server signals that
+     * with HTTP 204 No Content and a zero-length body (not 404); a 200 with
+     * an empty body is treated the same. Treating 204 as success and
+     * writing the empty body would create a zero-byte file — the exact
+     * failure the old isSuccessful() check produced.
+     *
+     * Throws IOException on transport/HTTP failure so the caller can leave
+     * the track unresolved and retry on the next sync (a network error is
+     * NOT evidence of absence).
+     */
+    fun fetchTrackArtwork(artworkUrl: String): ByteArray? {
+        val url = when {
+            artworkUrl.startsWith("http://") || artworkUrl.startsWith("https://") -> artworkUrl
+            artworkUrl.startsWith("/") -> "$baseUrl$artworkUrl"
+            else -> "$baseUrl/$artworkUrl"
+        }
+        val request = Request.Builder().url(url).build()
+        client.newCall(request).execute().use { response ->
+            val bytes = response.body?.bytes() ?: ByteArray(0)
+            return when {
+                response.code == 204 || bytes.isEmpty() -> null
+                response.isSuccessful -> bytes
+                else -> throw IOException("Artwork fetch failed: ${response.code} $url")
+            }
+        }
+    }
+
     fun getTrack(trackId: Int): Track {
         val request = Request.Builder()
             .url("$baseUrl/api/library/tracks/$trackId")

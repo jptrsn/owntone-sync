@@ -65,6 +65,11 @@ class SyncedTrack {
   /// stays a plain column read).
   final int rating;
 
+  /// Where [artworkPath] came from: null = unresolved (the sync worker
+  /// will resolve it), 'embedded', 'server', or 'none' = checked and
+  /// absent (the negative cache). Written only by the Kotlin sync worker.
+  final String? artworkSource;
+
   SyncedTrack({
     required this.id,
     required this.title,
@@ -84,6 +89,7 @@ class SyncedTrack {
     this.artworkPath,
     this.contentUri,
     this.rating = 0,
+    this.artworkSource,
   });
 
   Map<String, dynamic> toMap() {
@@ -106,6 +112,7 @@ class SyncedTrack {
       'artwork_path': artworkPath,
       'content_uri': contentUri,
       'rating': rating,
+      'artwork_source': artworkSource,
     };
   }
 
@@ -129,6 +136,7 @@ class SyncedTrack {
       artworkPath: map['artwork_path'] as String?,
       contentUri: map['content_uri'] as String?,
       rating: map['rating'] as int? ?? 0,
+      artworkSource: map['artwork_source'] as String?,
     );
   }
 }
@@ -690,15 +698,21 @@ class LocalDatabaseRepository {
         orderByClause = 'album ASC';
     }
 
+    // MAX(artwork_path) picks one representative cover for the row. The
+    // per-track paths are content-addressed, so within one (album, artist,
+    // year) they are normally all identical — but a pathological mixed
+    // case (e.g. one track resolved embedded, one from the server) must not
+    // split the album into duplicate rows; grouping by artwork_path would
+    // do exactly that.
     final result = await db.rawQuery('''
       SELECT
         album,
         album_artist,
         year,
-        artwork_path,
+        MAX(artwork_path) AS artwork_path,
         COUNT(*) AS track_count
       FROM synced_tracks
-      GROUP BY album, album_artist, year, artwork_path
+      GROUP BY album, album_artist, year
       ORDER BY $orderByClause
     ''');
 
@@ -892,12 +906,12 @@ class LocalDatabaseRepository {
         album,
         album_artist,
         year,
-        artwork_path,
+        MAX(artwork_path) AS artwork_path,
         COUNT(*) AS track_count
       FROM synced_tracks
       WHERE LOWER(album) LIKE ? ESCAPE '\\'
         OR LOWER(album_artist) LIKE ? ESCAPE '\\'
-      GROUP BY album, album_artist, year, artwork_path
+      GROUP BY album, album_artist, year
       ORDER BY album ASC
       LIMIT 20
     ''', [q, q]);

@@ -1,10 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
-import 'package:path_provider/path_provider.dart';
 
 import '../../utils/logger.dart';
 import '../models/playlist.dart';
@@ -20,9 +18,6 @@ class FileSystemRepository {
 
   // Get the playlists directory path (relative to SAF root)
   String getPlaylistsPath() => 'playlists';
-
-  // Get the artwork directory path (app-private storage)
-  String getArtworkPath() => 'artwork';
 
   String sanitizeFilename(String name) {
     final invalidChars = RegExp(r'[/\\:*?"<>|]');
@@ -57,13 +52,6 @@ class FileSystemRepository {
   }
 
   Future<bool> fileExists(String filePath) async {
-    // Artwork is in app-private storage
-    if (filePath.startsWith('artwork/')) {
-      final absolutePath = await _getArtworkAbsolutePath(filePath);
-      return File(absolutePath).exists();
-    }
-
-    // Music/playlists are in SAF storage
     try {
       final exists = await _storageChannel.invokeMethod<bool>('fileExists', {
         'path': filePath,
@@ -76,15 +64,6 @@ class FileSystemRepository {
   }
 
   Future<int> getFileSize(String filePath) async {
-    // Artwork is in app-private storage
-    if (filePath.startsWith('artwork/')) {
-      final absolutePath = await _getArtworkAbsolutePath(filePath);
-      final file = File(absolutePath);
-      if (!await file.exists()) return 0;
-      return file.length();
-    }
-
-    // Music/playlists are in SAF storage
     try {
       final size = await _storageChannel.invokeMethod<int>('getFileSize', {
         'path': filePath,
@@ -97,17 +76,18 @@ class FileSystemRepository {
   }
 
   Future<void> deleteTrack(String localPath) async {
-    // Artwork is in app-private storage
-    if (localPath.startsWith('artwork/')) {
-      final absolutePath = await _getArtworkAbsolutePath(localPath);
-      final file = File(absolutePath);
+    // Artwork is app-private, content-addressed storage addressed by
+    // absolute path (see the sync worker's artwork cache); delete it
+    // directly. Music/playlist paths are SAF-relative and go through the
+    // storage channel.
+    if (localPath.startsWith('/')) {
+      final file = File(localPath);
       if (await file.exists()) {
         await file.delete();
       }
       return;
     }
 
-    // Music/playlists are in SAF storage
     try {
       await _storageChannel.invokeMethod('deleteFile', {'path': localPath});
     } catch (e) {
@@ -117,19 +97,6 @@ class FileSystemRepository {
   }
 
   Future<void> writeFile(String filePath, Uint8List bytes) async {
-    // Artwork is in app-private storage
-    if (filePath.startsWith('artwork/')) {
-      final absolutePath = await _getArtworkAbsolutePath(filePath);
-      final file = File(absolutePath);
-      final parentDir = file.parent;
-      if (!await parentDir.exists()) {
-        await parentDir.create(recursive: true);
-      }
-      await file.writeAsBytes(bytes);
-      return;
-    }
-
-    // Music/playlists are in SAF storage
     try {
       await _storageChannel.invokeMethod('writeFile', {
         'path': filePath,
@@ -224,53 +191,4 @@ class FileSystemRepository {
     }
   }
 
-  String generateArtworkFilename(String albumId) {
-    return 'album_$albumId.jpg';
-  }
-
-  String getArtworkFilePath(String albumId) {
-    final filename = generateArtworkFilename(albumId);
-    return path.join(getArtworkPath(), filename);
-  }
-
-  Future<bool> artworkExists(String albumId) async {
-    final artworkPath = getArtworkFilePath(albumId);
-    final absolutePath = await _getArtworkAbsolutePath(artworkPath);
-    return File(absolutePath).exists();
-  }
-
-  Future<String?> downloadArtwork(String artworkUrl, String albumId) async {
-    try {
-      final artworkPath = getArtworkFilePath(albumId);
-      logger.d('Downloading artwork to: $artworkPath');
-
-      final dio = Dio();
-      final response = await dio.get<List<int>>(
-        artworkUrl,
-        options: Options(responseType: ResponseType.bytes),
-      );
-
-      final bytes = Uint8List.fromList(response.data!);
-      await writeFile(artworkPath, bytes);
-
-      final fileSize = await getFileSize(artworkPath);
-      if (fileSize == 0) {
-        logger.w('Artwork download failed or file is empty');
-        await deleteTrack(artworkPath);
-        return null;
-      }
-
-      logger.i('Artwork downloaded successfully: $fileSize bytes');
-      return artworkPath;
-    } catch (e, stackTrace) {
-      logger.e('Error downloading artwork', error: e, stackTrace: stackTrace);
-      return null;
-    }
-  }
-
-  /// Get absolute path for artwork stored in app-private directory
-  Future<String> _getArtworkAbsolutePath(String relativePath) async {
-    final cacheDir = await getApplicationDocumentsDirectory();
-    return path.join(cacheDir.path, relativePath);
-  }
 }

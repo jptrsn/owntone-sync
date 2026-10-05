@@ -673,6 +673,31 @@ class BackgroundSyncWorker(
                 ))
             }
 
+            // Artwork resolution (v8): one pass over every track whose
+            // artwork_source IS NULL — freshly downloaded tracks and
+            // tracks that have sat on disk since earlier versions take the
+            // identical path (there is no separate backfill). Per-track
+            // source precedence: embedded picture in the audio file (the
+            // same content:// URI the player uses), then the server's
+            // artwork endpoint, then 'none' when both were checked and
+            // found nothing — the negative cache. A per-track failure
+            // leaves that track's artwork_source NULL (retried next sync)
+            // and must never fail the track download or the sync.
+            if (syncCancelled) {
+                Log.i(TAG, "Artwork resolution skipped: sync cancelled")
+            } else if (!dbHelper.hasArtworkSupport()) {
+                Log.w(TAG, "Artwork resolution skipped: v8 schema not present (artwork_source column missing)")
+            } else {
+                val artworkCancelled = resolveArtwork(
+                    apiClient, fileOps, dbHelper, playlistIds.size,
+                    tracksProcessed, totalTracks
+                )
+                if (artworkCancelled) {
+                    syncCancelled = true
+                    cancellationReason = "Cancelled by user"
+                }
+            }
+
             // Rating coverage sweep (Phase 8): the playlist loop only sees
             // tracks in currently selected playlists, so an edit on a track
             // that dropped out of every synced playlist (membership is
@@ -932,6 +957,118 @@ class BackgroundSyncWorker(
                 Result.failure()
             }
         }
+    }
+
+    /**
+     * Resolves and caches album art for every track with
+     * artwork_source IS NULL, writing the cache path back through a narrow
+     * UPDATE (the download-path upsert preserves omitted columns, so
+     * artwork_path is never blanked by a later re-download).
+     *
+     * Returns true when the worker was stopped mid-pass; the caller
+     * records the run as cancelled, exactly like the download loop.
+     */
+    private suspend fun resolveArtwork(
+        apiClient: OwnToneApiClient,
+        fileOps: FileOperations,
+        dbHelper: DatabaseHelper,
+        totalPlaylists: Int,
+        tracksProcessed: Int,
+        totalTracks: Int
+    ): Boolean {
+        val tracks = try {
+            dbHelper.getTracksNeedingArtwork()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to query tracks needing artwork", e)
+            return false
+        }
+        if (tracks.isEmpty()) return false
+
+        Log.i(TAG, "Resolving artwork for ${tracks.size} track(s)")
+        try {
+            SyncProgressBroadcaster.updateProgress(
+                applicationContext, this@BackgroundSyncWorker, "Resolving artwork",
+                totalPlaylists, totalPlaylists, tracksProcessed, totalTracks,
+                "${tracks.size} tracks without cached artwork", null
+            )
+        } catch (e: Exception) {
+            Log.d(TAG, "Ignoring artwork progress update error: ${e.message}")
+        }
+
+        var fromEmbedded = 0
+        var fromServer = 0
+        var absent = 0
+        var failed = 0
+
+        for ((index, track) in tracks.withIndex()) {
+            if (isStopped) {
+                Log.i(TAG, "Sync cancelled during artwork resolution")
+                return true
+            }
+            try {
+                // 1. EMBEDDED in the audio file, always tried first.
+                var bytes: ByteArray? = null
+                var source: String? = null
+                var embeddedAttempted = false
+                val uriString = track.contentUri
+                if (uriString != null && uriString.startsWith("content://")) {
+                    try {
+                        embeddedAttempted = true
+                        fileOps.extractEmbeddedPicture(Uri.parse(uriString))?.let {
+                            bytes = it
+                            source = "embedded"
+                        }
+                    } catch (e: Exception) {
+                        // Read error, not "no art": fall through to the
+                        // server, and if it also comes up empty the track
+                        // stays NULL (the embedded side was never checked).
+                        Log.w(TAG, "Embedded artwork read failed for track ${track.id}; trying server", e)
+                    }
+                }
+
+                // 2. SERVER fallback (baseUrl + relative artwork_url).
+                if (bytes == null) {
+                    val serverBytes = apiClient.fetchTrackArtwork(track.artworkUrl)
+                        ?.takeIf { it.isNotEmpty() }
+                    if (serverBytes != null) {
+                        bytes = serverBytes
+                        source = "server"
+                    }
+                }
+
+                when {
+                    bytes != null && source != null -> {
+                        val path = fileOps.storeArtworkFile(bytes!!)
+                        if (path != null) {
+                            dbHelper.updateTrackArtwork(track.id, path, source)
+                            if (source == "embedded") fromEmbedded++ else fromServer++
+                            Log.d(TAG, "Artwork for track ${track.id} from $source: $path")
+                        } else {
+                            failed++
+                            Log.w(TAG, "Artwork store failed for track ${track.id}; will retry next sync")
+                        }
+                    }
+                    // 3. Nothing. 'none' is only written when the embedded
+                    // side was actually checked (both sources confirmed
+                    // absent). If there was no content_uri to read the
+                    // file from, the file may still carry embedded art we
+                    // could not see — keep it NULL and retry.
+                    embeddedAttempted -> {
+                        dbHelper.updateTrackArtwork(track.id, null, "none")
+                        absent++
+                    }
+                }
+            } catch (e: Exception) {
+                failed++
+                Log.w(TAG, "Artwork resolution failed for track ${track.id}; will retry next sync", e)
+            }
+            if (index % 50 == 49) {
+                Log.d(TAG, "Artwork progress: ${index + 1}/${tracks.size}")
+            }
+        }
+
+        Log.i(TAG, "Artwork resolution complete: $fromEmbedded embedded, $fromServer server, $absent absent, $failed failed (will retry)")
+        return false
     }
 
     private fun generatePlaylistFile(

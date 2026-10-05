@@ -61,12 +61,52 @@ sortable once those columns exist locally.
 
 ## Album artwork is never cached locally
 
-`synced_tracks.artwork_path` has **no writer anywhere in the codebase**
-(checked during Phase 7, 2026-09-28) — album art is never cached locally. The
-server's `artwork_url` (an absolute URL on the OwnTone host) is the only
-source; every artwork display is a live network fetch. Offline artwork, or
-caching it on sync, would be new work — not a bug to fix, and not something a
-later phase silently "repairs" by writing the column.
+**RESOLVED (2026-10-04):** artwork is now resolved and cached during sync
+(content-addressed, app-private; `artwork_source` negative cache; embedded
+first, server fallback) — see `.agent/artwork-fix-report.md` and invariant 35.
+`synced_tracks.artwork_path` now has a writer (the Kotlin sync worker), and
+`artwork_source` tracks where it came from.
+
+**Correction of the record:** this entry called the server's `artwork_url`
+"an absolute URL on the OwnTone host". That is **wrong** — it is a *relative*
+path (e.g. `/artwork/item/874`) that must be joined to the server base URL.
+It is also populated for 100% of tracks and therefore says nothing about
+whether art actually exists (the server answers HTTP 204, empty body, for
+artless tracks — not 404).
+
+## Writing artwork back into the files' tags — deferred
+
+Writing the cached artwork back into the synced audio files (ID3 picture
+frames, etc.) — considered and deliberately deferred when the local artwork
+cache was built (2026-10-04):
+
+- It needs a tag-**writing** dependency (Android has no built-in writer;
+  `MediaMetadataRetriever` reads only), against the long-held no-new-deps
+  line.
+- It **mutates the user's own irreplaceable media files**, and a tag-write
+  bug corrupts music. The project's original constraint was that the user
+  owns these files; writing to them goes further than anything done so far.
+- A SAF in-place rewrite means read-whole-file / modify / write-back,
+  needing temp-and-rename to be crash-safe.
+- The local cache is required regardless, so write-back is purely additive
+  and can be added later at no cost.
+
+One risk that does **not** apply: `file_size` is written but never compared,
+so a tag write would not trigger spurious re-downloads.
+
+## Sync screen: Cancel button never renders for a scheduled run that starts while the app is alive
+
+Discovered incidentally during the 2026-10-04 sync-status fix session, and
+recorded only in `.agent/sync-status-fix-report.md` — which is a historical
+record, not guidance, so it will be lost. Logged here.
+
+For a **scheduled** run that starts while the app is already alive, the Sync
+screen's Cancel button never renders. Mechanism: `SyncProvider` subscribes to
+the progress EventChannel only at construction
+(`_initialize` → `checkIfSyncRunning`), so a run that begins afterwards never
+drives the UI into its cancellable state. That session had to cancel through
+the notification action instead (invariant 34). Not fixed — out of scope for
+the artwork work.
 
 ## Two remaining ways the scheduled-sync chain can still die
 

@@ -19,7 +19,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -70,7 +70,8 @@ class DatabaseHelper {
         artwork_url TEXT NOT NULL DEFAULT '',
         artwork_path TEXT DEFAULT '',
         content_uri TEXT DEFAULT '',
-        rating INTEGER NOT NULL DEFAULT 0
+        rating INTEGER NOT NULL DEFAULT 0,
+        artwork_source TEXT DEFAULT NULL
       )
     ''');
 
@@ -296,6 +297,24 @@ class DatabaseHelper {
           PRIMARY KEY (track_id, field)
         )
       ''');
+    }
+    if (oldVersion < 8) {
+      // Album artwork cache: where each track's cover came from. NULL =
+      // unresolved (the sync worker resolves it), 'embedded', 'server', or
+      // 'none' = checked and absent (the negative cache — without it every
+      // sync re-extracts from every artless file). The column holds no path
+      // of its own: artwork_path is written by the same narrow UPDATE.
+      //
+      // Written by the Kotlin sync worker, which opens this DB without
+      // migrating — it guards on the column's presence the same way the
+      // v7 rating pass does, so add it here (and only here).
+      final columns = await db.rawQuery('PRAGMA table_info(synced_tracks)');
+      final names = columns.map((c) => c['name'] as String).toSet();
+      if (!names.contains('artwork_source')) {
+        await db.execute(
+          'ALTER TABLE synced_tracks ADD COLUMN artwork_source TEXT',
+        );
+      }
     }
   }
 

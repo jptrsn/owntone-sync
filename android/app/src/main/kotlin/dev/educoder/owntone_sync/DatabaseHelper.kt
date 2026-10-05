@@ -120,6 +120,60 @@ class DatabaseHelper(private val context: Context) {
     }
 
     /**
+     * True when the v8 artwork column (synced_tracks.artwork_source) is
+     * present. The worker opens the DB without migrating, so a scheduled
+     * sync that runs before the app has launched once after an update can
+     * hit a v7 schema; without the column the whole artwork pass is
+     * skipped (the app adds the column on its next launch).
+     */
+    fun hasArtworkSupport(): Boolean = hasColumn("synced_tracks", "artwork_source")
+
+    /**
+     * Tracks whose artwork has never been checked (artwork_source IS NULL):
+     * a single resolution pass over this set covers both freshly
+     * downloaded tracks and tracks that have sat on disk since earlier
+     * versions — there is no separate backfill.
+     */
+    fun getTracksNeedingArtwork(): List<SyncedTrack> {
+        val db = openDatabase()
+        val tracks = mutableListOf<SyncedTrack>()
+        val cursor = db.query(
+            "synced_tracks",
+            null,
+            "artwork_source IS NULL",
+            null,
+            null, null, null
+        )
+        while (cursor.moveToNext()) {
+            tracks.add(SyncedTrack.fromCursor(cursor))
+        }
+        cursor.close()
+        db.close()
+        return tracks
+    }
+
+    /**
+     * Narrow artwork update: writes artwork_path (only when non-null) and
+     * artwork_source, touching no other column. [artworkSource] is one of
+     * 'embedded', 'server', or 'none' (checked and absent — the negative
+     * cache; without it every sync would re-extract from every artless
+     * file).
+     */
+    fun updateTrackArtwork(trackId: Int, artworkPath: String?, artworkSource: String) {
+        val db = openDatabase()
+        db.update(
+            "synced_tracks",
+            ContentValues().apply {
+                if (artworkPath != null) put("artwork_path", artworkPath)
+                put("artwork_source", artworkSource)
+            },
+            "id = ?",
+            arrayOf(trackId.toString())
+        )
+        db.close()
+    }
+
+    /**
      * True when the v7 rating schema is present: BOTH the
      * pending_track_edits table and the synced_tracks.rating column. The
      * worker opens the DB without migrating, so a scheduled sync that runs
@@ -457,7 +511,10 @@ class DatabaseHelper(private val context: Context) {
         val artworkUrl: String,
         val artworkPath: String?,
         val contentUri: String? = null,
-        val rating: Int = 0
+        val rating: Int = 0,
+        // NULL = unresolved, 'embedded', 'server', 'none' = checked and
+        // absent. Tolerant read, like rating: a pre-v8 DB has no column.
+        val artworkSource: String? = null
     ) {
         companion object {
             fun fromCursor(cursor: Cursor) = SyncedTrack(
@@ -483,6 +540,9 @@ class DatabaseHelper(private val context: Context) {
                 // and every other caller of fromCursor must still work.
                 rating = cursor.getColumnIndex("rating").let {
                     if (it >= 0) cursor.getInt(it) else 0
+                },
+                artworkSource = cursor.getColumnIndex("artwork_source").let {
+                    if (it >= 0) cursor.getString(it) else null
                 }
             )
         }

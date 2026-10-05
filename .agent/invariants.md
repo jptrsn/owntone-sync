@@ -852,6 +852,62 @@ log can lag the tap by ~10s; and that check sets `syncCancelled` without a
 NULL (the UI still shows "Sync Cancelled" from `status` — pre-existing,
 do not chase it).
 
+### 35. Album artwork: content-addressed app-private cache, resolved on sync, and 204 means "no art"
+
+**Cache:** `<app-private>/artwork/<sha256-of-image-bytes>.<ext>` (Kotlin
+`context.filesDir` — the same directory Dart's
+`getApplicationDocumentsDirectory()` returns), with
+`synced_tracks.artwork_path` holding the **absolute** path. Identical covers
+collapse to one file automatically (measured 2026-10-04: 177 resolved tracks
+→ 50 files); compilations with genuinely different per-track art stay correct;
+no album-identity logic is needed (album identity is ambiguous — invariant 21).
+App-private on purpose: artwork is derived data, not the user's media — no SAF
+grant, no content://, and `Uri.file()` works on the stored path.
+
+**Resolution happens on sync, in Kotlin** (`BackgroundSyncWorker.resolveArtwork`)
+— never on display. The app exists for offline playback; the server is on the
+home LAN and unreachable on the commute. Per-track precedence: (1) embedded
+picture in the audio file — `MediaMetadataRetriever` on the cached content://
+URI, released per track or it leaks across a library-sized loop; (2) the
+server's artwork endpoint — `baseUrl + artwork_url`, where `artwork_url` is a
+**relative** path (`/artwork/item/874`), never absolute; (3) nothing. A
+failed resolution leaves the track NULL (retried next sync) and must never
+fail the track download or the sync.
+
+**204 semantics:** the server answers **HTTP 204 No Content with a
+zero-length body** when a track has no art — NOT 404. 204 or an empty body is
+a positive "no art" answer (`artwork_source='none'`), never a file write:
+treating 204 as success and writing the body creates a zero-byte file, which
+reproduces the "artwork never displays" symptom exactly. A transport/HTTP
+failure is NOT evidence of absence — it stays NULL. And `artwork_url` is
+populated for 100% of tracks, so its presence says nothing about whether art
+exists; never use it as a signal.
+
+**Negative cache:** `synced_tracks.artwork_source` (DB v8): NULL =
+unresolved, `'embedded'`, `'server'`, `'none'` = checked and absent. The
+resolution pass iterates exactly the `artwork_source IS NULL` rows — one pass
+covers freshly downloaded and long-resident tracks (no separate backfill
+concept). Without it every sync re-extracts from every artless file —
+tolerable at 95 tracks, painful at 5,000. `'none'` is written only when the
+embedded side was actually read; a read failure or a missing content_uri keeps
+the row NULL (the file may still carry embedded art we could not see).
+`artwork_path` is written through the narrow `updateTrackArtwork` UPDATE and
+survives the download-path upsert (invariant 26: omitted columns preserved).
+
+**WHY:** artwork had never displayed — four independent breakages (relative
+`artwork_url` fetched as-is, dead `downloadArtwork()` helper, no writer for
+`artwork_path`, UI that only handles `file:` URIs). Measured split on the live
+library (2026-10-04, 194 tracks): **172 embedded / 5 server / 17 none** —
+embedded is the dominant path in THIS library; the server fallback matters
+most for tracks whose files lack embedded art.
+
+**BREAKS IF UNDONE:** writing 204 bodies to disk (zero-byte files); any
+display-time fetch (works at the desk, blank on the commute); grouping album
+rows by `artwork_path` (a mixed-source album — Rebel Era/GRiZ, 3 embedded + 1
+server, occurred on 2026-10-04 — splits into duplicate rows; the album
+queries use `MAX(artwork_path)`); marking `'none'` on a read error; or
+re-adding a Dart artwork writer (Dart never runs during a background sync).
+
 ---
 
 ## Maintaining this file
