@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../data/models/sync_progress.dart';
+import '../../data/repositories/local_database_repository.dart';
 import '../providers/sync_provider.dart';
 import 'server_config_screen.dart';
 import 'schedule_config_screen.dart';
@@ -13,6 +14,33 @@ class SyncScreen extends StatefulWidget {
 }
 
 class _SyncScreenState extends State<SyncScreen> {
+  final LocalDatabaseRepository _dbRepo = LocalDatabaseRepository();
+  int? _pendingEventCount;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPendingEventCount();
+    // Events are recorded while playing and uploaded by a sync; reload the
+    // count whenever the sync state changes.
+    context.read<SyncProvider>().addListener(_loadPendingEventCount);
+  }
+
+  @override
+  void dispose() {
+    context.read<SyncProvider>().removeListener(_loadPendingEventCount);
+    super.dispose();
+  }
+
+  Future<void> _loadPendingEventCount() async {
+    try {
+      final count = await _dbRepo.getPendingEventCount();
+      if (mounted) setState(() => _pendingEventCount = count);
+    } catch (_) {
+      // Count is informational; a failed read just leaves it hidden.
+    }
+  }
+
   Future<void> _handleRefresh(SyncProvider provider) async {
     await provider.fetchPlaylists();
 
@@ -29,26 +57,33 @@ class _SyncScreenState extends State<SyncScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<SyncProvider>(
-      builder: (context, provider, child) {
-        if (provider.isSyncing) {
-          return _buildSyncingView(context, provider);
-        }
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Sync'),
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
+      ),
+      body: Consumer<SyncProvider>(
+        builder: (context, provider, child) {
+          if (provider.isSyncing) {
+            return _buildSyncingView(context, provider);
+          }
 
-        if (!provider.hasStoragePermission) {
-          return _buildPermissionRequest(context, provider);
-        }
+          if (!provider.hasStoragePermission) {
+            return _buildPermissionRequest(context, provider);
+          }
 
-        if (!provider.isConfigured) {
-          return _buildNotConfigured(context);
-        }
+          if (!provider.isConfigured) {
+            return _buildNotConfigured(context);
+          }
 
-        if (provider.availablePlaylists.isEmpty) {
-          return _buildInitialSetup(context, provider);
-        }
+          if (provider.availablePlaylists.isEmpty) {
+            return _buildInitialSetup(context, provider);
+          }
 
-        return _buildPlaylistSelection(context, provider);
-      },
+          return _buildPlaylistSelection(context, provider);
+        },
+      ),
     );
   }
 
@@ -199,17 +234,44 @@ class _SyncScreenState extends State<SyncScreen> {
                   style: const TextStyle(fontSize: 16),
                 ),
               ),
-              ElevatedButton.icon(
-                onPressed: provider.isSyncing
-                    ? null
-                    : () => provider.startSync(),
-                icon: const Icon(Icons.sync),
-                label: const Text('Sync'),
-              ),
-            ],
+                ElevatedButton.icon(
+                  onPressed: provider.isSyncing
+                      ? null
+                      : () => provider.startSync(),
+                  icon: const Icon(Icons.sync),
+                  label: const Text('Sync'),
+                ),
+              ],
+            ),
           ),
-        ),
-        if (!provider.isOnline)
+          if (_pendingEventCount != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.queue_music,
+                    size: 16,
+                    color: Colors.grey[600],
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _pendingEventCount! > 0
+                          ? '$_pendingEventCount playback event'
+                              '${_pendingEventCount! == 1 ? '' : 's'} '
+                              'waiting to sync'
+                          : 'No playback events waiting to sync',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (!provider.isOnline)
           Container(
             width: double.infinity,
             color: Colors.orange.shade100,

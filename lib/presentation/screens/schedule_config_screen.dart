@@ -257,9 +257,22 @@ class _ScheduleConfigScreenState extends State<ScheduleConfigScreen>
               children: [
                 ElevatedButton.icon(
                   onPressed: () async {
-                    await context.read<SyncProvider>().updateSyncSchedule(
-                      _schedule,
-                    );
+                    try {
+                      await context.read<SyncProvider>().updateSyncSchedule(
+                        _schedule,
+                      );
+                    } catch (_) {
+                      // The schedule did not take effect on the native side;
+                      // report the failure instead of claiming a save.
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Failed to save schedule'),
+                          ),
+                        );
+                      }
+                      return;
+                    }
                     if (context.mounted) {
                       Navigator.of(context).pop();
                       ScaffoldMessenger.of(context).showSnackBar(

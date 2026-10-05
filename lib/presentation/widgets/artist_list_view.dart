@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../providers/browse_provider.dart';
-import '../screens/artist_detail_screen.dart';
 
+import '../providers/browse_provider.dart';
+import 'library_rows.dart';
+
+/// The Artists tab: tap opens the artist detail screen; Play all / Shuffle
+/// all / Add to queue live in the row menu.
 class ArtistListView extends StatelessWidget {
   const ArtistListView({super.key});
 
@@ -18,19 +21,10 @@ class ArtistListView extends StatelessWidget {
           itemCount: provider.artists.length,
           itemBuilder: (context, index) {
             final artist = provider.artists[index];
-
-            return ListTile(
-              leading: const CircleAvatar(child: Icon(Icons.person)),
-              title: Text(artist),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => ArtistDetailScreen(artistName: artist),
-                  ),
-                );
-              },
+            return ArtistRow(
+              artistName: artist['artist'] as String,
+              trackCount: artist['track_count'] as int,
+              albumCount: artist['album_count'] as int? ?? 0,
             );
           },
         );

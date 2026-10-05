@@ -1,0 +1,13 @@
+OwnTone Sync is now a music player.
+
+• Play your synced music in the app — background playback, lock screen
+  and Bluetooth controls, queue, shuffle and repeat
+• Browse by playlist, artist, album or track, with sorting and search
+• Album artwork, cached on sync so it works offline
+• Rate tracks with half-star precision; ratings sync both ways
+• Play and skip counts are now recorded by the player itself and sent
+  back to your server, replacing the unreliable notification listener
+
+Fixes: scheduled syncs no longer stop permanently after a failure, and a
+sync that cannot reach the server is reported as failed instead of
+succeeding silently.

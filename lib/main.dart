@@ -1,22 +1,74 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:audio_service/audio_service.dart';
 
+import 'data/repositories/local_database_repository.dart';
+import 'presentation/controllers/playback_controller.dart';
+import 'presentation/providers/browse_provider.dart';
 import 'presentation/providers/sync_provider.dart';
-import 'presentation/screens/main_navigation_screen.dart';
+import 'presentation/screens/library_screen.dart';
+import 'presentation/services/audio_handler.dart';
+import 'presentation/services/playback_stats_recorder.dart';
+import 'presentation/services/track_uri_resolver.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  runApp(const MyApp());
+  final audioHandler = await AudioService.init(
+    builder: () => OwnToneAudioHandler(),
+    config: const AudioServiceConfig(
+      androidNotificationChannelId: 'com.owntone.sync.channel.audio',
+      androidNotificationChannelName: 'Audio playback',
+      androidNotificationOngoing: true,
+    ),
+  );
+  final dbRepo = LocalDatabaseRepository();
+  final playbackController = PlaybackController(
+    handler: audioHandler,
+    resolver: TrackUriResolver(dbRepo: dbRepo),
+    dbRepo: dbRepo,
+  );
+  // Records play/skip events straight into pending_events. Lives for the
+  // process lifetime, like the handler.
+  PlaybackStatsRecorder(
+    mediaItem: audioHandler.mediaItem,
+    playbackState: audioHandler.playbackState,
+    durationStream: audioHandler.durationStream,
+    position: AudioService.position,
+    consumeUserInitiatedTransition: audioHandler.consumeUserInitiatedTransition,
+    insertEvent: dbRepo.insertEvent,
+  ).start();
+  // A8: persist queue/state changes, and restore the previous session's
+  // queue (paused) if one was persisted. The restore is deliberately NOT
+  // awaited: a cold content-URI cache makes resolution slow, and it must not
+  // block the first frame. The restored queue simply appears once ready.
+  playbackController.start();
+  unawaited(
+    playbackController.restorePlaybackState().catchError((Object e) {
+      debugPrint('[main] restorePlaybackState failed: $e');
+    }),
+  );
+  runApp(MyApp(playbackController: playbackController));
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final PlaybackController playbackController;
+
+  const MyApp({super.key, required this.playbackController});
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => SyncProvider(),
+    return _buildApp();
+  }
+
+  Widget _buildApp() {
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => SyncProvider()),
+        ChangeNotifierProvider(create: (_) => BrowseProvider()),
+        Provider<PlaybackController>.value(value: playbackController),
+      ],
       child: MaterialApp(
         title: 'OwnTone Sync',
         theme: ThemeData(
@@ -65,8 +117,8 @@ class MyApp extends StatelessWidget {
             ),
           ),
         ),
-        themeMode: ThemeMode.system, // Respects system preference
-        home: const MainNavigationScreen(),
+        themeMode: ThemeMode.system,
+        home: const LibraryScreen(),
       ),
     );
   }

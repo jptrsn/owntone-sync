@@ -22,6 +22,8 @@ class SyncProvider extends ChangeNotifier {
     'dev.educoder.owntone_sync/sync_progress',
   );
   StreamSubscription<dynamic>? _progressSubscription;
+  final StreamController<String> _syncCompletedController =
+      StreamController<String>.broadcast();
 
   OwnToneApiRepository? _apiRepo;
   LocalDatabaseRepository? _dbRepo;
@@ -40,7 +42,6 @@ class SyncProvider extends ChangeNotifier {
   bool _isCancelling = false;
   bool _isLoadingPlaylists = false;
   SyncSchedule _syncSchedule = SyncSchedule();
-  bool _eventTrackingEnabled = false;
   bool _isBatteryOptimizationDisabled = false;
   DateTime? _missedSyncTime;
 
@@ -58,9 +59,13 @@ class SyncProvider extends ChangeNotifier {
   bool get isCancelling => _isCancelling;
   bool get isLoadingPlaylists => _isLoadingPlaylists;
   SyncSchedule get syncSchedule => _syncSchedule;
-  bool get eventTrackingEnabled => _eventTrackingEnabled;
   bool get isBatteryOptimizationDisabled => _isBatteryOptimizationDisabled;
   DateTime? get missedSyncTime => _missedSyncTime;
+
+  /// Emits the worker's completion status ('success', 'partial', 'failed',
+  /// 'cancelled', 'skipped', 'interrupted') each time a sync run ends.
+  /// Library refresh and queue reconciliation hook off this (C2/C3).
+  Stream<String> get syncCompleted => _syncCompletedController.stream;
 
   SyncProvider() {
     _initialize();
@@ -69,7 +74,15 @@ class SyncProvider extends ChangeNotifier {
   @override
   void dispose() {
     _progressSubscription?.cancel();
+    _syncCompletedController.close();
     super.dispose();
+  }
+
+  /// Clears the surfaced sync error (the app-bar badge and banner).
+  void clearError() {
+    if (_lastError == null) return;
+    _lastError = null;
+    notifyListeners();
   }
 
   Future<void> _initialize() async {
@@ -91,7 +104,11 @@ class SyncProvider extends ChangeNotifier {
 
     // Request notification permission for background sync
     if (!await _permissionsService.hasNotificationPermission()) {
-      await _permissionsService.requestNotificationPermission();
+      try {
+        await _permissionsService.requestNotificationPermission();
+      } catch (e) {
+        // Activity may not be ready yet; will retry later
+      }
     }
 
     // Load saved playlists
@@ -109,11 +126,7 @@ class SyncProvider extends ChangeNotifier {
     // Check for missed syncs
     _missedSyncTime = await checkForMissedSync();
 
-    // Load event tracking preference (premium only)
-    _eventTrackingEnabled = prefs.getBool('event_tracking_enabled') ?? false;
-    logger.i('Event tracking preference loaded: $_eventTrackingEnabled');
-
-    // Check if background sync is already running
+    // Check for missed syncs
     await checkIfSyncRunning();
 
     notifyListeners();
@@ -260,11 +273,26 @@ class SyncProvider extends ChangeNotifier {
         if (event is Map) {
           // Check if this is a completion event
           if (event['syncComplete'] == true) {
-            logger.i('Sync completed with status: ${event['status']}');
+            final status = (event['status'] ?? 'unknown').toString();
+            logger.i('Sync completed with status: $status');
             _isSyncing = false;
             _syncProgress = null;
             _isCancelling = false;
+            // A failed or partial run surfaces on the app-bar badge and
+            // banner (a run where every playlist failed must not look like a
+            // clean success); a successful run clears any previous error.
+            if (status == 'failed' || status == 'partial') {
+              final message = event['message'];
+              _lastError = (message is String && message.isNotEmpty)
+                  ? message
+                  : (status == 'partial'
+                      ? 'Sync completed with errors'
+                      : 'Sync failed');
+            } else if (status == 'success') {
+              _lastError = null;
+            }
             notifyListeners();
+            _syncCompletedController.add(status);
             return;
           }
 
@@ -379,7 +407,9 @@ class SyncProvider extends ChangeNotifier {
     }
   }
 
-  /// Update sync schedule
+  /// Update sync schedule. Throws if the schedule could not be registered
+  /// on the native side, so callers do not report a save that did not take
+  /// effect.
   Future<void> updateSyncSchedule(SyncSchedule schedule) async {
     _syncSchedule = schedule;
 
@@ -387,12 +417,13 @@ class SyncProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('sync_schedule', json.encode(schedule.toJson()));
 
-    // Update native worker
-    try {
-      const channel = MethodChannel('dev.educoder.owntone_sync/sync');
-      await channel.invokeMethod('updateSyncSchedule');
-    } catch (e) {
-      logger.e('Error updating sync schedule', error: e);
+    // Update native worker. The native side reports false when the
+    // WorkManager enqueue threw; a channel error throws on its own.
+    const channel = MethodChannel('dev.educoder.owntone_sync/sync');
+    final registered = await channel.invokeMethod<bool>('updateSyncSchedule');
+    if (registered != true) {
+      logger.e('Sync schedule was not registered on the native side');
+      throw Exception('Could not register sync schedule');
     }
 
     notifyListeners();
@@ -594,48 +625,6 @@ class SyncProvider extends ChangeNotifier {
     }
   }
 
-  Future<bool> checkEventTrackingPermission() async {
-    try {
-      // Just check Android settings, no EventTracker service needed
-      const channel = MethodChannel('dev.educoder.owntone_sync/events');
-      final result = await channel.invokeMethod(
-        'isNotificationPermissionGranted',
-      );
-      logger.d('Notification permission check: $result');
-      return result as bool;
-    } catch (e, stackTrace) {
-      logger.e(
-        'Error checking notification permission',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      return false;
-    }
-  }
-
-  Future<void> requestEventTrackingPermission() async {
-    try {
-      logger.i('Requesting notification permission');
-      const channel = MethodChannel('dev.educoder.owntone_sync/events');
-      await channel.invokeMethod('requestNotificationPermission');
-    } catch (e, stackTrace) {
-      logger.e(
-        'Error requesting notification permission',
-        error: e,
-        stackTrace: stackTrace,
-      );
-    }
-  }
-
-  Future<void> setEventTracking(bool enabled) async {
-    _eventTrackingEnabled = enabled;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('event_tracking_enabled', enabled);
-
-    logger.i('Event tracking ${enabled ? "enabled" : "disabled"}');
-    notifyListeners();
-  }
-
   Future<bool> checkBatteryOptimization() async {
     try {
       const channel = MethodChannel('dev.educoder.owntone_sync/events');
@@ -666,5 +655,34 @@ class SyncProvider extends ChangeNotifier {
         stackTrace: stackTrace,
       );
     }
+  }
+
+  Future<List<SyncedTrack>?> getTracksForPlaylist(int playlistId) async {
+    await _initializeIfNeeded();
+    return _dbRepo?.getTracksForPlaylist(playlistId);
+  }
+
+  Future<List<SyncedTrack>?> getTracksByArtist(String artistName) async {
+    await _initializeIfNeeded();
+    return _dbRepo?.getTracksByArtist(artistName);
+  }
+
+  Future<List<SyncedTrack>?> getTracksByAlbum(String albumName) async {
+    await _initializeIfNeeded();
+    return _dbRepo?.getTracksByAlbum(albumName);
+  }
+
+  Future<SyncedTrack?> getTrackById(int id) async {
+    await _initializeIfNeeded();
+    return _dbRepo?.getTrackById(id);
+  }
+
+  Future<List<SyncedTrack>?> getAllTracks() async {
+    await _initializeIfNeeded();
+    return _dbRepo?.getAllTracks();
+  }
+
+  Future<void> _initializeIfNeeded() async {
+    _dbRepo ??= LocalDatabaseRepository();
   }
 }

@@ -7,11 +7,11 @@ import android.provider.DocumentsContract
 import android.provider.Settings
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.android.FlutterActivity
+import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.OutputStream
-import android.content.ContentValues
 import android.provider.MediaStore
 import android.content.ContentUris
 import androidx.work.Constraints
@@ -33,11 +33,12 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.JsonClass
 import androidx.work.OutOfQuotaPolicy
 
-class MainActivity: FlutterActivity() {
+class MainActivity: AudioServiceActivity() {
     private val EVENTS_CHANNEL = "dev.educoder.owntone_sync/events"
     private val STORAGE_CHANNEL = "dev.educoder.owntone_sync/storage"
     private val PROGRESS_CHANNEL = "dev.educoder.owntone_sync/sync_progress"
     private val SYNC_CHANNEL = "dev.educoder.owntone_sync/sync"
+    private val PLAYER_CHANNEL = "dev.educoder.owntone_sync/player"
     private val REQUEST_CODE_MUSIC_FOLDER = 1001
 
     private var pendingMusicFolderResult: MethodChannel.Result? = null
@@ -48,15 +49,6 @@ class MainActivity: FlutterActivity() {
         // Events channel
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, EVENTS_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
-                "requestNotificationPermission" -> {
-                    val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-                    startActivity(intent)
-                    result.success(null)
-                }
-                "isNotificationPermissionGranted" -> {
-                    val enabled = isNotificationServiceEnabled()
-                    result.success(enabled)
-                }
                 "isBatteryOptimizationDisabled" -> {
                     val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
                     result.success(powerManager.isIgnoringBatteryOptimizations(packageName))
@@ -100,6 +92,16 @@ class MainActivity: FlutterActivity() {
                             withContext(Dispatchers.Main) {
                                 result.success(uri)
                             }
+                        }
+                        "buildContentUri" -> {
+                            val localPath = call.argument<String>("localPath")
+                            result.success(
+                                if (localPath != null) buildContentUri(localPath) else null
+                            )
+                        }
+                        "buildContentUris" -> {
+                            val localPaths = call.argument<List<String>>("localPaths") ?: emptyList()
+                            result.success(localPaths.map { buildContentUri(it) })
                         }
                         "fileExists" -> {
                             fileExists(call, result)
@@ -197,9 +199,10 @@ class MainActivity: FlutterActivity() {
                     result.success(true)
                 }
                 "updateSyncSchedule" -> {
-                    // Re-register worker when schedule changes
-                    registerBackgroundSync()
-                    result.success(true)
+                    // Re-register worker when schedule changes. Report
+                    // whether the schedule actually took effect so the Dart
+                    // side does not claim a save that the enqueue threw.
+                    result.success(registerBackgroundSync())
                 }
                 "isSyncRunning" -> {
                     try {
@@ -222,6 +225,24 @@ class MainActivity: FlutterActivity() {
             }
         }
 
+        // Player channel
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PLAYER_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "queueRebuild" -> {
+                    try {
+                        Log.d("MainActivity", "Received queue rebuild notification from sync worker")
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Error handling queue rebuild", e)
+                        result.error("REBUILD_FAILED", e.message, null)
+                    }
+                }
+                else -> {
+                    result.notImplemented()
+                }
+            }
+        }
+
         registerBackgroundSync()
 
         // Clean up old work items periodically
@@ -230,14 +251,6 @@ class MainActivity: FlutterActivity() {
          // Create notification channel for sync worker
         SyncProgressBroadcaster.createNotificationChannel(applicationContext)
 
-    }
-
-    private fun isNotificationServiceEnabled(): Boolean {
-        val enabledListeners = Settings.Secure.getString(
-            contentResolver,
-            "enabled_notification_listeners"
-        )
-        return enabledListeners?.contains(packageName) == true
     }
 
     private fun hasMusicFolderAccess(): Boolean {
@@ -254,6 +267,65 @@ class MainActivity: FlutterActivity() {
     private fun getMusicFolderUri(): String? {
         return getSharedPreferences("storage_prefs", MODE_PRIVATE)
             .getString("music_folder_uri", null)
+    }
+
+    private fun buildContentUri(localPath: String): String? {
+        return buildContentUriFast(localPath) ?: buildContentUriWalk(localPath)
+    }
+
+    /// Builds the document URI directly from the tree URI plus the relative
+    /// path, with no directory enumeration. Returns null so the caller can
+    /// fall back to the (slow) walk.
+    private fun buildContentUriFast(localPath: String): String? {
+        val musicFolderUriString = getMusicFolderUri() ?: return null
+        val relativePath = localPath.removePrefix("/")
+        if (relativePath.isEmpty() || relativePath.contains("..")) return null
+        return try {
+            val treeUri = Uri.parse(musicFolderUriString)
+            if (treeUri.pathSegments.size < 2 || treeUri.pathSegments[0] != "tree") {
+                return null
+            }
+            // The document URI must be in the tree-scoped form
+            // (.../tree/<treeDocId>/document/<treeDocId>/<relativePath>),
+            // because the persisted grant from ACTION_OPEN_DOCUMENT_TREE only
+            // authorises URIs that carry the tree. A bare /document/ URI is
+            // what ACTION_OPEN_DOCUMENT produces and is denied with
+            // SecurityException. buildDocumentUriUsingTree emits exactly the
+            // tree-scoped form, with the document id encoded as a single
+            // path segment. getTreeDocumentId (not lastPathSegment) extracts
+            // the tree id: lastPathSegment breaks on a tree URI that already
+            // carries a /document/ suffix.
+            val treeDocId = DocumentsContract.getTreeDocumentId(treeUri)
+            val documentId = treeDocId + "/" + relativePath
+            DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId).toString()
+        } catch (e: Exception) {
+            Log.w("MainActivity", "Fast content URI build failed for: $localPath", e)
+            null
+        }
+    }
+
+    private fun buildContentUriWalk(localPath: String): String? {
+        val musicFolderUriString = getMusicFolderUri() ?: return null
+        return try {
+            val musicFolder = DocumentFile.fromTreeUri(this, Uri.parse(musicFolderUriString))
+            val pathParts = localPath.split("/")
+            var currentFolder: DocumentFile? = musicFolder
+            for (i in 0 until pathParts.size - 1) {
+                val part = pathParts[i]
+                val child = currentFolder?.findFile(part)
+                if (child != null && child.isDirectory) {
+                    currentFolder = child
+                } else {
+                    currentFolder = null
+                    break
+                }
+            }
+            val fileName = pathParts.last()
+            currentFolder?.findFile(fileName)?.uri?.toString()
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to build content URI for: $localPath", e)
+            null
+        }
     }
 
     private fun requestMusicFolderAccess(result: MethodChannel.Result) {
@@ -478,25 +550,31 @@ class MainActivity: FlutterActivity() {
         }
     }
 
-    private fun registerBackgroundSync() {
+    /**
+     * Registers the next scheduled sync from the saved schedule.
+     * Returns true when the schedule took effect (work enqueued, or all
+     * work cancelled for a disabled schedule) and false when it did not
+     * (no schedule saved, or the enqueue threw).
+     */
+    private fun registerBackgroundSync(): Boolean {
         val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
         val syncScheduleJson = prefs.getString("flutter.sync_schedule", null)
 
         if (syncScheduleJson == null) {
             Log.d("MainActivity", "No sync schedule configured")
-            return
+            return false
         }
 
         try {
             val moshi = Moshi.Builder().build()
             val adapter = moshi.adapter(SyncSchedule::class.java)
-            val schedule = adapter.fromJson(syncScheduleJson) ?: return
+            val schedule = adapter.fromJson(syncScheduleJson) ?: return false
 
             if (!schedule.enabled) {
                 // Cancel all work if sync is disabled
                 WorkManager.getInstance(applicationContext).cancelAllWorkByTag("sync-task")
                 Log.d("MainActivity", "Background sync disabled")
-                return
+                return true
             }
 
             // Calculate delay until next scheduled time
@@ -528,16 +606,16 @@ class MainActivity: FlutterActivity() {
                 )
                 .build()
 
-            // Use OneTimeWorkRequest with calculated delay and expedited flag
+            // Use a OneTimeWorkRequest with the calculated delay. No
+            // expedited flag: WorkManager rejects expedited work that also
+            // has an initial delay on API 31+ ("Expedited jobs cannot be
+            // delayed"), and a scheduled sync is not an immediate one.
+            // (The manual-sync request in triggerBackgroundSync has no
+            // initial delay, where setExpedited is legal, and keeps it.)
             val syncWorkRequest = OneTimeWorkRequestBuilder<BackgroundSyncWorker>()
                 .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
                 .setConstraints(constraints)
                 .addTag("sync-task")
-                .apply {
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                        setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                    }
-                }
                 .build()
 
             WorkManager.getInstance(applicationContext)
@@ -552,8 +630,10 @@ class MainActivity: FlutterActivity() {
             // Save expected sync time for missed sync detection
             prefs.edit().putString("flutter.expected_next_sync", scheduledTime.timeInMillis.toString()).apply()
 
+            return true
         } catch (e: Exception) {
             Log.e("MainActivity", "Error registering background sync", e)
+            return false
         }
     }
 

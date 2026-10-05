@@ -3,8 +3,10 @@ package dev.educoder.owntone_sync
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
 import android.os.BatteryManager
 import android.util.Log
+import androidx.documentfile.provider.DocumentFile
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkInfo
@@ -174,6 +176,23 @@ class BackgroundSyncWorker(
     }
 
     override suspend fun doWork(): Result {
+        return try {
+            doWorkInternal()
+        } finally {
+            // Structural re-arm: no matter how this run ends - success,
+            // failure, user cancel, system interruption, skip - the next
+            // scheduled sync is re-queued. This generalizes the rule stated
+            // at the skip-today site ("skipping today must not break the
+            // recurring schedule") from per-path patches into a guarantee,
+            // so a new exit path cannot silently kill the chain.
+            // scheduleNextSync() reads flutter.sync_schedule fresh and
+            // returns early when !schedule.enabled, so this cannot
+            // resurrect a schedule the user disabled.
+            scheduleNextSync()
+        }
+    }
+
+    private suspend fun doWorkInternal(): Result {
         val worker = this@BackgroundSyncWorker
         val triggerType = inputData.getString("trigger_type") ?: "scheduled"
         val startTime = System.currentTimeMillis()
@@ -213,9 +232,9 @@ class BackgroundSyncWorker(
                     "skipped",
                     "Device not plugged into power"
                 )
-                // Still queue up tomorrow's attempt - skipping today must not
-                // break the recurring schedule.
-                scheduleNextSync()
+                // Skipping today must not break the recurring schedule; the
+                // re-arm happens in doWork's finally, like every other
+                // exit.
                 return Result.success()
             }
         }
@@ -274,7 +293,7 @@ class BackgroundSyncWorker(
         var historyWritten = false
 
         // Declare before the try block so catch handlers can capture them
-        var eventTrackingEnabled = false
+        var eventTrackingEnabled = true
         var eventSyncResult = EventSyncResult(0, 0, 0)
 
         return withContext(Dispatchers.IO) {
@@ -308,15 +327,30 @@ class BackgroundSyncWorker(
             val fileOps = FileOperations(applicationContext)
             val apiClient = OwnToneApiClient(serverUrl, fileOps)
 
-            // Sync events first (if tracking is enabled)
-            eventTrackingEnabled = prefs.getBoolean("flutter.event_tracking_enabled", false)
+            // Sync pending play/skip events
             eventSyncResult = EventSyncResult(0, 0, 0)
-            if (eventTrackingEnabled) {
-                Log.i(TAG, "Event tracking enabled, syncing events first")
-                eventSyncResult = syncEvents(applicationContext, worker, apiClient, dbHelper)
-            } else {
-                Log.d(TAG, "Event tracking disabled, skipping event sync")
+            Log.i(TAG, "Syncing pending play/skip events")
+            eventSyncResult = syncEvents(applicationContext, worker, apiClient, dbHelper)
+
+            // Track ratings (Phase 8): snapshot the pending rating edits
+            // once, before the playlist loop. The pass below touches the v7
+            // schema (the pending_track_edits table AND the
+            // synced_tracks.rating column), and this worker opens the DB
+            // without migrating, so if either is absent (a scheduled sync
+            // that runs before the app has launched once after an update)
+            // the whole rating pass is skipped and the rest of the sync
+            // proceeds normally.
+            val ratingPassActive = dbHelper.hasRatingSupport()
+            if (!ratingPassActive) {
+                Log.w(TAG, "Rating sync skipped: v7 schema not present (pending_track_edits table or synced_tracks.rating column missing)")
             }
+            val pendingRatingEdits: MutableMap<Int, DatabaseHelper.PendingTrackEdit> =
+                if (ratingPassActive) {
+                    dbHelper.getPendingTrackEdits("rating").associateTo(mutableMapOf()) { it.trackId to it }
+                } else {
+                    mutableMapOf()
+                }
+            val ratingPush = mutableMapOf<Int, Int>()
 
             // Get selected playlist IDs - Flutter stores StringList with special encoding
             val playlistIdsString = prefs.getString("flutter.selected_playlist_ids", null)
@@ -429,6 +463,44 @@ class BackgroundSyncWorker(
                         dbHelper.getTracksByIds(uniqueTrackIds)
                     }
 
+                    // Rating reconciliation (Phase 8): both sides are already
+                    // in hand here, so this costs no extra HTTP. S is the
+                    // server rating on the freshly fetched track; E is the
+                    // pending edit (if any), whose base_value is the server
+                    // value when the user's edit was made.
+                    //   no E,  S != local  -> server changed: pull S
+                    //   no E,  S == local  -> nothing
+                    //   E,     S != base   -> server changed: server wins, drop E
+                    //   E,     S == base   -> local edit only: queue the push
+                    if (ratingPassActive) {
+                        for (track in uniqueTracks) {
+                            val local = existingTracks[track.id] ?: continue
+                            val edit = pendingRatingEdits[track.id]
+                            val serverRating = track.rating
+                            if (edit == null) {
+                                if (serverRating != local.rating) {
+                                    dbHelper.updateTrackRating(track.id, serverRating)
+                                }
+                            } else {
+                                val base = edit.baseValue.toIntOrNull()
+                                if (base != null && serverRating == base) {
+                                    // Push the user's value, not S: they can
+                                    // differ (that is the whole point of the
+                                    // edit), and the edit row is the record
+                                    // of what the user set.
+                                    edit.newValue.toIntOrNull()?.let { ratingPush[track.id] = it }
+                                } else {
+                                    // The server changed since the edit (or
+                                    // the baseline is unreadable): server
+                                    // wins in both places.
+                                    dbHelper.updateTrackRating(track.id, serverRating)
+                                    dbHelper.deletePendingTrackEdit(track.id, "rating")
+                                    pendingRatingEdits.remove(track.id)
+                                }
+                            }
+                        }
+                    }
+
                     // Determine which tracks to download
                     val tracksToDownload = uniqueTracks.filter { track ->
                         val localTrack = existingTracks[track.id]
@@ -481,6 +553,33 @@ class BackgroundSyncWorker(
                                 isCancelled = { isStopped }
                             )
 
+                            // Get the content URI for the downloaded file using DocumentFile
+                            val musicFolderUriString = fileOps.getMusicFolderUri()
+                            val contentUri = if (musicFolderUriString != null) {
+                                try {
+                                    val musicFolder = DocumentFile.fromTreeUri(applicationContext, Uri.parse(musicFolderUriString))
+                                    val pathParts = downloadResult.filePath.split("/")
+                                    var currentFolder: DocumentFile? = musicFolder
+                                    for (i in 0 until pathParts.size - 1) {
+                                        val part = pathParts[i]
+                                        val child = currentFolder?.findFile(part)
+                                        if (child != null && child.isDirectory) {
+                                            currentFolder = child
+                                        } else {
+                                            currentFolder = null
+                                            break
+                                        }
+                                    }
+                                    val trackFileName = pathParts.last()
+                                    currentFolder?.findFile(trackFileName)?.uri?.toString()
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to get content URI for track: ${downloadResult.filePath}", e)
+                                    null
+                                }
+                            } else {
+                                null
+                            }
+
                             // Save to database
                             dbHelper.insertOrUpdateTrack(
                                 DatabaseHelper.SyncedTrack(
@@ -498,12 +597,23 @@ class BackgroundSyncWorker(
                                     trackNumber = track.trackNumber,
                                     discNumber = track.discNumber,
                                     year = track.year,
-                                    artworkUrl = track.artworkUrl ?: "",
-                                    artworkPath = null
-                                )
-                            )
+                                     artworkUrl = track.artworkUrl ?: "",
+                                     artworkPath = null,
+                                     contentUri = contentUri
+                                 )
+                             )
 
-                            // Add to existingFiles set to prevent duplicate downloads
+                             if (contentUri == null) {
+                                 // This file was just (re)downloaded but its
+                                 // document URI could not be resolved. A
+                                 // content_uri cached from a previous
+                                 // download is stale (the new file has a new
+                                 // document id), so invalidate it explicitly
+                                 // — the upsert preserves omitted columns.
+                                 dbHelper.invalidateTrackContentUri(track.id)
+                             }
+
+                             // Add to existingFiles set to prevent duplicate downloads
                             existingFiles.add(downloadResult.filePath)
 
                             tracksDownloaded++
@@ -561,6 +671,83 @@ class BackgroundSyncWorker(
                     "tracks_in_playlist" to tracksInPlaylist,
                     "error_message" to playlistError
                 ))
+            }
+
+            // Artwork resolution (v8): one pass over every track whose
+            // artwork_source IS NULL — freshly downloaded tracks and
+            // tracks that have sat on disk since earlier versions take the
+            // identical path (there is no separate backfill). Per-track
+            // source precedence: embedded picture in the audio file (the
+            // same content:// URI the player uses), then the server's
+            // artwork endpoint, then 'none' when both were checked and
+            // found nothing — the negative cache. A per-track failure
+            // leaves that track's artwork_source NULL (retried next sync)
+            // and must never fail the track download or the sync.
+            if (syncCancelled) {
+                Log.i(TAG, "Artwork resolution skipped: sync cancelled")
+            } else if (!dbHelper.hasArtworkSupport()) {
+                Log.w(TAG, "Artwork resolution skipped: v8 schema not present (artwork_source column missing)")
+            } else {
+                val artworkCancelled = resolveArtwork(
+                    apiClient, fileOps, dbHelper, playlistIds.size,
+                    tracksProcessed, totalTracks
+                )
+                if (artworkCancelled) {
+                    syncCancelled = true
+                    cancellationReason = "Cancelled by user"
+                }
+            }
+
+            // Rating coverage sweep (Phase 8): the playlist loop only sees
+            // tracks in currently selected playlists, so an edit on a track
+            // that dropped out of every synced playlist (membership is
+            // server-curated) would never push. Apply the same rules to the
+            // remaining edit rows, fetching the server value per track.
+            // Normally zero rows, therefore zero requests.
+            if (ratingPassActive && !syncCancelled) {
+                for ((trackId, edit) in pendingRatingEdits.toList()) {
+                    if (trackId in ratingPush) continue
+                    try {
+                        val serverRating = apiClient.getTrack(trackId).rating
+                        val base = edit.baseValue.toIntOrNull()
+                        if (base != null && serverRating == base) {
+                            edit.newValue.toIntOrNull()?.let { ratingPush[trackId] = it }
+                        } else {
+                            // Server wins. The local row may no longer exist
+                            // (orphan cleanup); the update is a no-op then.
+                            dbHelper.updateTrackRating(trackId, serverRating)
+                            dbHelper.deletePendingTrackEdit(trackId, "rating")
+                        }
+                    } catch (e: Exception) {
+                        // Leave the row in place: the next sync retries.
+                        Log.e(TAG, "Rating sweep failed for track $trackId", e)
+                    }
+                }
+            }
+
+            // Push the queued rating edits: one bulk request, falling back
+            // to per-track PUTs so one rejected track does not strand the
+            // rest. Each edit row is deleted only when its own write
+            // succeeded, so a failed push retries indefinitely (no
+            // strike-out data loss, unlike pending_events).
+            if (ratingPassActive && !syncCancelled && ratingPush.isNotEmpty()) {
+                try {
+                    apiClient.updateTrackRatings(ratingPush)
+                    for (trackId in ratingPush.keys) {
+                        dbHelper.deletePendingTrackEdit(trackId, "rating")
+                    }
+                    Log.i(TAG, "Pushed ${ratingPush.size} track rating(s) in one bulk request")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Bulk rating push failed, falling back to per-track PUTs", e)
+                    for ((trackId, rating) in ratingPush) {
+                        try {
+                            apiClient.updateTrackRating(trackId, rating)
+                            dbHelper.deletePendingTrackEdit(trackId, "rating")
+                        } catch (e2: Exception) {
+                            Log.e(TAG, "Failed to push rating for track $trackId; will retry next sync", e2)
+                        }
+                    }
+                }
             }
 
             var tracksDeleted = 0
@@ -649,17 +836,35 @@ class BackgroundSyncWorker(
                 )
                 Result.failure()
             } else {
+                // Derive the run-level status from the per-playlist outcomes.
+                // Per-playlist errors are already persisted in
+                // sync_history_playlists.error_message; without this, a run in
+                // which every playlist failed (e.g. server unreachable - the
+                // per-iteration try/catch swallows each call) would be
+                // recorded as a plain "success".
+                val failedPlaylists =
+                    playlistDetails.count { it["error_message"] != null }
+                val status = computeSyncStatus(
+                    playlistIds.size, failedPlaylists, syncCancelled
+                )
+                val statusMessage = when (status) {
+                    "failed" -> "All ${playlistIds.size} playlists failed to sync"
+                    "partial" ->
+                        "$failedPlaylists of ${playlistIds.size} playlists failed to sync"
+                    else -> null
+                }
+
                 // Log sync history
                 val syncId = dbHelper.insertSyncHistory(
                     DatabaseHelper.SyncHistoryRecord(
                         timestamp = System.currentTimeMillis(),
-                        status = if (syncCancelled) "cancelled" else "success",
+                        status = status,
                         playlistsSynced = playlistIds.size,
                         tracksDownloaded = tracksDownloaded,
                         tracksDeleted = tracksDeleted,
                         playsSynced = if (eventTrackingEnabled) eventSyncResult.playsSynced else null,
                         skipsSynced = if (eventTrackingEnabled) eventSyncResult.skipsSynced else null,
-                        errorMessage = if (syncCancelled) cancellationReason else null,
+                        errorMessage = if (syncCancelled) cancellationReason else statusMessage,
                         durationMs = duration,
                         triggerType = triggerType
                     )
@@ -679,25 +884,30 @@ class BackgroundSyncWorker(
                     )
                 }
 
-                // Schedule next sync
-                scheduleNextSync()
-
-                Log.i(TAG, "Background sync completed: $tracksDownloaded tracks downloaded in ${duration}ms")
+                Log.i(TAG, "Background sync completed: $tracksDownloaded tracks downloaded in ${duration}ms (status=$status)")
                 if (syncCancelled) {
                     SyncProgressBroadcaster.dismissNotification(applicationContext)
                     SyncProgressBroadcaster.broadcastSyncComplete(
                         "cancelled",
                         cancellationReason ?: "Sync cancelled by user"
                     )
-                } else {
+                } else if (status == "success") {
                     SyncProgressBroadcaster.dismissNotification(applicationContext)
                     SyncProgressBroadcaster.broadcastSyncComplete("success")
+                } else {
+                    // Surface a run-level failure (all playlists failed) or a
+                    // partial one (some playlists failed) to the UI so it does
+                    // not look identical to a clean success.
+                    SyncProgressBroadcaster.dismissNotification(applicationContext)
+                    SyncProgressBroadcaster.broadcastSyncComplete(status, statusMessage)
                 }
 
+                // The run itself completed (history written, notification
+                // dismissed); the outcome lives in the status column above,
+                // not in the WorkManager result. The next scheduled run is
+                // re-queued by doWork's finally.
                 Result.success()
             }
-
-                return@withContext Result.success()
             } catch (e: CancellationException) {
                 handleInterruption(startTime, triggerType, e, eventTrackingEnabled, eventSyncResult)
 
@@ -737,9 +947,128 @@ class BackgroundSyncWorker(
 
                 SyncProgressBroadcaster.dismissNotification(applicationContext)
                 SyncProgressBroadcaster.broadcastSyncComplete("failed", errorMessage)
+
+                // A failed run must not kill the chain (Result.failure() is
+                // terminal). The re-arm happens in doWork's finally, like
+                // every other exit. Result.retry() was deliberately not used:
+                // it re-runs the same work and only re-arms the recurring
+                // chain if a retry eventually succeeds - a failure that
+                // outlasts the retries would leave the schedule dead anyway.
                 Result.failure()
             }
         }
+    }
+
+    /**
+     * Resolves and caches album art for every track with
+     * artwork_source IS NULL, writing the cache path back through a narrow
+     * UPDATE (the download-path upsert preserves omitted columns, so
+     * artwork_path is never blanked by a later re-download).
+     *
+     * Returns true when the worker was stopped mid-pass; the caller
+     * records the run as cancelled, exactly like the download loop.
+     */
+    private suspend fun resolveArtwork(
+        apiClient: OwnToneApiClient,
+        fileOps: FileOperations,
+        dbHelper: DatabaseHelper,
+        totalPlaylists: Int,
+        tracksProcessed: Int,
+        totalTracks: Int
+    ): Boolean {
+        val tracks = try {
+            dbHelper.getTracksNeedingArtwork()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to query tracks needing artwork", e)
+            return false
+        }
+        if (tracks.isEmpty()) return false
+
+        Log.i(TAG, "Resolving artwork for ${tracks.size} track(s)")
+        try {
+            SyncProgressBroadcaster.updateProgress(
+                applicationContext, this@BackgroundSyncWorker, "Resolving artwork",
+                totalPlaylists, totalPlaylists, tracksProcessed, totalTracks,
+                "${tracks.size} tracks without cached artwork", null
+            )
+        } catch (e: Exception) {
+            Log.d(TAG, "Ignoring artwork progress update error: ${e.message}")
+        }
+
+        var fromEmbedded = 0
+        var fromServer = 0
+        var absent = 0
+        var failed = 0
+
+        for ((index, track) in tracks.withIndex()) {
+            if (isStopped) {
+                Log.i(TAG, "Sync cancelled during artwork resolution")
+                return true
+            }
+            try {
+                // 1. EMBEDDED in the audio file, always tried first.
+                var bytes: ByteArray? = null
+                var source: String? = null
+                var embeddedAttempted = false
+                val uriString = track.contentUri
+                if (uriString != null && uriString.startsWith("content://")) {
+                    try {
+                        embeddedAttempted = true
+                        fileOps.extractEmbeddedPicture(Uri.parse(uriString))?.let {
+                            bytes = it
+                            source = "embedded"
+                        }
+                    } catch (e: Exception) {
+                        // Read error, not "no art": fall through to the
+                        // server, and if it also comes up empty the track
+                        // stays NULL (the embedded side was never checked).
+                        Log.w(TAG, "Embedded artwork read failed for track ${track.id}; trying server", e)
+                    }
+                }
+
+                // 2. SERVER fallback (baseUrl + relative artwork_url).
+                if (bytes == null) {
+                    val serverBytes = apiClient.fetchTrackArtwork(track.artworkUrl)
+                        ?.takeIf { it.isNotEmpty() }
+                    if (serverBytes != null) {
+                        bytes = serverBytes
+                        source = "server"
+                    }
+                }
+
+                when {
+                    bytes != null && source != null -> {
+                        val path = fileOps.storeArtworkFile(bytes!!)
+                        if (path != null) {
+                            dbHelper.updateTrackArtwork(track.id, path, source)
+                            if (source == "embedded") fromEmbedded++ else fromServer++
+                            Log.d(TAG, "Artwork for track ${track.id} from $source: $path")
+                        } else {
+                            failed++
+                            Log.w(TAG, "Artwork store failed for track ${track.id}; will retry next sync")
+                        }
+                    }
+                    // 3. Nothing. 'none' is only written when the embedded
+                    // side was actually checked (both sources confirmed
+                    // absent). If there was no content_uri to read the
+                    // file from, the file may still carry embedded art we
+                    // could not see — keep it NULL and retry.
+                    embeddedAttempted -> {
+                        dbHelper.updateTrackArtwork(track.id, null, "none")
+                        absent++
+                    }
+                }
+            } catch (e: Exception) {
+                failed++
+                Log.w(TAG, "Artwork resolution failed for track ${track.id}; will retry next sync", e)
+            }
+            if (index % 50 == 49) {
+                Log.d(TAG, "Artwork progress: ${index + 1}/${tracks.size}")
+            }
+        }
+
+        Log.i(TAG, "Artwork resolution complete: $fromEmbedded embedded, $fromServer server, $absent absent, $failed failed (will retry)")
+        return false
     }
 
     private fun generatePlaylistFile(
@@ -961,6 +1290,27 @@ class BackgroundSyncWorker(
         val playsSynced: Int,
         val skipsSynced: Int
     )
+}
+
+/**
+ * Decides the sync_history `status` for a run that completed the playlist
+ * loop. Pure on purpose - the first unit-test target when test
+ * infrastructure exists.
+ *
+ *   cancelled run                -> "cancelled"
+ *   every playlist failed        -> "failed"
+ *   some playlists failed        -> "partial"
+ *   no playlist failures         -> "success"
+ */
+fun computeSyncStatus(
+    totalPlaylists: Int,
+    failedPlaylists: Int,
+    cancelled: Boolean
+): String {
+    if (cancelled) return "cancelled"
+    if (totalPlaylists > 0 && failedPlaylists >= totalPlaylists) return "failed"
+    if (failedPlaylists > 0) return "partial"
+    return "success"
 }
 
 class SyncException(message: String, cause: Throwable? = null) : Exception(message, cause)

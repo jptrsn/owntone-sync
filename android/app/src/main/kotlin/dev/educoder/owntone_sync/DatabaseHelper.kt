@@ -75,9 +75,197 @@ class DatabaseHelper(private val context: Context) {
             put("disc_number", track.discNumber)
             put("year", track.year)
             put("artwork_url", track.artworkUrl)
-            put("artwork_path", track.artworkPath)
+            // artwork_path and content_uri are only written when non-null.
+            // The write is UPDATE-first (not INSERT OR REPLACE): REPLACE
+            // deletes the conflicting row and inserts a fresh one, so an
+            // omitted column there does not preserve it — it takes the
+            // column default, which blanked the cached content_uri on every
+            // download.
+            if (track.artworkPath != null) put("artwork_path", track.artworkPath)
+            if (track.contentUri != null) put("content_uri", track.contentUri)
+            // rating is deliberately omitted from the UPDATE path: an
+            // existing row may carry the user's unpushed rating, and the
+            // upsert must preserve it. It is added only for the INSERT of a
+            // brand-new row below, where no local edit can exist yet and the
+            // server's rating is the only truth available (without this a
+            // freshly downloaded track would show 0 stars until the next
+            // sync's pull).
         }
-        db.insertWithOnConflict("synced_tracks", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+        val updated = db.update("synced_tracks", values, "id = ?", arrayOf(track.id.toString()))
+        if (updated == 0) {
+            if (hasColumn("synced_tracks", "rating")) {
+                values.put("rating", track.rating)
+            }
+            db.insert("synced_tracks", null, values)
+        }
+        db.close()
+    }
+
+    private fun hasColumn(table: String, column: String): Boolean {
+        val db = openDatabase()
+        return try {
+            val cursor = db.rawQuery("PRAGMA table_info($table)", null)
+            var found = false
+            while (cursor.moveToNext()) {
+                if (cursor.getString(1) == column) {
+                    found = true
+                    break
+                }
+            }
+            cursor.close()
+            found
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * True when the v8 artwork column (synced_tracks.artwork_source) is
+     * present. The worker opens the DB without migrating, so a scheduled
+     * sync that runs before the app has launched once after an update can
+     * hit a v7 schema; without the column the whole artwork pass is
+     * skipped (the app adds the column on its next launch).
+     */
+    fun hasArtworkSupport(): Boolean = hasColumn("synced_tracks", "artwork_source")
+
+    /**
+     * Tracks whose artwork has never been checked (artwork_source IS NULL):
+     * a single resolution pass over this set covers both freshly
+     * downloaded tracks and tracks that have sat on disk since earlier
+     * versions — there is no separate backfill.
+     */
+    fun getTracksNeedingArtwork(): List<SyncedTrack> {
+        val db = openDatabase()
+        val tracks = mutableListOf<SyncedTrack>()
+        val cursor = db.query(
+            "synced_tracks",
+            null,
+            "artwork_source IS NULL",
+            null,
+            null, null, null
+        )
+        while (cursor.moveToNext()) {
+            tracks.add(SyncedTrack.fromCursor(cursor))
+        }
+        cursor.close()
+        db.close()
+        return tracks
+    }
+
+    /**
+     * Narrow artwork update: writes artwork_path (only when non-null) and
+     * artwork_source, touching no other column. [artworkSource] is one of
+     * 'embedded', 'server', or 'none' (checked and absent — the negative
+     * cache; without it every sync would re-extract from every artless
+     * file).
+     */
+    fun updateTrackArtwork(trackId: Int, artworkPath: String?, artworkSource: String) {
+        val db = openDatabase()
+        db.update(
+            "synced_tracks",
+            ContentValues().apply {
+                if (artworkPath != null) put("artwork_path", artworkPath)
+                put("artwork_source", artworkSource)
+            },
+            "id = ?",
+            arrayOf(trackId.toString())
+        )
+        db.close()
+    }
+
+    /**
+     * True when the v7 rating schema is present: BOTH the
+     * pending_track_edits table and the synced_tracks.rating column. The
+     * worker opens the DB without migrating, so a scheduled sync that runs
+     * before the app has launched once after an update can hit a v6 schema;
+     * either half missing means the whole rating pass must be skipped.
+     */
+    fun hasRatingSupport(): Boolean {
+        val db = openDatabase()
+        return try {
+            val tableCursor = db.rawQuery(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pending_track_edits'",
+                null
+            )
+            val hasTable = tableCursor.moveToFirst()
+            tableCursor.close()
+            if (!hasTable) return false
+            val colCursor = db.rawQuery("PRAGMA table_info(synced_tracks)", null)
+            var hasRatingColumn = false
+            while (colCursor.moveToNext()) {
+                if (colCursor.getString(1) == "rating") {
+                    hasRatingColumn = true
+                    break
+                }
+            }
+            colCursor.close()
+            hasRatingColumn
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * Narrow rating-only update: pulls the server value onto an existing
+     * row without touching any other column (a full insertOrUpdateTrack
+     * would rewrite download metadata and is only used in the download
+     * loop). A no-op when the track has no local row.
+     */
+    fun updateTrackRating(trackId: Int, rating: Int) {
+        val db = openDatabase()
+        db.update(
+            "synced_tracks",
+            ContentValues().apply { put("rating", rating) },
+            "id = ?",
+            arrayOf(trackId.toString())
+        )
+        db.close()
+    }
+
+    fun getPendingTrackEdits(field: String): List<PendingTrackEdit> {
+        val db = openDatabase()
+        val edits = mutableListOf<PendingTrackEdit>()
+        val cursor = db.query(
+            "pending_track_edits",
+            null,
+            "field = ?",
+            arrayOf(field),
+            null, null, null
+        )
+        while (cursor.moveToNext()) {
+            edits.add(PendingTrackEdit.fromCursor(cursor))
+        }
+        cursor.close()
+        db.close()
+        return edits
+    }
+
+    fun deletePendingTrackEdit(trackId: Int, field: String) {
+        val db = openDatabase()
+        db.delete(
+            "pending_track_edits",
+            "track_id = ? AND field = ?",
+            arrayOf(trackId.toString(), field)
+        )
+        db.close()
+    }
+
+    /**
+     * Explicitly clears a track's cached content URI.
+     *
+     * The download path calls this when a (re-)downloaded file's document-ID
+     * resolution fails: the new file has a new document id, so a URI cached
+     * from a previous download is stale and must not survive — now that the
+     * upsert preserves omitted columns, nothing else would clear it.
+     */
+    fun invalidateTrackContentUri(trackId: Int) {
+        val db = openDatabase()
+        db.update(
+            "synced_tracks",
+            ContentValues().apply { putNull("content_uri") },
+            "id = ?",
+            arrayOf(trackId.toString())
+        )
         db.close()
     }
 
@@ -321,7 +509,12 @@ class DatabaseHelper(private val context: Context) {
         val discNumber: Int,
         val year: Int,
         val artworkUrl: String,
-        val artworkPath: String?
+        val artworkPath: String?,
+        val contentUri: String? = null,
+        val rating: Int = 0,
+        // NULL = unresolved, 'embedded', 'server', 'none' = checked and
+        // absent. Tolerant read, like rating: a pre-v8 DB has no column.
+        val artworkSource: String? = null
     ) {
         companion object {
             fun fromCursor(cursor: Cursor) = SyncedTrack(
@@ -340,7 +533,37 @@ class DatabaseHelper(private val context: Context) {
                 discNumber = cursor.getInt(cursor.getColumnIndexOrThrow("disc_number")),
                 year = cursor.getInt(cursor.getColumnIndexOrThrow("year")),
                 artworkUrl = cursor.getString(cursor.getColumnIndexOrThrow("artwork_url")) ?: "",
-                artworkPath = cursor.getString(cursor.getColumnIndexOrThrow("artwork_path"))
+                artworkPath = cursor.getString(cursor.getColumnIndexOrThrow("artwork_path")),
+                contentUri = cursor.getString(cursor.getColumnIndexOrThrow("content_uri")),
+                // Tolerant read: on a pre-v7 DB (worker ran before the app
+                // has launched once after the update) the column is absent
+                // and every other caller of fromCursor must still work.
+                rating = cursor.getColumnIndex("rating").let {
+                    if (it >= 0) cursor.getInt(it) else 0
+                },
+                artworkSource = cursor.getColumnIndex("artwork_source").let {
+                    if (it >= 0) cursor.getString(it) else null
+                }
+            )
+        }
+    }
+
+    // A pending field edit (last-write-wins state). new_value/base_value are
+    // stringified: `field` determines the interpretation.
+    data class PendingTrackEdit(
+        val trackId: Int,
+        val field: String,
+        val newValue: String,
+        val baseValue: String,
+        val updatedAt: Long
+    ) {
+        companion object {
+            fun fromCursor(cursor: Cursor) = PendingTrackEdit(
+                trackId = cursor.getInt(cursor.getColumnIndexOrThrow("track_id")),
+                field = cursor.getString(cursor.getColumnIndexOrThrow("field")) ?: "",
+                newValue = cursor.getString(cursor.getColumnIndexOrThrow("new_value")) ?: "",
+                baseValue = cursor.getString(cursor.getColumnIndexOrThrow("base_value")) ?: "",
+                updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at"))
             )
         }
     }

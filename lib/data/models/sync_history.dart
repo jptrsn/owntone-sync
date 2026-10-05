@@ -1,7 +1,7 @@
 class SyncHistoryRecord {
   final int? id;
   final int timestamp;
-  final String status; // 'success', 'failed', 'cancelled', 'skipped'
+  final String status; // 'success', 'partial', 'failed', 'cancelled', 'skipped'
   final int playlistsSynced;
   final int tracksDownloaded;
   final int tracksDeleted;

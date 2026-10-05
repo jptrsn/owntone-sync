@@ -98,6 +98,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
         return Colors.green;
       case 'failed':
         return Colors.red;
+      case 'partial':
+        return Colors.amber;
       case 'cancelled':
         return Colors.orange;
       case 'skipped':
@@ -113,6 +115,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
         return Icons.check_circle;
       case 'failed':
         return Icons.error;
+      case 'partial':
+        return Icons.sync_problem;
       case 'cancelled':
         return Icons.cancel;
       case 'skipped':
@@ -125,6 +129,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Sync History'),
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
+      ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _history.isEmpty
@@ -173,6 +182,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
   Widget _buildHistoryItem(SyncHistoryRecord record) {
     final statusColor = _getStatusColor(record.status);
     final statusIcon = _getStatusIcon(record.status);
+    final plays = record.playsSynced ?? 0;
+    final skips = record.skipsSynced ?? 0;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -188,6 +199,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     ? 'Sync Failed'
                     : record.status == 'cancelled'
                     ? 'Sync Cancelled'
+                    : record.status == 'partial'
+                    ? 'Sync Completed with Errors'
                     : 'Sync Skipped',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
@@ -209,11 +222,24 @@ class _HistoryScreenState extends State<HistoryScreen> {
           children: [
             const SizedBox(height: 4),
             Text(_formatTimestamp(record.timestamp)),
-            if (record.status == 'success') ...[
+            if (record.status == 'success' ||
+                record.status == 'partial' ||
+                record.status == 'failed') ...[
               const SizedBox(height: 4),
               Text(
                 '${record.playlistsSynced} playlists • ${record.tracksDownloaded} tracks downloaded',
                 style: const TextStyle(fontSize: 12),
+              ),
+            ],
+            // A partial/failed run carries its run-level summary in
+            // errorMessage ("N of M playlists failed to sync"); the
+            // per-playlist breakdown stays in the expanded section below.
+            if (record.errorMessage != null &&
+                (record.status == 'partial' || record.status == 'failed')) ...[
+              const SizedBox(height: 4),
+              Text(
+                record.errorMessage!,
+                style: TextStyle(fontSize: 12, color: Colors.red[700]),
               ),
             ],
           ],
@@ -233,9 +259,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     _buildStat('Downloaded', '${record.tracksDownloaded}'),
                     if (record.tracksDeleted > 0)
                       _buildStat('Deleted', '${record.tracksDeleted}'),
-                    if (record.playsSynced != null) ...[
-                      _buildStat('Plays', '${record.playsSynced}'),
-                      _buildStat('Skips', '${record.skipsSynced}'),
+                    // Since Phase 0.5 the worker records 0 rather than NULL
+                    // when a sync uploads nothing; render that as "No events"
+                    // instead of a bare 0/0.
+                    if (record.playsSynced != null ||
+                        record.skipsSynced != null) ...[
+                      if (plays + skips > 0) ...[
+                        _buildStat('Plays', '$plays'),
+                        _buildStat('Skips', '$skips'),
+                      ] else
+                        _buildStat('Plays / Skips', 'No events'),
                     ],
                   ],
                 ),

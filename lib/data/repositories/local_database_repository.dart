@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:sqflite/sqflite.dart';
 import '../database/database_helper.dart';
 import '../models/playlist.dart';
@@ -56,6 +58,17 @@ class SyncedTrack {
   final int year;
   final String artworkUrl;
   final String? artworkPath;
+  final String? contentUri;
+
+  /// 0-100. The last-known server value when no edit is pending; the user's
+  /// value while a pending_track_edits row for this track exists (so display
+  /// stays a plain column read).
+  final int rating;
+
+  /// Where [artworkPath] came from: null = unresolved (the sync worker
+  /// will resolve it), 'embedded', 'server', or 'none' = checked and
+  /// absent (the negative cache). Written only by the Kotlin sync worker.
+  final String? artworkSource;
 
   SyncedTrack({
     required this.id,
@@ -74,6 +87,9 @@ class SyncedTrack {
     this.year = 0,
     this.artworkUrl = '',
     this.artworkPath,
+    this.contentUri,
+    this.rating = 0,
+    this.artworkSource,
   });
 
   Map<String, dynamic> toMap() {
@@ -94,6 +110,9 @@ class SyncedTrack {
       'year': year,
       'artwork_url': artworkUrl,
       'artwork_path': artworkPath,
+      'content_uri': contentUri,
+      'rating': rating,
+      'artwork_source': artworkSource,
     };
   }
 
@@ -115,6 +134,9 @@ class SyncedTrack {
       year: map['year'] as int? ?? 0,
       artworkUrl: map['artwork_url'] as String? ?? '',
       artworkPath: map['artwork_path'] as String?,
+      contentUri: map['content_uri'] as String?,
+      rating: map['rating'] as int? ?? 0,
+      artworkSource: map['artwork_source'] as String?,
     );
   }
 }
@@ -125,6 +147,7 @@ class PendingEvent {
   final String eventType; // 'play' or 'skip'
   final int timestamp;
   final bool synced;
+  final int retryCount;
 
   PendingEvent({
     this.id,
@@ -132,6 +155,7 @@ class PendingEvent {
     required this.eventType,
     required this.timestamp,
     this.synced = false,
+    this.retryCount = 0,
   });
 
   Map<String, dynamic> toMap() {
@@ -141,6 +165,7 @@ class PendingEvent {
       'event_type': eventType,
       'timestamp': timestamp,
       'synced': synced ? 1 : 0,
+      'retry_count': retryCount,
     };
   }
 
@@ -151,8 +176,107 @@ class PendingEvent {
       eventType: map['event_type'],
       timestamp: map['timestamp'],
       synced: map['synced'] == 1,
+      retryCount: map['retry_count'] as int? ?? 0,
     );
   }
+}
+
+/// The persisted playback state (A8), stored as the single playback_state
+/// row. [queueIds] is the queue in BASE order (the player's sequence), and
+/// [shuffleIndices] the base indices in play order at the moment of saving
+/// (identity when shuffle is off). Restoring replays both, so the user gets
+/// back the same queue, the same current track, and the same "next track".
+class PlaybackStateRecord {
+  final List<int> queueIds;
+  final int? currentTrackId;
+  final int positionMs;
+  final bool shuffleEnabled;
+  final List<int> shuffleIndices;
+  final String repeatMode; // 'none' | 'one' | 'all'
+  final String? originKind;
+  final int? originId;
+  final String? originName;
+
+  PlaybackStateRecord({
+    required this.queueIds,
+    this.currentTrackId,
+    required this.positionMs,
+    required this.shuffleEnabled,
+    required this.shuffleIndices,
+    required this.repeatMode,
+    this.originKind,
+    this.originId,
+    this.originName,
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': 1,
+      'queue_ids': jsonEncode(queueIds),
+      'current_track_id': currentTrackId,
+      'position_ms': positionMs,
+      'shuffle_enabled': shuffleEnabled ? 1 : 0,
+      'shuffle_indices': jsonEncode(shuffleIndices),
+      'repeat_mode': repeatMode,
+      'origin_kind': originKind,
+      'origin_id': originId,
+      'origin_name': originName,
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+    };
+  }
+
+  factory PlaybackStateRecord.fromMap(Map<String, dynamic> map) {
+    List<int> parseIntList(String? raw) {
+      if (raw == null || raw.isEmpty) return const [];
+      try {
+        return (jsonDecode(raw) as List<dynamic>)
+            .map((e) => (e as num).toInt())
+            .toList();
+      } catch (_) {
+        return const [];
+      }
+    }
+
+    return PlaybackStateRecord(
+      queueIds: parseIntList(map['queue_ids'] as String?),
+      currentTrackId: map['current_track_id'] as int?,
+      positionMs: map['position_ms'] as int? ?? 0,
+      shuffleEnabled: (map['shuffle_enabled'] as int? ?? 0) == 1,
+      shuffleIndices: parseIntList(map['shuffle_indices'] as String?),
+      repeatMode: map['repeat_mode'] as String? ?? 'none',
+      originKind: map['origin_kind'] as String?,
+      originId: map['origin_id'] as int?,
+      originName: map['origin_name'] as String?,
+    );
+  }
+}
+
+/// A pending field-edit row from `pending_track_edits`.
+class PendingTrackEditRow {
+  final String baseValue;
+  final String newValue;
+  final int updatedAt;
+
+  PendingTrackEditRow({
+    required this.baseValue,
+    required this.newValue,
+    required this.updatedAt,
+  });
+}
+
+/// Grouped results of a library search.
+class LibrarySearchResult {
+  final List<Map<String, dynamic>> playlists;
+  final List<Map<String, dynamic>> artists;
+  final List<Map<String, dynamic>> albums;
+  final List<SyncedTrack> tracks;
+
+  const LibrarySearchResult({
+    required this.playlists,
+    required this.artists,
+    required this.albums,
+    required this.tracks,
+  });
 }
 
 class LocalDatabaseRepository {
@@ -204,15 +328,6 @@ class LocalDatabaseRepository {
   }
 
   // Track operations
-  Future<void> insertOrUpdateTrack(SyncedTrack track) async {
-    final db = await _dbHelper.database;
-    await db.insert(
-      'synced_tracks',
-      track.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-  }
-
   Future<SyncedTrack?> getTrackById(int id) async {
     final db = await _dbHelper.database;
     final results = await db.query(
@@ -254,6 +369,138 @@ class LocalDatabaseRepository {
   Future<void> deleteTrack(int id) async {
     final db = await _dbHelper.database;
     await db.delete('synced_tracks', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Cache resolved content URIs back onto tracks so the expensive
+  /// document-ID resolution is paid once, not on every play.
+  Future<void> updateTracksContentUri(Map<int, String> trackUris) async {
+    if (trackUris.isEmpty) return;
+    final db = await _dbHelper.database;
+    await db.transaction((txn) async {
+      for (final entry in trackUris.entries) {
+        await txn.update(
+          'synced_tracks',
+          {'content_uri': entry.value},
+          where: 'id = ?',
+          whereArgs: [entry.key],
+        );
+      }
+    });
+  }
+
+  // Pending track-edit operations (last-write-wins field edits; the
+  // composite primary key (track_id, field) keeps one row per field).
+
+  Future<PendingTrackEditRow?> getPendingTrackEdit(
+    int trackId,
+    String field,
+  ) async {
+    final db = await _dbHelper.database;
+    final rows = await db.query(
+      'pending_track_edits',
+      where: 'track_id = ? AND field = ?',
+      whereArgs: [trackId, field],
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return PendingTrackEditRow(
+      baseValue: row['base_value'] as String,
+      newValue: row['new_value'] as String,
+      updatedAt: row['updated_at'] as int,
+    );
+  }
+
+  Future<void> insertPendingTrackEdit({
+    required int trackId,
+    required String field,
+    required String newValue,
+    required String baseValue,
+  }) async {
+    final db = await _dbHelper.database;
+    await db.insert('pending_track_edits', {
+      'track_id': trackId,
+      'field': field,
+      'new_value': newValue,
+      'base_value': baseValue,
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  /// Overwrites only `new_value`/`updated_at` of an existing edit. The
+  /// original `base_value` is preserved — it stays anchored to the server
+  /// truth the first edit was made against, which is what lets the sync
+  /// worker detect a later server-side change. Overwriting it with the
+  /// user's previous value destroys that detection.
+  Future<void> updatePendingTrackEditValue({
+    required int trackId,
+    required String field,
+    required String newValue,
+  }) async {
+    final db = await _dbHelper.database;
+    await db.update(
+      'pending_track_edits',
+      {'new_value': newValue, 'updated_at': DateTime.now().millisecondsSinceEpoch},
+      where: 'track_id = ? AND field = ?',
+      whereArgs: [trackId, field],
+    );
+  }
+
+  /// Sets the rating (0-100) of [trackId] locally and records it as a
+  /// pending edit so the sync worker pushes it at the next sync.
+  ///
+  /// While a pending edit exists, [SyncedTrack.rating] holds the user's
+  /// value (display stays a plain column read); the edit row's `base_value`
+  /// holds what the server had when the first edit was made.
+  Future<void> setTrackRating(int trackId, int rating) async {
+    final clamped = rating.clamp(0, 100);
+    final db = await _dbHelper.database;
+    await db.transaction((txn) async {
+      final existing = await txn.query(
+        'pending_track_edits',
+        columns: ['base_value'],
+        where: 'track_id = ? AND field = ?',
+        whereArgs: [trackId, 'rating'],
+      );
+      String baseValue;
+      if (existing.isEmpty) {
+        // No pending edit: the rating column IS the last-known server value.
+        // Read it BEFORE the update below.
+        final rows = await txn.query(
+          'synced_tracks',
+          columns: ['rating'],
+          where: 'id = ?',
+          whereArgs: [trackId],
+        );
+        final current = rows.isEmpty ? 0 : (rows.first['rating'] as int? ?? 0);
+        if (current == clamped) return; // No-op release: nothing to record.
+        baseValue = '$current';
+      } else {
+        baseValue = existing.first['base_value'] as String;
+      }
+      await txn.update(
+        'synced_tracks',
+        {'rating': clamped},
+        where: 'id = ?',
+        whereArgs: [trackId],
+      );
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (existing.isEmpty) {
+        await txn.insert('pending_track_edits', {
+          'track_id': trackId,
+          'field': 'rating',
+          'new_value': '$clamped',
+          'base_value': baseValue,
+          'updated_at': now,
+        });
+      } else {
+        await txn.update(
+          'pending_track_edits',
+          {'new_value': '$clamped', 'updated_at': now},
+          where: 'track_id = ? AND field = ?',
+          whereArgs: [trackId, 'rating'],
+        );
+      }
+    });
   }
 
   // Playlist-Track relationship operations
@@ -315,9 +562,76 @@ class LocalDatabaseRepository {
     await db.delete('pending_events', where: 'id = ?', whereArgs: [eventId]);
   }
 
+  Future<void> incrementRetryCount(int eventId) async {
+    final db = await _dbHelper.database;
+    final existingEvents = await db.query(
+      'pending_events',
+      where: 'id = ?',
+      whereArgs: [eventId],
+    );
+    
+    if (existingEvents.isNotEmpty) {
+      final retryCount = existingEvents.first['retry_count'] as int?;
+      final newRetryCount = (retryCount ?? 0) + 1;
+      await db.update(
+        'pending_events',
+        {'retry_count': newRetryCount},
+        where: 'id = ?',
+        whereArgs: [eventId],
+      );
+    }
+  }
+
+  Future<void> deleteEvents(List<int> eventIds) async {
+    if (eventIds.isEmpty) return;
+    final db = await _dbHelper.database;
+    final placeholders = List.generate(eventIds.length, (_) => '?').join(',');
+    await db.delete(
+      'pending_events',
+      where: 'id IN ($placeholders)',
+      whereArgs: eventIds,
+    );
+  }
+
   Future<void> deleteSyncedEvents() async {
     final db = await _dbHelper.database;
     await db.delete('pending_events', where: 'synced = ?', whereArgs: [1]);
+  }
+
+  /// Count of playback events queued for the next sync (D3).
+  Future<int> getPendingEventCount() async {
+    final db = await _dbHelper.database;
+    final rows = await db.rawQuery(
+      'SELECT COUNT(*) AS c FROM pending_events WHERE synced = 0',
+    );
+    return (rows.first['c'] as int?) ?? 0;
+  }
+
+  // Playback state persistence (A8)
+  Future<void> savePlaybackState(PlaybackStateRecord state) async {
+    final db = await _dbHelper.database;
+    await db.insert(
+      'playback_state',
+      state.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<PlaybackStateRecord?> loadPlaybackState() async {
+    final db = await _dbHelper.database;
+    final rows = await db.query(
+      'playback_state',
+      where: 'id = ?',
+      whereArgs: [1],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return PlaybackStateRecord.fromMap(rows.first);
+  }
+
+  Future<void> clearPlaybackState() async {
+    final db = await _dbHelper.database;
+    await db.delete('playback_state');
   }
 
   // Playlist cache operations
@@ -343,22 +657,34 @@ class LocalDatabaseRepository {
     await db.delete('playlist_cache');
   }
 
-  /// Get all unique artists
-  Future<List<String>> getAllArtists({String sortBy = 'artist'}) async {
-    final db = await _dbHelper.database; // Changed this line
-    final result = await db.query(
-      'synced_tracks',
-      columns: ['DISTINCT artist'],
-      orderBy: sortBy == 'artist' ? 'artist ASC' : 'artist DESC',
-    );
-    return result.map((row) => row['artist'] as String).toList();
+  /// Get all unique artists with track and album counts.
+  ///
+  /// The counts use the same membership rule as [getTracksByArtist]
+  /// (`artist = X OR album_artist = X`), so the row's numbers match what the
+  /// artist detail screen shows. A plain `GROUP BY artist` would count only
+  /// exact-`artist` matches and understate feature credits.
+  Future<List<Map<String, dynamic>>> getAllArtists(
+    {String sortBy = 'artist'}
+  ) async {
+    final db = await _dbHelper.database;
+    final result = await db.rawQuery('''
+      SELECT
+        a.artist AS artist,
+        (SELECT COUNT(*) FROM synced_tracks t
+          WHERE t.artist = a.artist OR t.album_artist = a.artist) AS track_count,
+        (SELECT COUNT(DISTINCT t.album) FROM synced_tracks t
+          WHERE t.artist = a.artist OR t.album_artist = a.artist) AS album_count
+      FROM (SELECT DISTINCT artist FROM synced_tracks WHERE artist != '') a
+      ORDER BY a.artist ${sortBy == 'artist' ? 'ASC' : 'DESC'}
+    ''');
+    return result;
   }
 
-  /// Get all unique albums with artist info
+  /// Get all unique albums with artist info and track count
   Future<List<Map<String, dynamic>>> getAllAlbums({
     String sortBy = 'album',
   }) async {
-    final db = await _dbHelper.database; // Changed this line
+    final db = await _dbHelper.database;
 
     String orderByClause;
     switch (sortBy) {
@@ -372,9 +698,21 @@ class LocalDatabaseRepository {
         orderByClause = 'album ASC';
     }
 
+    // MAX(artwork_path) picks one representative cover for the row. The
+    // per-track paths are content-addressed, so within one (album, artist,
+    // year) they are normally all identical — but a pathological mixed
+    // case (e.g. one track resolved embedded, one from the server) must not
+    // split the album into duplicate rows; grouping by artwork_path would
+    // do exactly that.
     final result = await db.rawQuery('''
-      SELECT DISTINCT album, album_artist, year, artwork_path
+      SELECT
+        album,
+        album_artist,
+        year,
+        MAX(artwork_path) AS artwork_path,
+        COUNT(*) AS track_count
       FROM synced_tracks
+      GROUP BY album, album_artist, year
       ORDER BY $orderByClause
     ''');
 
@@ -413,12 +751,19 @@ class LocalDatabaseRepository {
     return result.map((map) => SyncedTrack.fromMap(map)).toList();
   }
 
-  /// Get tracks by album
+  /// Get tracks by album.
+  ///
+  /// Album names collide across artists in real libraries (this one has
+  /// nine distinct albums named "Brass"), so the optional [albumArtist] and
+  /// [year] narrow the match to one displayed album row. Callers that only
+  /// know the name get the union of all same-named albums.
   Future<List<SyncedTrack>> getTracksByAlbum(
     String album, {
+    String? albumArtist,
+    int? year,
     String sortBy = 'track',
   }) async {
-    final db = await _dbHelper.database; // Changed this line
+    final db = await _dbHelper.database;
 
     String orderByClause;
     switch (sortBy) {
@@ -432,10 +777,21 @@ class LocalDatabaseRepository {
         orderByClause = 'disc_number ASC, track_number ASC';
     }
 
+    final where = StringBuffer('album = ?');
+    final args = <Object?>[album];
+    if (albumArtist != null) {
+      where.write(' AND album_artist = ?');
+      args.add(albumArtist);
+    }
+    if (year != null) {
+      where.write(' AND year = ?');
+      args.add(year);
+    }
+
     final result = await db.query(
       'synced_tracks',
-      where: 'album = ?',
-      whereArgs: [album],
+      where: where.toString(),
+      whereArgs: args,
       orderBy: orderByClause,
     );
 
@@ -473,8 +829,10 @@ class LocalDatabaseRepository {
   }
 
   /// Get synced playlists with track counts
-  Future<List<Map<String, dynamic>>> getAllPlaylistsWithCounts() async {
-    final db = await _dbHelper.database; // Changed this line
+  Future<List<Map<String, dynamic>>> getAllPlaylistsWithCounts({
+    bool nameDesc = false,
+  }) async {
+    final db = await _dbHelper.database;
 
     final result = await db.rawQuery('''
       SELECT
@@ -487,10 +845,93 @@ class LocalDatabaseRepository {
       FROM synced_playlists p
       LEFT JOIN playlist_tracks pt ON p.id = pt.playlist_id
       GROUP BY p.id
-      ORDER BY p.name ASC
+      ORDER BY p.name ${nameDesc ? 'DESC' : 'ASC'}
     ''');
 
     return result;
+  }
+
+  /// Search the synced library by track title, artist, album, and playlist
+  /// name. Matching is case-insensitive: the column side is folded with
+  /// SQLite's `LOWER` (ASCII) and the query side with Dart's Unicode-aware
+  /// `toLowerCase()`, which stock SQLite's `LIKE`/`NOCASE` cannot do alone.
+  Future<LibrarySearchResult> searchLibrary(String query) async {
+    if (query.trim().isEmpty) {
+      return const LibrarySearchResult(
+        playlists: [],
+        artists: [],
+        albums: [],
+        tracks: [],
+      );
+    }
+    final db = await _dbHelper.database;
+    final escaped = query
+        .trim()
+        .toLowerCase()
+        .replaceAll(r'\', r'\\')
+        .replaceAll('%', r'\%')
+        .replaceAll('_', r'\_');
+    final q = '%$escaped%';
+
+    final playlists = await db.rawQuery('''
+      SELECT
+        p.id,
+        p.name,
+        p.path,
+        p.type,
+        p.last_synced,
+        COUNT(pt.track_id) as track_count
+      FROM synced_playlists p
+      LEFT JOIN playlist_tracks pt ON p.id = pt.playlist_id
+      WHERE LOWER(p.name) LIKE ? ESCAPE '\\'
+      GROUP BY p.id
+      ORDER BY p.name ASC
+      LIMIT 20
+    ''', [q]);
+
+    final artists = await db.rawQuery('''
+      SELECT
+        artist AS artist,
+        COUNT(*) AS track_count,
+        COUNT(DISTINCT album) AS album_count
+      FROM synced_tracks
+      WHERE artist != '' AND LOWER(artist) LIKE ? ESCAPE '\\'
+      GROUP BY artist
+      ORDER BY artist ASC
+      LIMIT 20
+    ''', [q]);
+
+    final albums = await db.rawQuery('''
+      SELECT
+        album,
+        album_artist,
+        year,
+        MAX(artwork_path) AS artwork_path,
+        COUNT(*) AS track_count
+      FROM synced_tracks
+      WHERE LOWER(album) LIKE ? ESCAPE '\\'
+        OR LOWER(album_artist) LIKE ? ESCAPE '\\'
+      GROUP BY album, album_artist, year
+      ORDER BY album ASC
+      LIMIT 20
+    ''', [q, q]);
+
+    final trackRows = await db.rawQuery('''
+      SELECT st.*
+      FROM synced_tracks st
+      WHERE LOWER(st.title) LIKE ? ESCAPE '\\'
+        OR LOWER(st.artist) LIKE ? ESCAPE '\\'
+        OR LOWER(st.album) LIKE ? ESCAPE '\\'
+      ORDER BY st.title ASC
+      LIMIT 100
+    ''', [q, q, q]);
+
+    return LibrarySearchResult(
+      playlists: playlists,
+      artists: artists,
+      albums: albums,
+      tracks: trackRows.map((map) => SyncedTrack.fromMap(map)).toList(),
+    );
   }
 
   /// Get multiple tracks by IDs in a single query
