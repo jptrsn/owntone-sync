@@ -98,6 +98,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
         return Colors.green;
       case 'failed':
         return Colors.red;
+      case 'partial':
+        return Colors.amber;
       case 'cancelled':
         return Colors.orange;
       case 'skipped':
@@ -113,6 +115,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
         return Icons.check_circle;
       case 'failed':
         return Icons.error;
+      case 'partial':
+        return Icons.sync_problem;
       case 'cancelled':
         return Icons.cancel;
       case 'skipped':
@@ -195,6 +199,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     ? 'Sync Failed'
                     : record.status == 'cancelled'
                     ? 'Sync Cancelled'
+                    : record.status == 'partial'
+                    ? 'Sync Completed with Errors'
                     : 'Sync Skipped',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
@@ -216,11 +222,24 @@ class _HistoryScreenState extends State<HistoryScreen> {
           children: [
             const SizedBox(height: 4),
             Text(_formatTimestamp(record.timestamp)),
-            if (record.status == 'success') ...[
+            if (record.status == 'success' ||
+                record.status == 'partial' ||
+                record.status == 'failed') ...[
               const SizedBox(height: 4),
               Text(
                 '${record.playlistsSynced} playlists • ${record.tracksDownloaded} tracks downloaded',
                 style: const TextStyle(fontSize: 12),
+              ),
+            ],
+            // A partial/failed run carries its run-level summary in
+            // errorMessage ("N of M playlists failed to sync"); the
+            // per-playlist breakdown stays in the expanded section below.
+            if (record.errorMessage != null &&
+                (record.status == 'partial' || record.status == 'failed')) ...[
+              const SizedBox(height: 4),
+              Text(
+                record.errorMessage!,
+                style: TextStyle(fontSize: 12, color: Colors.red[700]),
               ),
             ],
           ],

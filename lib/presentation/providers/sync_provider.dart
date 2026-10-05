@@ -62,9 +62,9 @@ class SyncProvider extends ChangeNotifier {
   bool get isBatteryOptimizationDisabled => _isBatteryOptimizationDisabled;
   DateTime? get missedSyncTime => _missedSyncTime;
 
-  /// Emits the worker's completion status ('success', 'failed', 'cancelled',
-  /// 'skipped', 'interrupted') each time a sync run ends. Library refresh and
-  /// queue reconciliation hook off this (C2/C3).
+  /// Emits the worker's completion status ('success', 'partial', 'failed',
+  /// 'cancelled', 'skipped', 'interrupted') each time a sync run ends.
+  /// Library refresh and queue reconciliation hook off this (C2/C3).
   Stream<String> get syncCompleted => _syncCompletedController.stream;
 
   SyncProvider() {
@@ -278,13 +278,16 @@ class SyncProvider extends ChangeNotifier {
             _isSyncing = false;
             _syncProgress = null;
             _isCancelling = false;
-            // A failed run surfaces on the app-bar badge and banner; a
-            // successful run clears any previous error.
-            if (status == 'failed') {
+            // A failed or partial run surfaces on the app-bar badge and
+            // banner (a run where every playlist failed must not look like a
+            // clean success); a successful run clears any previous error.
+            if (status == 'failed' || status == 'partial') {
               final message = event['message'];
               _lastError = (message is String && message.isNotEmpty)
                   ? message
-                  : 'Sync failed';
+                  : (status == 'partial'
+                      ? 'Sync completed with errors'
+                      : 'Sync failed');
             } else if (status == 'success') {
               _lastError = null;
             }

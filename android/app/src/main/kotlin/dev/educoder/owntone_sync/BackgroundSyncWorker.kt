@@ -176,6 +176,23 @@ class BackgroundSyncWorker(
     }
 
     override suspend fun doWork(): Result {
+        return try {
+            doWorkInternal()
+        } finally {
+            // Structural re-arm: no matter how this run ends - success,
+            // failure, user cancel, system interruption, skip - the next
+            // scheduled sync is re-queued. This generalizes the rule stated
+            // at the skip-today site ("skipping today must not break the
+            // recurring schedule") from per-path patches into a guarantee,
+            // so a new exit path cannot silently kill the chain.
+            // scheduleNextSync() reads flutter.sync_schedule fresh and
+            // returns early when !schedule.enabled, so this cannot
+            // resurrect a schedule the user disabled.
+            scheduleNextSync()
+        }
+    }
+
+    private suspend fun doWorkInternal(): Result {
         val worker = this@BackgroundSyncWorker
         val triggerType = inputData.getString("trigger_type") ?: "scheduled"
         val startTime = System.currentTimeMillis()
@@ -215,9 +232,9 @@ class BackgroundSyncWorker(
                     "skipped",
                     "Device not plugged into power"
                 )
-                // Still queue up tomorrow's attempt - skipping today must not
-                // break the recurring schedule.
-                scheduleNextSync()
+                // Skipping today must not break the recurring schedule; the
+                // re-arm happens in doWork's finally, like every other
+                // exit.
                 return Result.success()
             }
         }
@@ -794,17 +811,35 @@ class BackgroundSyncWorker(
                 )
                 Result.failure()
             } else {
+                // Derive the run-level status from the per-playlist outcomes.
+                // Per-playlist errors are already persisted in
+                // sync_history_playlists.error_message; without this, a run in
+                // which every playlist failed (e.g. server unreachable - the
+                // per-iteration try/catch swallows each call) would be
+                // recorded as a plain "success".
+                val failedPlaylists =
+                    playlistDetails.count { it["error_message"] != null }
+                val status = computeSyncStatus(
+                    playlistIds.size, failedPlaylists, syncCancelled
+                )
+                val statusMessage = when (status) {
+                    "failed" -> "All ${playlistIds.size} playlists failed to sync"
+                    "partial" ->
+                        "$failedPlaylists of ${playlistIds.size} playlists failed to sync"
+                    else -> null
+                }
+
                 // Log sync history
                 val syncId = dbHelper.insertSyncHistory(
                     DatabaseHelper.SyncHistoryRecord(
                         timestamp = System.currentTimeMillis(),
-                        status = if (syncCancelled) "cancelled" else "success",
+                        status = status,
                         playlistsSynced = playlistIds.size,
                         tracksDownloaded = tracksDownloaded,
                         tracksDeleted = tracksDeleted,
                         playsSynced = if (eventTrackingEnabled) eventSyncResult.playsSynced else null,
                         skipsSynced = if (eventTrackingEnabled) eventSyncResult.skipsSynced else null,
-                        errorMessage = if (syncCancelled) cancellationReason else null,
+                        errorMessage = if (syncCancelled) cancellationReason else statusMessage,
                         durationMs = duration,
                         triggerType = triggerType
                     )
@@ -824,25 +859,30 @@ class BackgroundSyncWorker(
                     )
                 }
 
-                // Schedule next sync
-                scheduleNextSync()
-
-                Log.i(TAG, "Background sync completed: $tracksDownloaded tracks downloaded in ${duration}ms")
+                Log.i(TAG, "Background sync completed: $tracksDownloaded tracks downloaded in ${duration}ms (status=$status)")
                 if (syncCancelled) {
                     SyncProgressBroadcaster.dismissNotification(applicationContext)
                     SyncProgressBroadcaster.broadcastSyncComplete(
                         "cancelled",
                         cancellationReason ?: "Sync cancelled by user"
                     )
-                } else {
+                } else if (status == "success") {
                     SyncProgressBroadcaster.dismissNotification(applicationContext)
                     SyncProgressBroadcaster.broadcastSyncComplete("success")
+                } else {
+                    // Surface a run-level failure (all playlists failed) or a
+                    // partial one (some playlists failed) to the UI so it does
+                    // not look identical to a clean success.
+                    SyncProgressBroadcaster.dismissNotification(applicationContext)
+                    SyncProgressBroadcaster.broadcastSyncComplete(status, statusMessage)
                 }
 
+                // The run itself completed (history written, notification
+                // dismissed); the outcome lives in the status column above,
+                // not in the WorkManager result. The next scheduled run is
+                // re-queued by doWork's finally.
                 Result.success()
             }
-
-                return@withContext Result.success()
             } catch (e: CancellationException) {
                 handleInterruption(startTime, triggerType, e, eventTrackingEnabled, eventSyncResult)
 
@@ -883,17 +923,12 @@ class BackgroundSyncWorker(
                 SyncProgressBroadcaster.dismissNotification(applicationContext)
                 SyncProgressBroadcaster.broadcastSyncComplete("failed", errorMessage)
 
-                // Re-arm the recurring schedule: a failed run must not kill
-                // the chain, same rule as the "skipping today" path above.
-                // Without this, one failure leaves no pending work and no
-                // retry (Result.failure() is terminal), and the recurring
-                // schedule dies permanently. Result.retry() was not used
-                // because it re-runs the same work and only re-arms the
-                // chain if a retry eventually succeeds via the success
-                // path - a failure that outlasts the retries leaves the
-                // schedule dead anyway.
-                scheduleNextSync()
-
+                // A failed run must not kill the chain (Result.failure() is
+                // terminal). The re-arm happens in doWork's finally, like
+                // every other exit. Result.retry() was deliberately not used:
+                // it re-runs the same work and only re-arms the recurring
+                // chain if a retry eventually succeeds - a failure that
+                // outlasts the retries would leave the schedule dead anyway.
                 Result.failure()
             }
         }
@@ -1118,6 +1153,27 @@ class BackgroundSyncWorker(
         val playsSynced: Int,
         val skipsSynced: Int
     )
+}
+
+/**
+ * Decides the sync_history `status` for a run that completed the playlist
+ * loop. Pure on purpose - the first unit-test target when test
+ * infrastructure exists.
+ *
+ *   cancelled run                -> "cancelled"
+ *   every playlist failed        -> "failed"
+ *   some playlists failed        -> "partial"
+ *   no playlist failures         -> "success"
+ */
+fun computeSyncStatus(
+    totalPlaylists: Int,
+    failedPlaylists: Int,
+    cancelled: Boolean
+): String {
+    if (cancelled) return "cancelled"
+    if (totalPlaylists > 0 && failedPlaylists >= totalPlaylists) return "failed"
+    if (failedPlaylists > 0) return "partial"
+    return "success"
 }
 
 class SyncException(message: String, cause: Throwable? = null) : Exception(message, cause)

@@ -70,6 +70,16 @@ later phase silently "repairs" by writing the column.
 
 ## Two remaining ways the scheduled-sync chain can still die
 
+**RESOLVED (2026-10-04):** both paths now re-arm via a `finally` block in
+`doWork()` (`BackgroundSyncWorker.kt`), which replaces the three per-path
+`scheduleNextSync()` calls. The user-cancel path was exercised end-to-end
+on emulator-5554 (notification Cancel during a scheduled run →
+`status=cancelled` + "Next sync scheduled for …" + job queued in
+jobscheduler); the disable-mid-run and skip-today exits were exercised too.
+The `setForeground`-refusal path is structurally covered by the same
+`finally` but was not exercised (cannot be induced on demand). See
+`.agent/sync-status-fix-report.md`.
+
 The 2026-10-03 fix closed the two paths named in the blocker (illegal
 `setExpedited` pairing, and the missing re-arm on `catch (e: Exception)`).
 Code-path analysis during that fix found **two more** that were not touched:
@@ -92,6 +102,18 @@ only three of five currently honour it. The durable fix is to re-arm in a
 `finally`-style guarantee rather than per-path.
 
 ## A sync where every playlist fails still reports success
+
+**RESOLVED (2026-10-04):** `computeSyncStatus` (top-level pure function in
+`BackgroundSyncWorker.kt`) derives the run-level status from the
+per-playlist outcomes — all failed → `failed`, some → `partial`, none →
+`success` — and the run-level message ("All N playlists failed to sync" /
+"N of M playlists failed to sync") is now stored on the history row and
+surfaced in History (red "Sync Failed" / amber "Sync Completed with
+Errors") and on the Library banner + app-bar dot. The all-failed path was
+exercised on emulator-5554 (dead loopback + blackhole URLs, manual and
+scheduled runs). The **partial** path is implemented but unexercised (needs
+a server-side change; live shared library must not be touched). See
+`.agent/sync-status-fix-report.md`.
 
 Found while trying to induce a sync failure for the 2026-10-03 chain test. Every
 per-playlist network call sits inside a per-iteration `try/catch`

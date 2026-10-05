@@ -821,6 +821,37 @@ Caveat: while a sync is running that same top-right slot holds a red
 **Cancel** button — a stray tap there cancels the run (and the rating push is
 skipped on cancel).
 
+### 34. Cancelling a running sync: the notification card and the in-app button are not interchangeable
+
+The FGS card ("Syncing Music", channel `sync_channel`, code
+`IMPORTANCE_LOW`) is posted and presented, but at LOW importance it sits in
+the shade's **Silent** section on the Pixel 8 (API 36), which does not
+surface in `uiautomator` dumps and whose "Silent" header text opens
+notification *settings* when tapped — the Cancel action is unreachable that
+way (established 2026-10-04). Setting the channel's importance to
+**Default** (Settings → app → Notifications → Music Sync) puts the card in
+the main shade list where its "Cancel" action is tappable. That is the
+verified route to a user-cancel (→ `STOP_REASON_CANCELLED_BY_APP` →
+"Sync cancelled by user" → `status=cancelled` + re-arm); restore the
+importance afterwards.
+
+The in-app Cancel button (Sync screen) does **not** appear for a scheduled
+run that starts while the app is already alive: `SyncProvider` subscribes to
+the progress EventChannel only in `_initialize`/`checkIfSyncRunning`
+(construction time). Do not force-stop + relaunch mid-run to "refresh" it:
+`MainActivity.registerBackgroundSync()` runs on every launch and enqueues a
+`REPLACE` for the `sync-task` unique work, which can clobber the work
+WorkManager recovered from the process death — the run may simply not
+restart.
+
+Two timing facts: a cancel delivered while the worker is inside a 10s
+network hang only takes effect at the next `isStopped` check
+(`BackgroundSyncWorker.kt:413`, loop top) — the "Sync cancelled by user"
+log can lag the tap by ~10s; and that check sets `syncCancelled` without a
+`cancellationReason`, so the cancelled history row's `error_message` is
+NULL (the UI still shows "Sync Cancelled" from `status` — pre-existing,
+do not chase it).
+
 ---
 
 ## Maintaining this file

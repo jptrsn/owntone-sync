@@ -93,7 +93,9 @@ class _LibraryScreenState extends State<LibraryScreen>
   }
 
   Future<void> _onSyncCompleted(String status) async {
-    if (status != 'success' || !mounted) return;
+    // 'partial' also synced some playlists, so the queue and library may
+    // have changed; reconcile on it as well.
+    if ((status != 'success' && status != 'partial') || !mounted) return;
     final controller = context.read<PlaybackController>();
     try {
       final allTracks = await LocalDatabaseRepository().getAllTracks();
