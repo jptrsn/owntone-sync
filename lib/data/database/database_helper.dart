@@ -50,7 +50,22 @@ class DatabaseHelper {
       )
     ''');
 
-    // Table for tracking synced tracks
+    // Table for tracking synced tracks.
+    //
+    // `content_uri` and `artwork_source` deliberately carry NO DEFAULT. They
+    // are added on upgrade by `ALTER TABLE ... ADD COLUMN` (v4 and v8), which
+    // cannot carry one, and SQLite cannot alter a default afterwards without
+    // rebuilding the table — so the fresh-install DDL is aligned DOWN to match
+    // the upgraded schema and both paths produce identical DDL. Readers already
+    // normalise NULL and '' identically (TrackUriResolver._isUsableTreeUri, the
+    // v5 purge, the Kotlin writer). Do not "tidy" a default back in: a
+    // fresh-vs-upgraded schema divergence is exactly what silently broke
+    // sync_history for every fresh install until v6.
+    //
+    // Keep commentary OUT of the SQL string. SQLite stores the CREATE TABLE
+    // text verbatim in sqlite_master, comments included, so a comment inside
+    // the statement would itself show up as a schema diff against an upgraded
+    // database.
     await db.execute('''
       CREATE TABLE synced_tracks (
         id INTEGER PRIMARY KEY,
@@ -69,9 +84,9 @@ class DatabaseHelper {
         year INTEGER NOT NULL DEFAULT 0,
         artwork_url TEXT NOT NULL DEFAULT '',
         artwork_path TEXT DEFAULT '',
-        content_uri TEXT DEFAULT '',
+        content_uri TEXT,
         rating INTEGER NOT NULL DEFAULT 0,
-        artwork_source TEXT DEFAULT NULL
+        artwork_source TEXT
       )
     ''');
 

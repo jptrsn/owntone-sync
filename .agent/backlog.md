@@ -168,3 +168,54 @@ and is handled correctly; a dead *server* does not.
 Worth deciding what the intended semantics are: a run where every playlist failed
 is arguably a failed sync, and should be surfaced as one rather than recorded as
 completed.
+
+## Re-run the fresh-vs-upgraded schema diff (check C) — unverified change
+
+The v3→v8 upgrade verification (2026-10-05, `.agent/v3-to-v8-upgrade-report.md`)
+found the only real divergence between the two schema paths: `_createDB` emitted
+`content_uri TEXT DEFAULT ''` and `artwork_source TEXT DEFAULT NULL`, while the
+v4 and v8 `ALTER TABLE ... ADD COLUMN` statements cannot carry a default and
+produced bare `TEXT`.
+
+Fixed by aligning `_createDB` **down** to match the migrations — SQLite cannot
+alter a column default without rebuilding the table, and a rebuild on a
+multi-thousand-row table is far riskier than the divergence. Safe to change
+because `main` ships DB v3, so no released user has a fresh v4+ database; only
+dev devices carry the old DDL, and those get wiped.
+
+**This change was verified by reading both paths, NOT by executing them.**
+Re-run check C to close it: dump `.schema` from a fresh v8 install and from a
+v3-upgraded database, and diff. They must now be byte-identical.
+
+Two traps worth knowing when you do:
+
+- SQLite stores the `CREATE TABLE` text **verbatim in `sqlite_master`, comments
+  included** (verified locally). A comment inside the SQL string shows up as a
+  schema diff on its own. Commentary belongs above the `db.execute()` call, in
+  Dart. The first attempt at this fix made exactly that mistake.
+- Column ORDER also matters to the diff. Migrations append in version order
+  (v4 `content_uri`, v7 `rating`, v8 `artwork_source`) and `_createDB` currently
+  lists them in the same order. Keep it that way.
+
+This is the first thing the migration test suite should automate — it is a
+pure-SQL check that needs no device, and it generically catches a bug class that
+has already cost this project one serious defect (`sync_history` silently
+lacking two columns on every fresh install until v6).
+
+## Artwork `'none'` is a one-way latch with no invalidation path
+
+`artwork_source = 'none'` means "checked both sources, no art exists". It is
+never re-examined, which is correct for performance — without it every sync
+re-probes every artless file, tolerable at 95 tracks and painful at 5,000.
+
+But it is permanent. If artwork is later added to those files' tags, or appears
+on the server, nothing re-probes them. On the current library that is 12 tracks
+(measured: 82 embedded / 1 server / 12 none of 95).
+
+Possible closes, none urgent:
+- a "re-scan artwork" action in Settings that clears `'none'` rows
+- clear `artwork_source` when a track is re-downloaded (the file changed, so its
+  embedded tags may have too)
+- a staleness policy — re-probe `'none'` rows older than N days
+
+The middle option is probably the cheapest and catches the most realistic case.
