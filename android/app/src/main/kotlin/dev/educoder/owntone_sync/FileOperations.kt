@@ -52,17 +52,7 @@ class FileOperations(private val context: Context) {
         }
     }
 
-    /** File extension sniffed from image magic bytes. */
-    fun detectImageExtension(bytes: ByteArray): String {
-        return when {
-            bytes.size >= 3 &&
-                bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte() -> "jpg"
-            bytes.size >= 8 &&
-                bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
-                bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte() -> "png"
-            else -> "jpg"
-        }
-    }
+
 
     /**
      * Stores [bytes] in the content-addressed artwork cache and returns the
@@ -526,3 +516,18 @@ class FileOperations(private val context: Context) {
  */
 class StorageFullException(message: String, cause: Throwable? = null)
     : IOException(message, cause)
+
+/**
+ * File extension sniffed from image magic bytes. Top-level pure function
+ * (no Context needed) so the JVM unit tests can reach it.
+ */
+fun detectImageExtension(bytes: ByteArray): String {
+    return when {
+        bytes.size >= 3 &&
+            bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte() -> "jpg"
+        bytes.size >= 8 &&
+            bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
+            bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte() -> "png"
+        else -> "jpg"
+    }
+}

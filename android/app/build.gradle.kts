@@ -77,4 +77,7 @@ dependencies {
     
     // Guava for ListenableFuture support
     implementation("com.google.guava:guava:32.1.3-android")
+
+    // JVM unit tests (plain JUnit, no Robolectric, no instrumentation)
+    testImplementation("junit:junit:4.13.2")
 }

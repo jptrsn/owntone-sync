@@ -3,6 +3,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:provider/provider.dart';
 
 import '../controllers/playback_controller.dart';
+import '../services/queue_indices.dart';
 
 /// Presents the queue sheet as a modal bottom sheet above Now Playing.
 ///
@@ -40,13 +41,6 @@ class _QueueSheetState extends State<QueueSheet> {
     super.dispose();
   }
 
-  /// Row (play position) that is currently playing, or null.
-  int? _currentRow(List<int> shuffleIndices, int? baseIndex, bool shuffleOn) {
-    if (baseIndex == null) return null;
-    if (!shuffleOn) return baseIndex;
-    return shuffleIndices.indexOf(baseIndex);
-  }
-
   void _scheduleAutoScroll(int? row) {
     if (_autoScrollScheduled || row == null || row == 0) return;
     _autoScrollScheduled = true;
@@ -64,7 +58,7 @@ class _QueueSheetState extends State<QueueSheet> {
   }
 
   void _jump(int row, List<int> shuffleIndices, bool shuffleOn) {
-    final base = shuffleOn ? shuffleIndices[row] : row;
+    final base = queueBaseIndexForRow(row, shuffleIndices, shuffleOn);
     context.read<PlaybackController>().jumpTo(base);
   }
 
@@ -141,7 +135,7 @@ class _QueueSheetState extends State<QueueSheet> {
                       builder: (context, shuffleSnapshot) {
                         final shuffleIndices = shuffleSnapshot.data ??
                             const <int>[];
-                        final currentRow = _currentRow(
+                        final currentRow = queueCurrentRow(
                           shuffleIndices,
                           baseIndex,
                           shuffleOn,

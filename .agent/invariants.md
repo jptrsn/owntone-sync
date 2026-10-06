@@ -910,6 +910,44 @@ re-adding a Dart artwork writer (Dart never runs during a background sync).
 
 ---
 
+## Test infrastructure
+
+### 36. The automated test suite and its CI gate are load-bearing
+
+`test/` (Dart) + `android/app/src/test/` (Kotlin JVM) +
+`.github/workflows/flutter-test.yaml` (runs `flutter analyze` + `flutter test`
+on every PR). Every test cites the invariant it guards; the static guards
+(`test/static_guards_test.dart`) are what mechanically enforce invariants 3, 4,
+17 and backlog check C.
+
+**WHY:** this is the first automated safety net the project has had. The two
+extractions made to make code testable are themselves load-bearing:
+`lib/presentation/services/queue_indices.dart` (`queueCurrentRow` /
+`queueBaseIndexForRow`, invariant 19) and top-level `detectImageExtension` in
+`FileOperations.kt` (invariant 35).
+
+**BREAKS IF UNDONE:** deleting or "tidying" the tests/CI, or inlining the
+extracted functions back into their widgets, silently removes the guard without
+any other signal. A PR that turns `flutter test` red or reintroduces a guarded
+token is failing for a reason — do not adjust the test to match a regression.
+
+**Environment gotchas (cost a session to re-derive):**
+- The Dart 3.11 SDK has **no in-place `List.reverse()`** — it was removed from
+  the core `List` interface. To reverse, swap explicitly
+  (`[l[1], l[0]]`) or build a new list. `..sort()` still exists.
+- Gradle must run under **JDK 17** on this machine. The default JVM is too new
+  for the Kotlin compiler embedded in `build.gradle.kts` (fails with
+  `IllegalArgumentException: <major version>` in `JavaVersion.parse`). Run
+  `./gradlew :app:testDebugUnitTest` with
+  `-Dorg.gradle.java.home=/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home`.
+  Kotlin tests are deliberately NOT in CI (they need the Android SDK).
+- The synced music library lives in the **SAF tree** (`Music/`), which persists
+  across app uninstall; only the app DB is wiped. A fresh install re-syncs but
+  the 194 files are already on disk (the worker logs
+  "Found N existing files in tracks directory").
+
+---
+
 ## Maintaining this file
 
 **Every phase, before writing your report:** promote anything a future phase
