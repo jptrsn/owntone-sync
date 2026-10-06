@@ -63,7 +63,7 @@ sortable once those columns exist locally.
 
 **RESOLVED (2026-10-04):** artwork is now resolved and cached during sync
 (content-addressed, app-private; `artwork_source` negative cache; embedded
-first, server fallback) — see `.agent/artwork-fix-report.md` and invariant 35.
+first, server fallback) — see `.agent/reports/artwork-fix-report.md` and invariant 35.
 `synced_tracks.artwork_path` now has a writer (the Kotlin sync worker), and
 `artwork_source` tracks where it came from.
 
@@ -97,7 +97,7 @@ so a tag write would not trigger spurious re-downloads.
 ## Sync screen: Cancel button never renders for a scheduled run that starts while the app is alive
 
 Discovered incidentally during the 2026-10-04 sync-status fix session, and
-recorded only in `.agent/sync-status-fix-report.md` — which is a historical
+recorded only in `.agent/reports/sync-status-fix-report.md` — which is a historical
 record, not guidance, so it will be lost. Logged here.
 
 For a **scheduled** run that starts while the app is already alive, the Sync
@@ -118,7 +118,7 @@ on emulator-5554 (notification Cancel during a scheduled run →
 jobscheduler); the disable-mid-run and skip-today exits were exercised too.
 The `setForeground`-refusal path is structurally covered by the same
 `finally` but was not exercised (cannot be induced on demand). See
-`.agent/sync-status-fix-report.md`.
+`.agent/reports/sync-status-fix-report.md`.
 
 The 2026-10-03 fix closed the two paths named in the blocker (illegal
 `setExpedited` pairing, and the missing re-arm on `catch (e: Exception)`).
@@ -153,7 +153,7 @@ Errors") and on the Library banner + app-bar dot. The all-failed path was
 exercised on emulator-5554 (dead loopback + blackhole URLs, manual and
 scheduled runs). The **partial** path is implemented but unexercised (needs
 a server-side change; live shared library must not be touched). See
-`.agent/sync-status-fix-report.md`.
+`.agent/reports/sync-status-fix-report.md`.
 
 Found while trying to induce a sync failure for the 2026-10-03 chain test. Every
 per-playlist network call sits inside a per-iteration `try/catch`
@@ -171,7 +171,7 @@ completed.
 
 ## Re-run the fresh-vs-upgraded schema diff (check C) — unverified change
 
-The v3→v8 upgrade verification (2026-10-05, `.agent/v3-to-v8-upgrade-report.md`)
+The v3→v8 upgrade verification (2026-10-05, `.agent/reports/v3-to-v8-upgrade-report.md`)
 found the only real divergence between the two schema paths: `_createDB` emitted
 `content_uri TEXT DEFAULT ''` and `artwork_source TEXT DEFAULT NULL`, while the
 v4 and v8 `ALTER TABLE ... ADD COLUMN` statements cannot carry a default and

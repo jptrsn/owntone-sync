@@ -1,8 +1,26 @@
 # OwnTone Sync — Player Refactor Plan
 
+> ## ⚠️ MOSTLY HISTORICAL — read this header before using anything below
+>
+> **The refactor is finished.** Phases 0 through 8 are complete and shipped in
+> v0.2.0 (2026-10-05). Which means:
+>
+> | Section | Status |
+> |---|---|
+> | **§1 Why the current branch does not work** | **HISTORICAL.** Every defect listed is FIXED. It describes the code *before* the refactor. Do not verify its file:line claims against today's code — they will not match, and nothing in it is a bug to go and fix. |
+> | **§2 Target architecture** | **CURRENT.** Still accurately describes how playback is built, and still binding. This is the part worth reading. |
+> | **§3 The path from here to there** | **HISTORICAL.** All phases complete. Useful for understanding *why* something is shaped the way it is; not a work list. |
+> | **§4 File-level disposition** | **HISTORICAL.** The moves described have happened. |
+> | **§5 Working agreement** | **PARTLY CURRENT.** The verification discipline still applies; the one-phase-per-session framing does not. |
+> | **§6 Highest-risk items** | **HISTORICAL.** All resolved or superseded. |
+>
+> For what must remain true today, read `invariants.md`. For open work, read
+> `backlog.md` and `blockers.md`. For what the app is meant to do, read
+> `player-ux-spec.md` — that one is still live.
+
 **Companion to:** `.agent/player-ux-spec.md` (what and why — read it first)
-**This document:** current-state defects, target architecture, and the ordered
-path from one to the other.
+**This document:** the defect inventory the refactor addressed, the target
+architecture it built, and the ordered path it followed.
 **Supersedes:** the original `player-spec.md` and `play-music-plan.md`, deleted
 2026-10-02 (recoverable from git history)
 
@@ -369,7 +387,7 @@ and none.
 auto-advance works, notification next/previous work, Bluetooth next/previous
 work, shuffle and repeat work, a deleted file is skipped.
 
-**Status: COMPLETE.** Report in `.agent/phase1-report.md`. Go/no-go passed:
+**Status: COMPLETE.** Report in `.agent/reports/phase1-report.md`. Go/no-go passed:
 `content://` playback works through `just_audio`'s native path, so the §6 top
 risk did not materialise.
 
@@ -633,7 +651,7 @@ playing — a mismatch here is the failure mode that killed the original design.
 **Verify:** spec §7 steps 5 and 7; the seek bar reaches the end exactly when the
 track does; every row in the table above observed on the emulator.
 
-**Status: COMPLETE.** Report in `.agent/phase5-report.md`. The go/no-go passed
+**Status: COMPLETE.** Report in `.agent/reports/phase5-report.md`. The go/no-go passed
 on all three counts: queue order matched actual play order under shuffle with
 the highlight tracking correctly through auto-advance, Next and jump; server
 play/skip counts after a shuffled session matched the tracks actually heard

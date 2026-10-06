@@ -219,7 +219,7 @@ retries (or the user disabling the schedule mid-retry) leaves the schedule dead
 and unrevivable from the UI, the same state this entry describes. Re-arming is
 the only choice that deterministically keeps the user's cadence.
 
-**Verified on device (full evidence in `.agent/scheduled-sync-fix-report.md`):**
+**Verified on device (full evidence in `.agent/reports/scheduled-sync-fix-report.md`):**
 
 1. **Arming** — saved a schedule ~50s out; the worker started at the second,
    `Trigger type: scheduled`, completed, re-armed; History row shows the

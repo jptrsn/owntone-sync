@@ -14,6 +14,41 @@ stop. Do not silently change it.
 re-derived a worry that was already settled. If your concern matches one, it is
 answered — proceed.
 
+Numbers are assigned in discovery order and never reused, so they run out of
+sequence within a section. Tests and commit messages cite them by number — **do
+not renumber**.
+
+---
+
+## Index
+
+**Playback** — 1 extrapolated `updatePosition` · 2 `play()` not awaited ·
+3 the player owns the queue · 4 `setAudioSources` not `ConcatenatingAudioSource` ·
+5 `playMediaItem` is a no-op · 6 tree-scoped content URIs · 7 `positionData` is
+broadcast · 19 **one index space** (`sequence` is base order) · 23 restoring a
+shuffle order · 24 A9 has two outcomes · 25 `playback_state` persistence
+
+**Sync and statistics** — 8 event upload is not gated · 9 completion is a play,
+never a skip · 13 the user-intent signal · 14 the position stream is the clock ·
+15 play/skip thresholds · 26 UPDATE-first upsert · 27 server library is in flux ·
+30 rating reconciliation scope
+
+**UI** — 16 `PlayerScaffold` docks by layout, never overlay · 17 where the A9
+notice is hosted · 20 `ScaffoldMessenger` is a hub · 21 album identity ·
+22 row indicators stream, never mirror · 28 queue sheet swipe hazard ·
+31 detail screens reload on sheet close
+
+**Environment and tooling** — 10 server address · 11 `pending_events` is not
+shell-readable · 12 scratch files location · 18 uiautomator quoting ·
+29 **attach `flutter run` for rendering bugs** · 32 emulator paint wedge ·
+33 triggering a sync · 34 cancelling a sync · 35 artwork cache and the 204
+
+**Tests** — 36 the suite and its CI gate
+
+If you are touching playback order or the queue, read **19** twice: a session
+once had that model exactly inverted and it cost a day. If you are debugging
+anything visual, read **29** first.
+
 ---
 
 ## Playback
@@ -99,8 +134,12 @@ scheduled to migrate this — it is already done.
 **WHY:** `audio_service` provides a no-op implementation.
 
 **BREAKS IF UNDONE:** routing playback through it produces silence with no
-error. The old `PlayerProvider` did exactly this, which is why list-row taps
-were dead before Phase 2.
+error at all — nothing throws, nothing logs, the track simply never starts.
+The pre-refactor `PlayerProvider` did exactly this, which is why list-row taps
+were dead before Phase 2. That class is long gone, but the trap is a property of
+`audio_service` rather than of any code here: `playMediaItem` remains an
+inviting-looking method that does nothing. Start playback through
+`playCollection`.
 
 ### 6. Fast-path content URIs must be tree-scoped, built via `buildDocumentUriUsingTree`
 
@@ -796,6 +835,13 @@ all of its rows fine. Established at the time:
 **WHY:** unknown — no code changed between the last good render and the first
 blank one; the trigger was an OS-level network toggle + process cycle, not an
 app edit. Do not attribute it to app code on the strength of correlation.
+
+**EVIDENCE SINCE (2026-10-02, hardware pass):** never reproduced on a physical
+phone, across extended scrolling of every list surface in a release build. That
+is an independent data point supporting the emulator-only attribution, so the
+risk of this being a shipping bug is now low. It is still not *explained*, so
+the recovery steps below stay. If it ever appears on real hardware, this entry
+is wrong and it is a genuine defect — say so loudly.
 
 **IF YOU SEE IT AGAIN:** (1) confirm with a `LayoutBuilder` print that
 constraints are sane before suspecting the widget; (2) try a fresh element
