@@ -1,11 +1,13 @@
-Sync music playlists from your OwnTone (formerly forked-daapd) server to your Android device for offline listening.
+Play the music on your OwnTone (formerly forked-daapd) server on your phone.
+
+OwnTone Sync downloads the playlists you choose and plays them in a built-in player: background playback, lock screen and Bluetooth controls, a queue with shuffle and repeat, and album artwork that works offline.
 
 Features:
-- Select which playlists to sync
-- Automatic scheduled syncs with configurable conditions
-- Works with any music player that supports M3U playlists
-- Smart file management - only downloads new tracks
-- Browse synced music by playlist, artist, album, or track
-- Track playback statistics back to your server
+- Play any track in context, with a reorderable queue, shuffle and repeat
+- Browse synced music by playlist, artist, album or track, with search and per-tab sorting
+- Rate tracks with half-star precision; ratings sync both ways with the server
+- Play and skip counts are recorded by the player itself and uploaded on the next sync
+- Automatic scheduled syncs, optionally only while charging or on WiFi
+- Fully offline once synced; only syncing needs your server
 
-OwnTone Sync downloads your music and creates standard M3U playlist files that work with popular Android music players like Auxio, Vinyl Music Player, and others.
+The app plays music synced from your OwnTone server, not other audio on the device. The synced files are standard audio files with M3U playlists, so other players can read them too — though only playback in this app is reported back to the server.

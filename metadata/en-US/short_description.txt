@@ -1,1 +1,1 @@
-Sync OwnTone playlists to Android for offline playback
+Play your OwnTone playlists offline; stats and ratings sync back to the server
