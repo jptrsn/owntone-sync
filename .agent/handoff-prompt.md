@@ -14,13 +14,15 @@ Read AGENTS.md at the repository root before doing anything else, and follow it.
 It routes you to the documents in .agent/ that matter for this task and states
 what "done" means.
 
-Two things to confirm you have taken on board before you start, because they are
-the ones sessions most often miss:
+Three things to confirm you have taken on board before you start, because they
+are the ones sessions most often miss:
 
 - Tell me your understanding of the task and what you intend to change, then
   WAIT for my confirmation before editing anything.
 - The OwnTone server at 192.168.1.13 is the user's real music library. Read from
   it; do not modify it.
+- Do NOT run `git commit` or `git push` unless I explicitly ask in that message.
+  Finish the work, leave it in the working tree, and tell me what you changed.
 
 Your task:
 ```

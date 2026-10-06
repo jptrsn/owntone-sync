@@ -28,6 +28,31 @@ Shipped at v0.2.0. The eight-phase player refactor is complete.
 | `.agent/backlog.md` | Asked to | Unscheduled ideas. Not a to-do list. |
 | `.agent/reports/` | Rarely | Historical evidence of what was verified. **Not guidance** — anything still binding was promoted into `invariants.md`. |
 
+## Never commit or push without being asked
+
+**Stop when the work is done and say so. Do not run `git commit` or `git push`
+unless the user has explicitly asked you to in that message.**
+
+This applies to every agent working here, including the session that wrote this
+file. "Do the work", "fix it", "make the change" and "do everything" are
+instructions to edit files — not to commit them, and certainly not to push.
+Leave the changes in the working tree and report what you changed; the user
+decides when and how they land.
+
+Why it is a hard rule rather than a preference:
+
+- A push is **outward-facing and public**. This repository is public and
+  publishes releases; an unwanted commit is visible immediately and awkward to
+  retract.
+- It removes the user's review step. A diff in the working tree can be read,
+  amended or discarded in seconds; a pushed commit cannot.
+- Commit granularity and message wording are the user's call. Bundling unrelated
+  work into one commit, or splitting related work across several, is a decision
+  — not a detail.
+
+When you believe something is ready, say what you would commit and offer. If the
+user says "commit and push", do both. If they say "commit", commit and stop.
+
 ## How to work here
 
 **Confirm scope before editing.** State what you understand the task to be and
@@ -107,8 +132,9 @@ stash in one destroys uncommitted work in the other.
 git worktree add ../owntone-<task> -b <task>
 ```
 
-## Commits
+## Commit messages
 
-Explain *why*, not what — the diff shows what. Where a change is non-obvious or
+When you have been asked to commit (see the rule at the top — do not commit
+otherwise), explain *why*, not what — the diff shows what. Where a change is non-obvious or
 looks like something a future reader would "tidy up," say what breaks if they
 do. Several commits here exist mainly to carry that warning.
