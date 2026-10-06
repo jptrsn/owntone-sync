@@ -47,6 +47,10 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
 
+  # Runs the real sqflite code (DatabaseHelper's _createDB and _onUpgrade)
+  # on the Dart VM via libsqlite3, so the migration suite needs no device.
+  sqflite_common_ffi: ^2.4.0
+
   flutter_lints: ^6.0.0
 
   # Code generation for JSON
