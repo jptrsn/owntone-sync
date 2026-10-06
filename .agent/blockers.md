@@ -275,3 +275,68 @@ Both observations came from screencap pixel analysis — the instrument behind t
 earlier false conclusions in this project (invariants 18 and 29). See
 verification-protocol §4: a negative result from your own harness is a claim about
 two things.
+
+---
+
+## 2026-10-06 — OPEN: two defects observed on a real device after upgrading to v0.2.0
+
+Reported from first real-world use: a Pixel upgraded from v0.1.8, manual sync of
+a ~1,700-track library where every file was already on the device but no artwork
+had been cached.
+
+### (a) "Playlist 4 of 3" during the artwork pass — confirmed by code read
+
+`SyncProgressBroadcaster.kt:91` formats the sync notification as:
+
+```kotlin
+.setSubText("Playlist ${currentPlaylistIndex + 1}/$totalPlaylists • Track …")
+```
+
+and the artwork resolution pass (`BackgroundSyncWorker.kt:989`) passes
+`totalPlaylists` as **both** the index and the total, because it runs after the
+playlist loop and has no meaningful playlist index. With 3 playlists that renders
+`3 + 1` of `3`. `syncEvents` sidesteps the same problem by passing `0, 1`.
+
+The track counter is wrong in that phase too: it reports `tracksProcessed` /
+`totalTracks` carried over from the download phase while actually working through
+a different set (tracks lacking artwork).
+
+**Fix direction:** a phase that is not per-playlist should not render a playlist
+counter at all. Either suppress the sub-text for non-playlist phases, or pass a
+sentinel the formatter recognises — do not paper over it with arithmetic. The
+same applies to the track counter during that phase.
+
+Cosmetic, but it is the most visible part of a long sync.
+
+### (b) Playback started on its own after the sync completed — NOT app code
+
+A track began playing with no user action, immediately after a ~1,700-track sync
+finished.
+
+**This is not the app calling play().** Every playback trigger in Dart was
+checked: there are exactly four `play()` / `playCollection()` call sites and all
+four are user-initiated (a track row tap, the mini player button, the Now Playing
+button, the collection Play/Shuffle actions). `_onSyncCompleted`
+(`library_screen.dart:95`) does only two things — `reconcileQueue()` and
+`BrowseProvider.loadData()` — and `reconcileQueue` early-returns when nothing was
+deleted, which is this case: every track was already present.
+
+So something **external** asked the MediaSession to play. Unconfirmed candidates:
+a Bluetooth device connecting and sending PLAY, a stray media-button event,
+Android's media-resumption feature, or the sync foreground service ending and
+leaving the media session as the active one.
+
+**Cause unknown, and not determinable from source.** Diagnosing it needs logcat
+from the moment it happens:
+
+```
+adb logcat -d | grep -iE "MediaButton|MediaSession|KEYCODE_MEDIA|audio_service|OwnToneAudioHandler"
+```
+
+That will show whether a media button arrived and from where. Do not guess at a
+fix without it — this project has lost sessions to exactly that
+(verification-protocol §4).
+
+Two contextual notes: it followed an unusually long sync, so it may be scale- or
+duration-dependent; and spontaneous playback is user-hostile in a way the
+"Playlist 4 of 3" bug is not. Of the two, this is the one that matters.
