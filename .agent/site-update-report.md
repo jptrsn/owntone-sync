@@ -149,7 +149,12 @@ Pages changed
     notification access, no other apps observed. "Playback Events (if
     enabled)" → always-on, player-measured; "playback tracking" removed from
     App Settings; added Ratings to the local data inventory; Last Updated →
-    October 6, 2026.
+    October 6, 2026. Follow-up (user correction): removed the
+    "Google Play Services: for app updates and license verification" bullet
+    from Network Communication (inaccurate — the app is not on Google Play
+    and does not contact it) and added an explicit statement that the app is
+    not available on Google Play and is distributed via GitHub releases /
+    Obtainium.
   - site/index.html — PRIORITY 2. Title and hero now lead with playback.
     Features rewritten: Play Your Music (built-in player, in-context play,
     reorderable queue, shuffle/repeat, background + lock-screen + Bluetooth
