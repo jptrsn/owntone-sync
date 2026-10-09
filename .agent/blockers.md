@@ -340,3 +340,76 @@ fix without it — this project has lost sessions to exactly that
 Two contextual notes: it followed an unusually long sync, so it may be scale- or
 duration-dependent; and spontaneous playback is user-hostile in a way the
 "Playlist 4 of 3" bug is not. Of the two, this is the one that matters.
+
+---
+
+## 2026-10-08 — OPEN: Now Playing sheet leaves ~205 logical px of empty space at the bottom
+
+Reported from device use. **Confirmed from the geometry in
+`reports/now-playing-overlap-sweep-report.md`**, which captured it without
+noticing.
+
+The sheet is `SizedBox(height: screenHeight * 0.92)` (`player_screen.dart`),
+bottom-aligned. On the test device (1280×2856 at dpr 3.0 → **952 logical px**
+tall) that is 875.8 px, spanning y **76 → 952**.
+
+Its lowest content is the queue glyph at y **718.8–746.8** (paragraph `[81]` in
+that report's verbatim sweep). Nothing is below it.
+
+**952 − 746.8 ≈ 205 logical px of blank sheet** — about 615 physical px, ~22% of
+the screen height.
+
+**Cause:** the fixed `0.92` fraction. Phase 5 chose an explicit height
+deliberately — the code comment records that a full-height child is laid out as
+a full-screen page rather than a bottom sheet — but the fraction was evidently
+chosen by eye and the content does not fill it.
+
+**Fix direction:** size the sheet to its content while preserving bottom-sheet
+semantics (`mainAxisSize.min` on the content column, or a layout that measures
+rather than guesses). Read the existing comment before changing the height: the
+constraint it describes is real, and simply deleting the `SizedBox` reintroduces
+the full-screen-page behaviour.
+
+Note this is also an argument against hard-coded screen fractions generally —
+the same sheet on a shorter device may have no gap, or clip.
+
+---
+
+## 2026-10-08 — OPEN: detail-screen title overlaps the back button when the app bar collapses
+
+The defect the "Now Playing overlap sweep" was sent to find. It is **not** on the
+Now Playing sheet — that screen has no `AppBar` and no back button at all, which
+is what that sweep correctly established. It is on the **collection detail
+screens**.
+
+`album_detail_screen.dart:95-101`:
+
+```dart
+SliverAppBar(
+  expandedHeight: 260,
+  pinned: true,
+  flexibleSpace: FlexibleSpaceBar(
+    title: Text(widget.albumName),   // no maxLines, no titlePadding
+```
+
+A `pinned` `SliverAppBar` with a `FlexibleSpaceBar` title: as it collapses the
+title slides into the toolbar, and the default `titlePadding` does not reserve
+room for the `leading` back button. With a long name the title runs underneath
+the back arrow.
+
+The library contains names long enough to trigger it, e.g. *"Ain't No Love in
+the Heart of the City"* and *"Black Moon Rising (live from Capitol Studio A)"*.
+
+**Almost certainly present in all three detail screens** (album, artist,
+playlist) — they share the pattern. Verify each rather than assuming.
+
+**Fix direction:** set `titlePadding` to leave room for the leading widget, and
+constrain the title (`maxLines: 1`, ellipsis). Verify **collapsed**, not just
+expanded: the overlap only appears once scrolled.
+
+**Process note for whoever picks this up:** the sweep that looked for this
+measured 83 paragraphs and classified all 18 intersections as benign layering —
+correctly — but did not then ask whether the geometry it had just captured
+revealed anything *else* wrong. The empty-sheet defect above was visible in its
+own output. When a targeted sweep finds nothing, inspect the layout you measured
+for other anomalies before concluding there is no defect.
