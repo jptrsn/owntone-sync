@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/models/playlist.dart';
+import '../../data/models/sync_history.dart';
 import '../../data/models/sync_progress.dart';
 import '../../data/models/sync_schedule.dart';
 import '../../data/repositories/file_system_repository.dart';
@@ -12,6 +13,7 @@ import '../../data/repositories/local_database_repository.dart';
 import '../../data/repositories/owntone_api_repository.dart';
 import '../../domain/services/permissions_service.dart';
 
+import '../../utils/connectivity_state.dart';
 import '../../utils/logger.dart';
 import 'dart:async';
 
@@ -37,8 +39,11 @@ class SyncProvider extends ChangeNotifier {
   bool _deleteOrphanedFiles = false;
   bool _isSyncing = false;
   SyncProgress? _syncProgress;
+  // The raw failure text, kept for History and logs only. The UI reads
+  // [connectivityState], never this string (U1 build item 1).
   String? _lastError;
-  bool _isOnline = true;
+  ConnectivityState _connectivity = ConnectivityState.unconfigured;
+  SyncHistoryRecord? _lastSync;
   bool _isCancelling = false;
   bool _isLoadingPlaylists = false;
   SyncSchedule _syncSchedule = SyncSchedule();
@@ -55,12 +60,28 @@ class SyncProvider extends ChangeNotifier {
   SyncProgress? get syncProgress => _syncProgress;
   String? get lastError => _lastError;
   bool get isConfigured => _isConfigured;
-  bool get isOnline => _isOnline;
   bool get isCancelling => _isCancelling;
   bool get isLoadingPlaylists => _isLoadingPlaylists;
   SyncSchedule get syncSchedule => _syncSchedule;
   bool get isBatteryOptimizationDisabled => _isBatteryOptimizationDisabled;
   DateTime? get missedSyncTime => _missedSyncTime;
+
+  /// The four-state connectivity model the UI reads (U1 build item 1):
+  /// [ConnectivityState.unconfigured] / [ConnectivityState.reachable] /
+  /// [ConnectivityState.offline] / [ConnectivityState.unreachable].
+  ///
+  /// It is derived, never persisted: a successful fetch or a successful
+  /// sync run establishes [ConnectivityState.reachable]; a failed fetch is
+  /// classified by [classifySyncFailure]; saving a URL drops the state to
+  /// the neutral unverified rendering ([ConnectivityState.offline] when
+  /// configured), which looks identical to a genuinely offline session
+  /// because offline shows nothing at all.
+  ConnectivityState get connectivityState => _connectivity;
+
+  /// The newest `sync_history` row: the source of the drawer's "last
+  /// synced" line. Freshness, not fault, is the app's status signal
+  /// (U1 build item 4).
+  SyncHistoryRecord? get lastSync => _lastSync;
 
   /// Emits the worker's completion status ('success', 'partial', 'failed',
   /// 'cancelled', 'skipped', 'interrupted') each time a sync run ends.
@@ -78,10 +99,21 @@ class SyncProvider extends ChangeNotifier {
     super.dispose();
   }
 
-  /// Clears the surfaced sync error (the app-bar badge and banner).
+  /// Clears the surfaced error state (the unreachable banner and the
+  /// app-bar badge).
+  ///
+  /// Every server-URL save path calls this (invariant 37): saving a
+  /// corrected address must remove the "can't reach the server" surface
+  /// without asserting reachability. The state drops to the neutral
+  /// unverified rendering and only advances to [ConnectivityState.reachable]
+  /// on a successful fetch or sync run. A state that is not an error
+  /// (reachable) is left alone - there is nothing to clear.
   void clearError() {
-    if (_lastError == null) return;
+    if (_connectivity != ConnectivityState.unreachable) return;
     _lastError = null;
+    _connectivity = _isConfigured
+        ? ConnectivityState.offline
+        : ConnectivityState.unconfigured;
     notifyListeners();
   }
 
@@ -117,7 +149,12 @@ class SyncProvider extends ChangeNotifier {
     // Load sync schedule
     await _loadSyncSchedule();
 
-    // Load cached playlist metadata
+    // Load the newest sync run for the drawer's "last synced" line.
+    await _loadLastSync();
+
+    // Load cached playlist metadata. This is a background refresh, not a
+    // boot gate: its failure only *classifies* the connectivity state, it
+    // never sets a user-visible error (U1 build items 1 and 2; G2).
     await fetchPlaylists();
 
     // Check battery optimization status
@@ -132,7 +169,12 @@ class SyncProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Update server URL
+  /// Update server URL.
+  ///
+  /// Saving an address does not prove it works: the state drops to the
+  /// neutral unverified rendering (which, like a genuinely offline session,
+  /// shows nothing). Only a successful fetch or sync run establishes
+  /// [ConnectivityState.reachable]; a failed fetch classifies the failure.
   Future<void> setServerUrl(String url) async {
     _serverUrl = url;
     _isConfigured = url.isNotEmpty;
@@ -142,6 +184,25 @@ class SyncProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('server_url', url);
 
+    _connectivity = _isConfigured
+        ? ConnectivityState.offline
+        : ConnectivityState.unconfigured;
+
+    notifyListeners();
+  }
+
+  /// Loads the newest `sync_history` row into [lastSync]. The drawer's
+  /// "last synced" line renders from it; a failed read just hides the line.
+  Future<void> _loadLastSync() async {
+    final dbRepo = _dbRepo;
+    if (dbRepo == null) return;
+    try {
+      final history = await dbRepo.getSyncHistory(limit: 1);
+      _lastSync = history.isEmpty ? null : history.first;
+    } catch (e) {
+      logger.e('Failed to load last sync run', error: e);
+      _lastSync = null;
+    }
     notifyListeners();
   }
 
@@ -278,21 +339,26 @@ class SyncProvider extends ChangeNotifier {
             _isSyncing = false;
             _syncProgress = null;
             _isCancelling = false;
-            // A failed or partial run surfaces on the app-bar badge and
-            // banner (a run where every playlist failed must not look like a
-            // clean success); a successful run clears any previous error.
-            if (status == 'failed' || status == 'partial') {
+            // A successful or partial run proves the server answered, so it
+            // establishes reachability and clears any surfaced error. A
+            // failed or cancelled run keeps the connectivity state as it is
+            // (its message goes to History and logs, never to the UI - U1
+            // build items 1 and 5); re-arming a red banner from a worker
+            // string is exactly the pre-U1 defect this phase removes.
+            if (status == 'success' || status == 'partial') {
+              _lastError = null;
+              _connectivity = ConnectivityState.reachable;
+            } else {
               final message = event['message'];
               _lastError = (message is String && message.isNotEmpty)
                   ? message
-                  : (status == 'partial'
-                      ? 'Sync completed with errors'
-                      : 'Sync failed');
-            } else if (status == 'success') {
-              _lastError = null;
+                  : 'Sync $status';
             }
             notifyListeners();
             _syncCompletedController.add(status);
+            // The drawer's "last synced" line reads the newest history row;
+            // a run just ended, so refresh it.
+            unawaited(_loadLastSync());
             return;
           }
 
@@ -329,11 +395,19 @@ class SyncProvider extends ChangeNotifier {
     logger.d('Subscribed to sync progress events');
   }
 
-  /// Fetch available playlists from server
+  /// Fetch available playlists from server.
+  ///
+  /// The one contact that classifies the connectivity state. Success
+  /// establishes [ConnectivityState.reachable]; failure is classified by
+  /// [classifySyncFailure] (type and errno only, never message text). The
+  /// raw failure string is kept in [lastError] for History and logs; no UI
+  /// reads it.
   Future<void> fetchPlaylists() async {
-    if (_apiRepo == null || _dbRepo == null) {
-      _lastError = 'Server URL not configured';
-      logger.i('Failed to fetch playlists - Server URL not configured');
+    if (!_isConfigured || _apiRepo == null || _dbRepo == null) {
+      // Not configured is a state, not an error: the Library empty state is
+      // the setup entry (U1 build item 3), and it must never render red.
+      _connectivity = ConnectivityState.unconfigured;
+      logger.i('Fetch playlists skipped - server URL not configured');
       notifyListeners();
       return;
     }
@@ -351,7 +425,7 @@ class SyncProvider extends ChangeNotifier {
 
       final response = await _apiRepo!.getPlaylists(limit: 1000);
       _availablePlaylists = response.items;
-      _isOnline = true;
+      _connectivity = ConnectivityState.reachable;
 
       logger.i('Fetched ${_availablePlaylists.length} playlists from server');
 
@@ -362,11 +436,11 @@ class SyncProvider extends ChangeNotifier {
       }
     } catch (e) {
       _lastError = 'Failed to fetch playlists: $e';
-      _isOnline = false;
+      _connectivity = classifySyncFailure(e);
 
-      logger.i('Failed to fetch playlists: $e');
+      logger.i('Failed to fetch playlists: $e (state: $_connectivity)');
 
-      // Load from cache if server is unreachable
+      // Load from cache so browsing and selection still work
       await _loadPlaylistsFromCache();
     } finally {
       _isLoadingPlaylists = false;
@@ -588,18 +662,21 @@ class SyncProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Start sync
-  Future<void> startSync() async {
+  /// Start a manual sync.
+  ///
+  /// Returns null when the sync was started, or a human-readable reason
+  /// when it was not. Callers surface the reason locally (a snackbar at the
+  /// tap site); it must never become a global error state - the four
+  /// connectivity states are the only error surfaces (U1 build item 1).
+  Future<String?> startSync() async {
     if (!_hasStoragePermission) {
-      _lastError = 'Storage permission not granted';
-      notifyListeners();
-      return;
+      logger.i('Sync not started - storage permission not granted');
+      return 'Storage permission not granted';
     }
 
     if (_selectedPlaylistIds.isEmpty) {
-      _lastError = 'No playlists selected';
-      notifyListeners();
-      return;
+      logger.i('Sync not started - no playlists selected');
+      return 'Select at least one playlist to sync';
     }
 
     try {
@@ -616,12 +693,14 @@ class SyncProvider extends ChangeNotifier {
 
       // Subscribe to progress events
       _subscribeToSyncProgress();
+      return null;
     } catch (e, stackTrace) {
       _lastError = 'Failed to start sync: $e';
       _isSyncing = false;
       _syncProgress = null;
       logger.e('Error triggering sync', error: e, stackTrace: stackTrace);
       notifyListeners();
+      return 'Could not start sync - try again';
     }
   }
 

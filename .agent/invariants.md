@@ -31,25 +31,29 @@ shuffle order · 24 A9 has two outcomes · 25 `playback_state` persistence
 **Sync and statistics** — 8 event upload is not gated · 9 completion is a play,
 never a skip · 13 the user-intent signal · 14 the position stream is the clock ·
 15 play/skip thresholds · 26 UPDATE-first upsert · 27 server library is in flux ·
-30 rating reconciliation scope
+30 rating reconciliation scope · 39 **classify by type + errno only, never
+message text**
 
 **UI** — 16 `PlayerScaffold` docks by layout, never overlay · 17 where the A9
 notice is hosted · 20 `ScaffoldMessenger` is a hub · 21 album identity ·
 22 row indicators stream, never mirror · 28 queue sheet swipe hazard ·
 31 detail screens reload on sheet close · 37 server-URL changes compared
 normalised, host change defaults to keep · 38 **`Expanded` only inside a
-`Flex`** (`AppBar.title` is not one)
+`Flex`** (`AppBar.title` is not one) · 40 **`reachable` is earned**; saving
+drops to unverified · 41 offline renders nothing; unreachable is the only red
 
 **Environment and tooling** — 10 server address · 11 `pending_events` is not
 shell-readable · 12 scratch files location · 18 uiautomator quoting ·
 29 **attach `flutter run` for rendering bugs** · 32 emulator paint wedge ·
-33 triggering a sync · 34 cancelling a sync · 35 artwork cache and the 204
+33 triggering a sync · 34 cancelling a sync · 35 artwork cache and the 204 ·
+42 the shared emulator: identity, disk, screencap lies
 
 **Tests** — 36 the suite and its CI gate
 
 If you are touching playback order or the queue, read **19** twice: a session
 once had that model exactly inverted and it cost a day. If you are debugging
-anything visual, read **29** first.
+anything visual, read **29** first. If you are touching connectivity or any
+error surface, read **39–41** in order.
 
 ---
 
@@ -521,6 +525,42 @@ worker's comment: a failed push must keep the row for the next sync).
 
 ---
 
+### 39. `classifySyncFailure` classifies on exception TYPE and `OSError.errorCode` — never message text
+
+The whole of U1's state model rides on one pure function
+(`lib/utils/connectivity_state.dart`), with every platform-specific detail
+confined inside it:
+
+- `SocketException` with `osError.errorCode` 101 (ENETUNREACH) or 113
+  (EHOSTUNREACH) → `offline`
+- `osError.errorCode` 111 (ECONNREFUSED) or 110 (ETIMEDOUT), or
+  `TimeoutException` → `unreachable`
+- `DioException` with `response != null` (the server answered) → `reachable`
+- everything else → `offline`
+
+In this SDK (Dart 3.11.5) `SocketException.osError` is an `OSError?` with
+fields `message` and `errorCode` — **`errorCode` is the errno** (there is no
+field named `errno`, and the class is not `OsError`). Dio 5.9.2 wraps the raw
+platform error in `DioException.error` and leaves `response` null when the
+server never answered.
+
+**WHY:** the message text lies. With `:3689` configured, the live device
+logged `port = 44430` and `port = 48998` inside exceptions whose errno was
+correctly 111. Substring matching on "refused"/"unreachable" would pass in
+the test and flip the state when the OS rewords a message (ux-refactor §3
+G1). The `unknown → offline` mapping carries over the U0 rule: what cannot be
+proven is not asserted — unclassified is not the same as failed.
+
+**BREAKS IF UNDONE:** parsing message text re-arms the false-fault report;
+mapping unknown to `unreachable` turns every novel failure mode (DNS, VPN,
+proxy) into a red badge — exactly the state the user complained about.
+
+**RESOLVED CONCERN:** "why not a connectivity package?" — the pure function
+is the designated single swap point if errno proves unreliable; adding a
+dependency was excluded from U1 by user decision.
+
+---
+
 ## UI
 
 ### 16. `PlayerScaffold` docks the mini player as a layout child (Column), never an overlay
@@ -788,6 +828,65 @@ primary input, don't just measure that boxes exist.
 
 ---
 
+### 40. The four-state model: `reachable` is earned, saving drops to unverified, failed runs keep state
+
+`SyncProvider.connectivityState` (the enum lives in
+`lib/utils/connectivity_state.dart`) is the only thing the UI reads about the
+network. The raw error string goes to History and logs, never to a widget.
+
+- `reachable` is set only by a successful playlist fetch, or by a sync run
+  completing with `success`/`partial`.
+- A failed or cancelled sync run **keeps** the previous state; its message is
+  log/History only.
+- `setServerUrl` always drops the state to the unverified rendering —
+  `offline` when configured, `unconfigured` when not. Saving an address does
+  not prove it works; the fetch has to prove it.
+- `clearError` acts only when the state is `unreachable` (it must not clobber
+  a fresh `reachable`) and drops to the same unverified rendering.
+
+**WHY:** pre-U1 the whole model was one `String? _lastError` plus one bool,
+and every failure mode rendered as a fault. Unreachable is the *normal* state
+for a music app away from the LAN; the UI must tell apart "cannot reach that
+server" (a fault), "no network" (normal), and "not checked yet" (nothing).
+
+**BREAKS IF UNDONE:** letting a failed sync run set the state re-introduces
+flapping (the worker's failure and the fetch's failure are the same
+condition); letting `clearError` fire on any save drops `reachable` on
+harmless saves; rendering the raw string anywhere re-arms G1.
+
+---
+
+### 41. Per-state presentation: offline renders nothing, unreachable is the only red, and the offline banner makes a claim, so it must be true
+
+- `offline`: no home banner, no badge, no error text, anywhere; the neutral
+  icon is not an error. The Sync screen's orange "Offline – showing cached
+  playlists" banner renders **only while `availablePlaylists` is
+  non-empty** — its wording is a claim about the list shown, and right after
+  saving a URL (unverified, nothing cached) it would be a lie. The
+  `unreachable` banner has no such condition: it is only ever set by a
+  classified fetch failure, so it is always true.
+- `unreachable`: the only home banner (persistent, human, names the host via
+  `describeUnreachable` → U0's `parseServerUrlIdentity`; Retry →
+  `fetchPlaylists`; no dismiss) and the only justified red app-bar badge.
+- `unconfigured`: the neutral setup icon (tooltip "Set up sync"); the empty
+  state is setup, not failure; there is no "Server URL not configured" error
+  surface (G8).
+- `reachable`: the quiet icon (tooltip "Sync"), nothing else.
+- The drawer's "Last synced Xm ago" line reads the newest `sync_history` row;
+  it refreshes on init and on every sync completion. It is the app's positive
+  status signal — freshness, not fault.
+
+**WHY:** the phase's acceptance test: `offline` and `unreachable` must be
+visibly different without reading an errno, and offline must be silence, not
+a lesser alarm.
+
+**BREAKS IF UNDONE:** adding any red, badge, banner or error string to the
+offline state re-arms the user's actual complaint; dropping the non-empty
+condition re-arms the first-run false claim; making the unreachable banner
+dismissible re-arms G2.
+
+---
+
 ## Environment
 
 ### 10. The OwnTone server is at `192.168.1.13`
@@ -1036,6 +1135,36 @@ rows by `artwork_path` (a mixed-source album — Rebel Era/GRiZ, 3 embedded + 1
 server, occurred on 2026-10-04 — splits into duplicate rows; the album
 queries use `MAX(artwork_path)`); marking `'none'` on a read error; or
 re-adding a Dart artwork writer (Dart never runs during a background sync).
+
+---
+
+### 42. The shared emulator: identity, launch, disk, and two screencap lies
+
+- Other sessions run other AVDs on this machine. When two emulators are up, a
+  bare `adb shell` can act on the wrong machine: the 2026-10-09 U1 session had
+  a `RemoteDev_API_36` take `emulator-5554` while the working
+  `Pixel_9_Pro_API_36` moved to `emulator-5556`. **Always pass `-s <serial>`**,
+  and confirm which serial is yours with `adb devices` plus
+  `lsof -p <qemu-pid> | grep avd`.
+- The emulator binary is not on PATH:
+  `/Users/oblivious/Library/Android/sdk/emulator/emulator -avd
+  Pixel_9_Pro_API_36 -no-window -no-audio -gpu swiftshader_indirect`.
+  `flutter devices` fails a license check on this machine;
+  `flutter run -d <serial>` works.
+- The 6 GB data partition is mostly the stock Google Play image. By user
+  decision (2026-10-09) the synced collection is **Brass only (33 tracks)**
+  to keep the disk manageable — do not re-sync Soul unless asked. A failed
+  streamed install on a full partition can leave the package half-uninstalled;
+  check `pm path <pkg>` after any install failure.
+- Screencap lie one: a stable diagonal band of red pixels in the top-right
+  corner is a GPU artefact (present in every screenshot, including pre-U1
+  baselines), not a UI element. A badge is a dense solid cluster plus a
+  semantics tooltip.
+- Screencap lie two: uiautomator dumps intermittently return zero text
+  (Impeller GLES backend), and a cold boot raises a GMS "Sign in with ease"
+  dialog that owns the top window. A dump with no content-descs is not
+  evidence of an empty screen — cross-check with a second instrument (entry
+  29's rule applies to dumps too).
 
 ---
 

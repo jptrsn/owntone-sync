@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../data/models/sync_progress.dart';
 import '../../data/repositories/local_database_repository.dart';
+import '../../utils/connectivity_state.dart';
 import '../providers/sync_provider.dart';
 import 'server_config_screen.dart';
 import 'schedule_config_screen.dart';
@@ -41,18 +42,47 @@ class _SyncScreenState extends State<SyncScreen> {
     }
   }
 
-  Future<void> _handleRefresh(SyncProvider provider) async {
-    await provider.fetchPlaylists();
-
-    // Show error snackbar if refresh failed
-    if (provider.lastError != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(provider.lastError!),
-          backgroundColor: Theme.of(context).colorScheme.error,
-        ),
-      );
+  /// The one state-driven banner on this screen (U1 build item 5):
+  /// `offline` keeps the wording the review rated good; `unreachable` gets
+  /// the human sentence that names the host. `reachable` and
+  /// `unconfigured` show nothing. The raw failure string is never rendered
+  /// here - it lives in History and logs only.
+  ///
+  /// The offline text is a claim about the list below ("showing cached
+  /// playlists"), so it is only shown when the list actually has rows.
+  /// Right after saving a URL no fetch has run yet and there is no cache:
+  /// the banner would be a lie. The unreachable text is only ever set by a
+  /// classified fetch failure, so it is always a true claim.
+  Widget _buildStateBanner(BuildContext context, SyncProvider provider) {
+    final state = provider.connectivityState;
+    if (state == ConnectivityState.reachable ||
+        state == ConnectivityState.unconfigured) {
+      return const SizedBox.shrink();
     }
+    final offline = state == ConnectivityState.offline;
+    if (offline && provider.availablePlaylists.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final color = offline ? Colors.orange : Colors.red;
+    return Container(
+      width: double.infinity,
+      color: offline ? Colors.orange.shade100 : Colors.red.shade100,
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          Icon(Icons.cloud_off, size: 16, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              offline
+                  ? 'Offline - showing cached playlists'
+                  : describeUnreachable(provider.serverUrl),
+              style: TextStyle(color: color),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -207,14 +237,9 @@ class _SyncScreenState extends State<SyncScreen> {
               icon: const Icon(Icons.refresh),
               label: const Text('Load Playlists'),
             ),
-            if (provider.lastError != null) ...[
-              const SizedBox(height: 16),
-              Text(
-                provider.lastError!,
-                style: const TextStyle(color: Colors.red),
-                textAlign: TextAlign.center,
-              ),
-            ],
+            // The fetch outcome renders through the state banner, never as
+            // raw red text under the button (U1 build items 1 and 5).
+            _buildStateBanner(context, provider),
           ],
         ),
       ),
@@ -222,6 +247,9 @@ class _SyncScreenState extends State<SyncScreen> {
   }
 
   Widget _buildPlaylistSelection(BuildContext context, SyncProvider provider) {
+    // The rows are "live" only when the last fetch reached the server; in
+    // every other state the list is the local cache.
+    final live = provider.connectivityState == ConnectivityState.reachable;
     return Column(
       children: [
         Padding(
@@ -237,7 +265,17 @@ class _SyncScreenState extends State<SyncScreen> {
                 ElevatedButton.icon(
                   onPressed: provider.isSyncing
                       ? null
-                      : () => provider.startSync(),
+                       : () async {
+                          final messenger = ScaffoldMessenger.of(context);
+                          // A reason for not starting is surfaced here at
+                          // the tap site, never as a global error state.
+                          final reason = await provider.startSync();
+                          if (reason != null && mounted) {
+                            messenger.showSnackBar(
+                              SnackBar(content: Text(reason)),
+                            );
+                          }
+                        },
                   icon: const Icon(Icons.sync),
                   label: const Text('Sync'),
                 ),
@@ -271,22 +309,7 @@ class _SyncScreenState extends State<SyncScreen> {
                 ],
               ),
             ),
-          if (!provider.isOnline)
-          Container(
-            width: double.infinity,
-            color: Colors.orange.shade100,
-            padding: const EdgeInsets.all(12),
-            child: const Row(
-              children: [
-                Icon(Icons.cloud_off, size: 16, color: Colors.orange),
-                SizedBox(width: 8),
-                Text(
-                  'Offline - showing cached playlists',
-                  style: TextStyle(color: Colors.orange),
-                ),
-              ],
-            ),
-          ),
+          _buildStateBanner(context, provider),
         if (provider.isSyncing && provider.syncProgress != null)
           _buildSyncProgress(context, provider.syncProgress!),
 
@@ -335,7 +358,9 @@ class _SyncScreenState extends State<SyncScreen> {
         const Divider(),
         Expanded(
           child: RefreshIndicator(
-            onRefresh: () => _handleRefresh(provider),
+            // The fetch outcome renders through the state banner; a raw
+            // failure string was never the right refresh feedback.
+            onRefresh: () => provider.fetchPlaylists(),
             child: Stack(
               children: [
                 ListView.builder(
@@ -349,7 +374,7 @@ class _SyncScreenState extends State<SyncScreen> {
                     return CheckboxListTile(
                       title: Text(
                         playlist.name,
-                        style: provider.isOnline
+                        style: live
                             ? null
                             : const TextStyle(
                                 fontStyle: FontStyle.italic,
@@ -357,10 +382,10 @@ class _SyncScreenState extends State<SyncScreen> {
                               ),
                       ),
                       subtitle: Text(
-                        provider.isOnline
+                        live
                             ? '${playlist.itemCount} tracks'
                             : '${playlist.itemCount} tracks (offline)',
-                        style: provider.isOnline
+                        style: live
                             ? null
                             : const TextStyle(color: Colors.grey),
                       ),
@@ -396,16 +421,6 @@ class _SyncScreenState extends State<SyncScreen> {
             ),
           ),
         ),
-        if (provider.lastError != null)
-          Container(
-            width: double.infinity,
-            color: Colors.red.shade100,
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              provider.lastError!,
-              style: const TextStyle(color: Colors.red),
-            ),
-          ),
       ],
     );
   }
