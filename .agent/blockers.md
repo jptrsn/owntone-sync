@@ -1,9 +1,19 @@
 # Blockers and discovered defects
 
-> **Currently open:** none. The 2026-10-02 scheduled-sync entry (two compounding
-> defects, both present in released `main`) was fixed and device-verified on
-> 2026-10-03. Everything dated 2026-09 is resolved; the 2026-10-02
-> star-rendering entry is a struck misobservation, not a defect.
+> **Currently open (newest first):**
+>
+> - 2026-10-08 — detail-screen title overlaps the back button when collapsed.
+> - 2026-10-08 — Now Playing sheet leaves ~205 logical px blank at the bottom.
+> - 2026-10-06 — "Playlist 4 of 3" during the artwork pass (cosmetic).
+> - 2026-10-06 — playback started on its own after a long sync (cause unknown;
+>   needs logcat, not source reading).
+>
+> Resolved: the 2026-10-08 search entry (the field never rendered — search was
+> entirely unusable) was fixed and device-verified the same day. The 2026-10-02
+> scheduled-sync entry (two compounding defects, both
+> present in released `main`) was fixed and device-verified on 2026-10-03.
+> Everything dated 2026-09 is resolved; the 2026-10-02 star-rendering entry is a
+> struck misobservation, not a defect.
 
 ## 2026-09-28 — RESOLVED: the two 2026-09 entries were fixed and device-verified in Phase 7
 
@@ -413,3 +423,69 @@ correctly — but did not then ask whether the geometry it had just captured
 revealed anything *else* wrong. The empty-sheet defect above was visible in its
 own output. When a targeted sweep finds nothing, inspect the layout you measured
 for other anomalies before concluding there is no defect.
+
+---
+
+## 2026-10-08 — RESOLVED (device-verified same day): search was completely unusable — the search field never rendered
+
+Reported from device use: search cannot be made to work at all.
+
+**Root cause:** `search_screen.dart` passed an `Expanded` as `AppBar.title`:
+
+```dart
+appBar: AppBar(
+  titleSpacing: 0,
+  title: Expanded(          // <- AppBar.title is not a Flex
+    child: TextField(...),
+  ),
+)
+```
+
+`Expanded` is a `ParentDataWidget` that writes flex parent data; it is only
+legal as a direct child of a `Row`, `Column` or `Flex`, because it works by
+setting layout parameters **on its parent**. `AppBar.title` is not a flex
+container, so this throws at layout:
+
+```
+Incorrect use of ParentDataWidget.
+Expanded widgets must be placed directly inside Flex widgets.
+```
+
+In a debug build the title slot becomes a red error widget; in a **release**
+build it is an inert grey box. Either way **there is no text field**, so no
+query can ever be typed and search appears totally broken.
+
+**Everything downstream was verified correct and needed no change:**
+
+- Navigation: `library_screen.dart:184` `_openSearch` pushes `SearchScreen`,
+  wired to the app-bar `Icons.search` action at `:233-237`.
+- SQL: `LocalDatabaseRepository.searchLibrary` (`:858`) is correct — pulled the
+  live device DB (93 tracks) and ran its exact query for `pickett`:
+  `SELECT COUNT(*) FROM synced_tracks st WHERE LOWER(st.title) LIKE '%pickett%'
+  ESCAPE '\' OR …` → **13 rows**.
+- Wiring: `_onChanged` debounces at 300 ms, `_search` calls `searchLibrary` and
+  `setState`s; `_buildBody` handles empty-query, searching, null, no-results
+  and grouped-results.
+
+**Fix applied:** removed the `Expanded`, leaving the `TextField` as the title
+directly. `titleSpacing: 0` already does the intended job — the title slot
+receives the width left over after `leading` and `actions`. A comment above the
+title records why an `Expanded` must not come back. Swept `lib/` for the same
+misuse elsewhere (`title:`/`leading:`/`child: Expanded`): no other occurrences.
+`flutter analyze` clean.
+
+**Verified on device 2026-10-08** by the user: the search field renders,
+accepts input, and returns results. Closed.
+
+**Why no earlier phase caught it.** `flutter analyze` cannot see it: it is a
+runtime parent-data contract, not a type error. Phase 6's verification used
+`uiautomator` dumps, which report a node tree whose shape looks plausible even
+when the subtree is an error widget. This is the third defect in this project
+whose signature is "visible only in the `E/flutter` console" — see invariant 29
+and the Phase 8 blank-sheet entry.
+
+**Plan coverage gap worth noting:** `.agent/ux-refactor.md` mentions search in
+three places (the screen inventory, the §2 comparison, and §5's deliberate
+decision not to change modal-vs-tab) and every one of them **assumes it works**.
+No phase U0–U4 would have touched this file. The UX review inherited the
+assumption rather than exercising the screen.

@@ -37,7 +37,8 @@ never a skip · 13 the user-intent signal · 14 the position stream is the clock
 notice is hosted · 20 `ScaffoldMessenger` is a hub · 21 album identity ·
 22 row indicators stream, never mirror · 28 queue sheet swipe hazard ·
 31 detail screens reload on sheet close · 37 server-URL changes compared
-normalised, host change defaults to keep
+normalised, host change defaults to keep · 38 **`Expanded` only inside a
+`Flex`** (`AppBar.title` is not one)
 
 **Environment and tooling** — 10 server address · 11 `pending_events` is not
 shell-readable · 12 scratch files location · 18 uiautomator quoting ·
@@ -745,6 +746,45 @@ never reaches the save path through the UI; the rule is covered by
 `test/server_url_test.dart` instead. The pre-filled example URL
 (`http://192.168.1.100:3689`) is still saveable text — U3 (first run) turns it
 into a hint; do not fold that into server-config work.
+
+---
+
+### 38. `Expanded` / `Flexible` only inside a `Flex`. `AppBar.title` is not one.
+
+`Expanded` and `Flexible` are `ParentDataWidget`s: they do nothing themselves,
+they write flex parent data **onto their parent's** layout. Placed anywhere but
+as a direct child of a `Row`, `Column` or `Flex` they throw at layout:
+
+```
+Incorrect use of ParentDataWidget.
+Expanded widgets must be placed directly inside Flex widgets.
+```
+
+Slots that take a single child and are **not** flex containers therefore reject
+them — `AppBar.title`, `AppBar.leading`, `Scaffold.body`, `Padding.child`,
+`Center.child`, `SizedBox.child`, any `ListTile` slot. A widget that should fill
+its slot needs no wrapper: these slots already hand their child the available
+width. To tune an app-bar title's horizontal extent, use `titleSpacing`.
+
+**WHY:** `search_screen.dart` shipped `title: Expanded(child: TextField(...))`,
+so the search field never rendered — a red error widget in debug, an inert grey
+box in release. Search was completely unusable on the user's install: no field,
+so no query could be typed. Nothing downstream was wrong (navigation, the 300 ms
+debounce, and `searchLibrary`'s escaped `LIKE` were all verified correct against
+the live device DB).
+
+**BREAKS IF UNDONE:** re-wrapping a single-child slot in `Expanded` silently
+deletes that part of the UI in a release build. There is no compile-time or
+`flutter analyze` signal — this is a runtime parent-data contract.
+
+**RESOLVED CONCERN:** "why did three verification passes miss it?" — the failure
+is console-only. `flutter analyze` cannot see it. `uiautomator` dumps report a
+node tree that looks plausible even when the subtree is an error widget, and
+screencaps cannot distinguish a rendered field from an error box. This is the
+third defect in this project with that signature; see entry 29 — **a rendering
+or layout claim requires an attached `flutter run` and a clean `E/flutter`
+console**, not a screenshot. Corollary for any UI sweep: exercise the screen's
+primary input, don't just measure that boxes exist.
 
 ---
 

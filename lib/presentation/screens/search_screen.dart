@@ -171,25 +171,27 @@ class _SearchScreenState extends State<SearchScreen> {
     return PlayerScaffold(
       appBar: AppBar(
         titleSpacing: 0,
-        title: Expanded(
-          child: TextField(
-            controller: _textController,
-            autofocus: true,
-            decoration: InputDecoration(
-              hintText: 'Search tracks, artists, albums, playlists',
-              isDense: true,
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: _textController.text.isEmpty
-                  ? null
-                  : IconButton(
-                      tooltip: 'Clear',
-                      icon: const Icon(Icons.clear),
-                      onPressed: _clear,
-                    ),
-              border: InputBorder.none,
-            ),
-            onChanged: _onChanged,
+        // No Expanded here: AppBar.title is not a Flex, so an Expanded child
+        // throws a ParentDataWidget error and the field never renders. The
+        // title slot already gives the field the width that is left over
+        // after the leading and actions, which is what titleSpacing: 0 tunes.
+        title: TextField(
+          controller: _textController,
+          autofocus: true,
+          decoration: InputDecoration(
+            hintText: 'Search tracks, artists, albums, playlists',
+            isDense: true,
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: _textController.text.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: 'Clear',
+                    icon: const Icon(Icons.clear),
+                    onPressed: _clear,
+                  ),
+            border: InputBorder.none,
           ),
+          onChanged: _onChanged,
         ),
       ),
       body: _buildBody(),

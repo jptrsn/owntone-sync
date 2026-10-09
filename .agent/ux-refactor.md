@@ -906,15 +906,27 @@ U0  (data loss — independent, do first)
 Any phase can be shipped and stopped on. None requires a later one to avoid
 regressing.
 
-### Two known defects, deliberately not in any phase
+### Known defects deliberately not in any phase
 
-Both in `blockers.md` (2026-10-08). Separate work:
+All in `blockers.md` (2026-10-08). Separate work:
 
 - Now Playing sheet leaves ~205 logical px blank at the bottom.
 - Detail-screen title overlaps the back button when the app bar collapses.
+- **Search was entirely non-functional** — `search_screen.dart` passed an
+  `Expanded` as `AppBar.title`, which throws a `ParentDataWidget` error, so the
+  text field never rendered. Fixed and device-verified out-of-band 2026-10-08
+  (one widget removed). See invariant 38.
 
 A phase that happens to touch those screens should say so in its report, but
 must not fold the fixes in.
+
+**Correction to this review, recorded against repeating it.** §1 lists Search
+as a working screen, §2 compares it against the reference players, and §5
+decides not to change modal-vs-tab — all three assume a screen that could not
+be used at all. The review measured structure (routes, widget trees, geometry)
+without exercising each screen's primary input. Any future UX pass must type
+into the fields, not only read the tree: a `ParentDataWidget` failure renders as
+a plausible-looking node in a `uiautomator` dump.
 
 ---
 
