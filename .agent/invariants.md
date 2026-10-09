@@ -36,7 +36,8 @@ never a skip · 13 the user-intent signal · 14 the position stream is the clock
 **UI** — 16 `PlayerScaffold` docks by layout, never overlay · 17 where the A9
 notice is hosted · 20 `ScaffoldMessenger` is a hub · 21 album identity ·
 22 row indicators stream, never mirror · 28 queue sheet swipe hazard ·
-31 detail screens reload on sheet close
+31 detail screens reload on sheet close · 37 server-URL changes compared
+normalised, host change defaults to keep
 
 **Environment and tooling** — 10 server address · 11 `pending_events` is not
 shell-readable · 12 scratch files location · 18 uiautomator quoting ·
@@ -702,6 +703,48 @@ flag flips in `player_screen.dart`) re-opens the stale-rating gap: the user
 rates a song, the star on the row doesn't change, and it looks broken. Any
 new screen that keeps its own track list and sits under the sheet needs the
 same wiring.
+
+---
+
+### 37. A server-URL change is compared after normalisation; only a host change may wipe, and keeping is the default
+
+`server_config_screen.dart` decides what a save does by comparing the
+normalised old and new values (`parseServerUrlIdentity` in
+`lib/utils/server_url.dart`: trim, lowercase scheme and host, strip trailing
+`/`, absent port → scheme default 80/443). Three outcomes: normalised-equal →
+save silently; same **host** (port/scheme/path changed) → save, no wipe;
+different host → a "Different server?" dialog in which **Keep library is the
+primary (Elevated) action** — a home server getting a new DHCP address is at
+least as likely as a genuinely different server. "Start fresh" leads to the
+existing Keep Files / Delete Files dialog. Every save path calls
+`SyncProvider.clearError()`, and the wipe path additionally runs
+`BrowseProvider.reloadAll()` (all four categories) before closing the screen.
+
+**WHY:** the pre-U0 defect (ux-refactor §3 G6): any text change — including
+re-entering the already-configured URL with a trailing slash or stray space,
+or *restoring* the correct URL after a mis-edit — raised the destructive
+dialog that wipes all synced playlists, tracks, and history. The wipe is
+justified only for a different server: OwnTone track IDs are server-assigned,
+so metadata from another server is meaningless; a same-host change is the same
+machine, and a cosmetic change is no change at all. `reloadAll` (not
+`loadData`) is required after the reset because `loadData` reloads only the
+*current* tab while `hasContent` spans all four lists — a current-tab-only
+reload leaves the other tabs showing stale rows and keeps the tabbed UI up on
+an emptied DB (the desync the UX review observed after a wipe).
+
+**BREAKS IF UNDONE:** comparing raw strings (or dropping the default-port /
+trailing-slash rules) re-arms the wipe on a typo fix or a router DHCP change
+and destroys the user's library; demoting Keep library below the destructive
+option puts the wipe under the finger rest; a current-tab-only reload after a
+reset re-opens the stale-rows desync.
+
+**RESOLVED CONCERN:** "why can't whitespace be device-tested?" — the form
+validator runs on the raw field text and rejects leading whitespace
+(`startsWith('http://')`) and trailing whitespace (`Uri.parse`), so whitespace
+never reaches the save path through the UI; the rule is covered by
+`test/server_url_test.dart` instead. The pre-filled example URL
+(`http://192.168.1.100:3689`) is still saveable text — U3 (first run) turns it
+into a hint; do not fold that into server-config work.
 
 ---
 

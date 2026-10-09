@@ -219,3 +219,37 @@ Possible closes, none urgent:
 - a staleness policy — re-probe `'none'` rows older than N days
 
 The middle option is probably the cheapest and catches the most realistic case.
+
+## A live playback queue is not reconciled after an intentional library wipe
+
+Found adjacent to Phase U0 (2026-10-08), pre-existing and deliberately not
+folded into it.
+
+When the user confirms a server change as a *different* server, the app resets
+its library metadata — but a queue already loaded into the player keeps playing
+tracks whose rows no longer exist. Phase 7 built
+`PlaybackController.reconcileQueue(aliveTrackIds)` for exactly this shape of
+problem, wired to sync completion (`LibraryScreen._onSyncCompleted`), but the
+destructive-reset path does not call it.
+
+Cheap fix: call `reconcileQueue` with the surviving ids after a reset, the same
+way sync completion does. Note that Phase 7's own report lists the
+reconcile-removal path as NOT VERIFIED, so this is also the first real exercise
+of that code — expect to be testing both at once.
+
+Low urgency: reaching it requires deliberately changing to a different server
+and choosing to start fresh.
+
+## Unexplained app process death during an airplane-mode cycle
+
+Observed once during Phase U0 verification (2026-10-08): the app process died
+during an airplane-mode on/off cycle, with **no crash trace** in logcat. The
+affected check was re-run and passed cleanly.
+
+Unexplained, and deliberately recorded rather than guessed at (protocol §2).
+
+**Watch for this in Phase U1**, which is entirely about airplane-mode behaviour
+and cycles connectivity repeatedly by design. If it recurs there, capture the
+full logcat immediately rather than re-running — a second sighting in the phase
+that stresses this path is worth more than a clean retry. If it never recurs,
+it stays an unexplained one-off.

@@ -103,57 +103,85 @@ class BrowseProvider extends ChangeNotifier {
   /// Load data for current category
   Future<void> loadData() async {
     await _ensureSortLoaded();
-    final order = _sortOrders[_currentCategory]!;
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      switch (_currentCategory) {
-        case BrowseCategory.playlists:
-          _playlists = await _dbRepo.getAllPlaylistsWithCounts(
-            nameDesc: order == SortOrder.nameDesc,
-          );
-          break;
-        case BrowseCategory.artists:
-          _artists = await _dbRepo.getAllArtists(
-            sortBy: order == SortOrder.nameAsc ? 'artist' : 'artist DESC',
-          );
-          break;
-        case BrowseCategory.albums:
-          String sortBy = 'album';
-          if (order == SortOrder.yearDesc) sortBy = 'year';
-          _albums = await _dbRepo.getAllAlbums(sortBy: sortBy);
-          break;
-        case BrowseCategory.tracks:
-          String sortBy = 'title';
-          switch (order) {
-            case SortOrder.nameAsc:
-              sortBy = 'title';
-              break;
-            case SortOrder.artistAsc:
-              sortBy = 'artist';
-              break;
-            case SortOrder.albumAsc:
-              sortBy = 'album';
-              break;
-            case SortOrder.yearDesc:
-              sortBy = 'year';
-              break;
-            case SortOrder.dateAddedDesc:
-              sortBy = 'dateAdded';
-              break;
-            default:
-              sortBy = 'title';
-          }
-          _tracks = await _dbRepo.getAllTracks(sortBy: sortBy);
-          break;
+      await _loadCategory(_currentCategory);
+    } catch (e) {
+      _error = 'Failed to load data: $e';
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Reloads every category, not just the current one.
+  ///
+  /// Used after the stored library changes underneath the UI (a server
+  /// change wiped it): a current-category-only reload would leave the other
+  /// tabs holding stale rows, and [hasContent] would keep the tabbed body up
+  /// on lists that no longer exist in the database.
+  Future<void> reloadAll() async {
+    await _ensureSortLoaded();
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      for (final category in BrowseCategory.values) {
+        await _loadCategory(category);
       }
     } catch (e) {
       _error = 'Failed to load data: $e';
     } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> _loadCategory(BrowseCategory category) async {
+    final order = _sortOrders[category]!;
+    switch (category) {
+      case BrowseCategory.playlists:
+        _playlists = await _dbRepo.getAllPlaylistsWithCounts(
+          nameDesc: order == SortOrder.nameDesc,
+        );
+        break;
+      case BrowseCategory.artists:
+        _artists = await _dbRepo.getAllArtists(
+          sortBy: order == SortOrder.nameAsc ? 'artist' : 'artist DESC',
+        );
+        break;
+      case BrowseCategory.albums:
+        String sortBy = 'album';
+        if (order == SortOrder.yearDesc) sortBy = 'year';
+        _albums = await _dbRepo.getAllAlbums(sortBy: sortBy);
+        break;
+      case BrowseCategory.tracks:
+        String sortBy = 'title';
+        switch (order) {
+          case SortOrder.nameAsc:
+            sortBy = 'title';
+            break;
+          case SortOrder.artistAsc:
+            sortBy = 'artist';
+            break;
+          case SortOrder.albumAsc:
+            sortBy = 'album';
+            break;
+          case SortOrder.yearDesc:
+            sortBy = 'year';
+            break;
+          case SortOrder.dateAddedDesc:
+            sortBy = 'dateAdded';
+            break;
+          default:
+            sortBy = 'title';
+        }
+        _tracks = await _dbRepo.getAllTracks(sortBy: sortBy);
+        break;
     }
   }
 
