@@ -8,7 +8,9 @@ import 'server_url.dart';
 /// The four connectivity states the UI reads (ux-refactor §6, Phase U1).
 ///
 /// - [unconfigured]: no server URL saved. First run is setup, not failure.
-/// - [reachable]: the last contact with the server succeeded.
+/// - [reachable]: the last contact reached the server - it answered, with a
+///   success or an HTTP error status. Whether the displayed data is fresh is
+///   a separate fact (`SyncProvider.lastFetchSucceeded`).
 /// - [offline]: no path to the network. The *normal* state away from the
 ///   home LAN - it is never rendered as an error: no banner, no note,
 ///   no badge (settled decision 3).
@@ -43,8 +45,8 @@ const int _kEHOSTUNREACH = 113;
 ///   the phone simply has no path to the LAN, the expected condition away
 ///   from home;
 /// - a route exists but the server did not answer (ECONNREFUSED,
-///   ETIMEDOUT, a Dart [TimeoutException]) -> [unreachable]: the one
-///   genuine fault;
+///   ETIMEDOUT, a dio timeout type, a bare Dart [TimeoutException]) ->
+///   [unreachable]: the one genuine fault;
 /// - the server answered with an HTTP status (a [DioException] carrying a
 ///   [DioException.response]) -> [reachable]: the connection worked, so
 ///   the failure is not a connectivity problem and must not render as one;
@@ -58,6 +60,16 @@ ConnectivityState classifySyncFailure(Object error) {
     // A response means the server spoke back: whatever went wrong, the
     // connection itself worked.
     if (error.response != null) return ConnectivityState.reachable;
+    // Dio's own timeout signal: a route existed, the server did not
+    // answer in time. dio builds these with `error: null` (io_adapter's
+    // connectTimeout onTimeout, response_stream_handler's receive
+    // timer), so unwrapping below would lose the signal - read the type
+    // dio set itself.
+    if (error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.sendTimeout ||
+        error.type == DioExceptionType.receiveTimeout) {
+      return ConnectivityState.unreachable;
+    }
     cause = error.error ?? error;
   }
 

@@ -533,16 +533,22 @@ confined inside it:
 
 - `SocketException` with `osError.errorCode` 101 (ENETUNREACH) or 113
   (EHOSTUNREACH) → `offline`
-- `osError.errorCode` 111 (ECONNREFUSED) or 110 (ETIMEDOUT), or
-  `TimeoutException` → `unreachable`
+- `osError.errorCode` 111 (ECONNREFUSED) or 110 (ETIMEDOUT), a dio timeout
+  type (`DioExceptionType.connectionTimeout`/`sendTimeout`/`receiveTimeout`),
+  or a bare `TimeoutException` → `unreachable`
 - `DioException` with `response != null` (the server answered) → `reachable`
 - everything else → `offline`
 
 In this SDK (Dart 3.11.5) `SocketException.osError` is an `OSError?` with
 fields `message` and `errorCode` — **`errorCode` is the errno** (there is no
-field named `errno`, and the class is not `OsError`). Dio 5.9.2 wraps the raw
-platform error in `DioException.error` and leaves `response` null when the
-server never answered.
+field named `errno`, and the class is not `OsError`). The pinned dio
+(5.9.0, `pubspec.lock`) wraps a refused or reset connection as
+`DioExceptionType.connectionError` carrying the `SocketException` in
+`DioException.error`, and leaves `response` null when the server never
+answered. Its timeout types are built with `error` null (io_adapter's
+connectTimeout `onTimeout`, response_stream_handler's receive timer), so the
+classifier reads `DioException.type` for them — unwrapping `error` would
+lose the signal.
 
 **WHY:** the message text lies. With `:3689` configured, the live device
 logged `port = 44430` and `port = 48998` inside exceptions whose errno was
@@ -828,31 +834,38 @@ primary input, don't just measure that boxes exist.
 
 ---
 
-### 40. The four-state model: `reachable` is earned, saving drops to unverified, failed runs keep state
+### 40. The four-state model: `reachable` is earned, saving drops to unverified, non-proving runs keep state
 
 `SyncProvider.connectivityState` (the enum lives in
 `lib/utils/connectivity_state.dart`) is the only thing the UI reads about the
-network. The raw error string goes to History and logs, never to a widget.
+network. The raw error string is kept in memory (`SyncProvider.lastError`)
+for logs and future surfaces — no current reader — never to a widget.
 
-- `reachable` is set only by a successful playlist fetch, or by a sync run
+- `reachable` is set by a playlist fetch that reached the server (an HTTP
+  success or an error status — the connection worked), or by a sync run
   completing with `success`/`partial`.
-- A failed or cancelled sync run **keeps** the previous state; its message is
-  log/History only.
-- `setServerUrl` always drops the state to the unverified rendering —
-  `offline` when configured, `unconfigured` when not. Saving an address does
-  not prove it works; the fetch has to prove it.
-- `clearError` acts only when the state is `unreachable` (it must not clobber
-  a fresh `reachable`) and drops to the same unverified rendering.
+- Reachability is not freshness: whether the displayed list is what the
+  server just sent is `SyncProvider.lastFetchSucceeded` — set by a
+  successful fetch, cleared by a failed one and by saving a URL. The Sync
+  screen's row styling reads it, not the state.
+- A sync run that does not complete with `success`/`partial` (failed,
+  cancelled, skipped, interrupted) **keeps** the previous state — including
+  a fresh `reachable`; its message goes to logs only.
+- `setServerUrl` is the only save-transition owner: it drops the state to
+  the unverified rendering (`offline` when configured, `unconfigured` when
+  not) and invalidates list freshness. Saving an address does not prove it
+  works; the fetch has to prove it.
 
 **WHY:** pre-U1 the whole model was one `String? _lastError` plus one bool,
 and every failure mode rendered as a fault. Unreachable is the *normal* state
 for a music app away from the LAN; the UI must tell apart "cannot reach that
 server" (a fault), "no network" (normal), and "not checked yet" (nothing).
 
-**BREAKS IF UNDONE:** letting a failed sync run set the state re-introduces
-flapping (the worker's failure and the fetch's failure are the same
-condition); letting `clearError` fire on any save drops `reachable` on
-harmless saves; rendering the raw string anywhere re-arms G1.
+**BREAKS IF UNDONE:** letting a non-proving sync run set the state
+re-introduces flapping (the worker's failure and the fetch's failure are the
+same condition); conflating reachability with list freshness shows a stale
+cache as live after an HTTP-error fetch; rendering the raw string anywhere
+re-arms G1.
 
 ---
 

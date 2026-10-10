@@ -39,10 +39,16 @@ class SyncProvider extends ChangeNotifier {
   bool _deleteOrphanedFiles = false;
   bool _isSyncing = false;
   SyncProgress? _syncProgress;
-  // The raw failure text, kept for History and logs only. The UI reads
-  // [connectivityState], never this string (U1 build item 1).
+  // The raw failure text, kept for logs and future surfaces only (no
+  // current reader). The UI reads [connectivityState], never this string
+  // (U1 build item 1).
   String? _lastError;
   ConnectivityState _connectivity = ConnectivityState.unconfigured;
+  // Whether the displayed playlist list came from a fetch that succeeded.
+  // [connectivityState] says the server answered; this says the list shown
+  // is what it just sent. A failed fetch - even one the server answered
+  // with an HTTP error - drops it back to the local cache (invariant 40).
+  bool _lastFetchSucceeded = false;
   SyncHistoryRecord? _lastSync;
   bool _isCancelling = false;
   bool _isLoadingPlaylists = false;
@@ -70,13 +76,21 @@ class SyncProvider extends ChangeNotifier {
   /// [ConnectivityState.unconfigured] / [ConnectivityState.reachable] /
   /// [ConnectivityState.offline] / [ConnectivityState.unreachable].
   ///
-  /// It is derived, never persisted: a successful fetch or a successful
-  /// sync run establishes [ConnectivityState.reachable]; a failed fetch is
-  /// classified by [classifySyncFailure]; saving a URL drops the state to
-  /// the neutral unverified rendering ([ConnectivityState.offline] when
-  /// configured), which looks identical to a genuinely offline session
-  /// because offline shows nothing at all.
+  /// It is derived, never persisted: a fetch that reached the server, or a
+  /// sync run completing with `success`/`partial`, establishes
+  /// [ConnectivityState.reachable]; a failed fetch is classified by
+  /// [classifySyncFailure]; saving a URL drops the state to the neutral
+  /// unverified rendering ([ConnectivityState.offline] when configured),
+  /// which looks identical to a genuinely offline session because offline
+  /// shows nothing at all.
   ConnectivityState get connectivityState => _connectivity;
+
+  /// Whether the currently displayed playlist list came from a fetch that
+  /// succeeded (invariant 40). Reachability alone proves the server
+  /// answered, not that the list shown is current: an HTTP-error fetch
+  /// leaves the state [ConnectivityState.reachable] while the displayed
+  /// list is the local cache again, and only this flag says so.
+  bool get lastFetchSucceeded => _lastFetchSucceeded;
 
   /// The newest `sync_history` row: the source of the drawer's "last
   /// synced" line. Freshness, not fault, is the app's status signal
@@ -88,7 +102,16 @@ class SyncProvider extends ChangeNotifier {
   /// Library refresh and queue reconciliation hook off this (C2/C3).
   Stream<String> get syncCompleted => _syncCompletedController.stream;
 
-  SyncProvider() {
+  /// How [setServerUrl] builds the API repository. Production uses the
+  /// default; tests inject a repository whose Dio rejects with the exact
+  /// dio exception shapes they want classified (invariant 40 tests).
+  final OwnToneApiRepository Function(String baseUrl) _createApiRepository;
+
+  static OwnToneApiRepository _defaultApiRepository(String baseUrl) =>
+      OwnToneApiRepository(baseUrl: baseUrl);
+
+  SyncProvider({OwnToneApiRepository Function(String baseUrl)? apiRepository})
+    : _createApiRepository = apiRepository ?? _defaultApiRepository {
     _initialize();
   }
 
@@ -97,24 +120,6 @@ class SyncProvider extends ChangeNotifier {
     _progressSubscription?.cancel();
     _syncCompletedController.close();
     super.dispose();
-  }
-
-  /// Clears the surfaced error state (the unreachable banner and the
-  /// app-bar badge).
-  ///
-  /// Every server-URL save path calls this (invariant 37): saving a
-  /// corrected address must remove the "can't reach the server" surface
-  /// without asserting reachability. The state drops to the neutral
-  /// unverified rendering and only advances to [ConnectivityState.reachable]
-  /// on a successful fetch or sync run. A state that is not an error
-  /// (reachable) is left alone - there is nothing to clear.
-  void clearError() {
-    if (_connectivity != ConnectivityState.unreachable) return;
-    _lastError = null;
-    _connectivity = _isConfigured
-        ? ConnectivityState.offline
-        : ConnectivityState.unconfigured;
-    notifyListeners();
   }
 
   Future<void> _initialize() async {
@@ -173,12 +178,17 @@ class SyncProvider extends ChangeNotifier {
   ///
   /// Saving an address does not prove it works: the state drops to the
   /// neutral unverified rendering (which, like a genuinely offline session,
-  /// shows nothing). Only a successful fetch or sync run establishes
+  /// shows nothing). Only a fetch that reaches the server, or a sync run
+  /// completing with `success`/`partial`, establishes
   /// [ConnectivityState.reachable]; a failed fetch classifies the failure.
+  ///
+  /// This is the only save-transition owner (invariant 40): it also
+  /// invalidates list freshness - whatever is displayed, if anything,
+  /// predates the new address.
   Future<void> setServerUrl(String url) async {
     _serverUrl = url;
     _isConfigured = url.isNotEmpty;
-    _apiRepo = OwnToneApiRepository(baseUrl: url);
+    _apiRepo = _createApiRepository(url);
 
     // Save to persistent storage
     final prefs = await SharedPreferences.getInstance();
@@ -187,6 +197,7 @@ class SyncProvider extends ChangeNotifier {
     _connectivity = _isConfigured
         ? ConnectivityState.offline
         : ConnectivityState.unconfigured;
+    _lastFetchSucceeded = false;
 
     notifyListeners();
   }
@@ -340,11 +351,12 @@ class SyncProvider extends ChangeNotifier {
             _syncProgress = null;
             _isCancelling = false;
             // A successful or partial run proves the server answered, so it
-            // establishes reachability and clears any surfaced error. A
-            // failed or cancelled run keeps the connectivity state as it is
-            // (its message goes to History and logs, never to the UI - U1
-            // build items 1 and 5); re-arming a red banner from a worker
-            // string is exactly the pre-U1 defect this phase removes.
+            // establishes reachability and clears any surfaced error. A run
+            // that does not complete with success/partial keeps the
+            // connectivity state as it is - including a fresh reachable
+            // (its message goes to logs, never to the UI - U1 build items 1
+            // and 5); re-arming a red banner from a worker string is
+            // exactly the pre-U1 defect this phase removes.
             if (status == 'success' || status == 'partial') {
               _lastError = null;
               _connectivity = ConnectivityState.reachable;
@@ -397,11 +409,13 @@ class SyncProvider extends ChangeNotifier {
 
   /// Fetch available playlists from server.
   ///
-  /// The one contact that classifies the connectivity state. Success
-  /// establishes [ConnectivityState.reachable]; failure is classified by
-  /// [classifySyncFailure] (type and errno only, never message text). The
-  /// raw failure string is kept in [lastError] for History and logs; no UI
-  /// reads it.
+  /// The one contact that classifies the connectivity state. A fetch that
+  /// reaches the server establishes [ConnectivityState.reachable] (an HTTP
+  /// error status is still an answer - the connection worked) and marks the
+  /// displayed list fresh; failure is classified by [classifySyncFailure]
+  /// (type and errno only, never message text) and marks the displayed list
+  /// stale again. The raw failure string is kept in [lastError] for logs
+  /// and future surfaces; no UI reads it.
   Future<void> fetchPlaylists() async {
     if (!_isConfigured || _apiRepo == null || _dbRepo == null) {
       // Not configured is a state, not an error: the Library empty state is
@@ -426,6 +440,8 @@ class SyncProvider extends ChangeNotifier {
       final response = await _apiRepo!.getPlaylists(limit: 1000);
       _availablePlaylists = response.items;
       _connectivity = ConnectivityState.reachable;
+      // The displayed list is what the server just sent: fresh.
+      _lastFetchSucceeded = true;
 
       logger.i('Fetched ${_availablePlaylists.length} playlists from server');
 
@@ -437,6 +453,8 @@ class SyncProvider extends ChangeNotifier {
     } catch (e) {
       _lastError = 'Failed to fetch playlists: $e';
       _connectivity = classifySyncFailure(e);
+      // The displayed list is the local cache again: not fresh.
+      _lastFetchSucceeded = false;
 
       logger.i('Failed to fetch playlists: $e (state: $_connectivity)');
 

@@ -93,6 +93,51 @@ void main() {
     });
   });
 
+  group('dio timeout types are unreachable (U1, build item 2; production '
+      'shapes)', () {
+    // The app sets connectTimeout 10 s / receiveTimeout 30 s
+    // (owntone_api_repository.dart). dio 5.9.0 throws these factories with
+    // `error` unset (adapters/io_adapter.dart, response_stream_handler.dart),
+    // so the classifier must read the type dio set itself - a shape with a
+    // SocketException/TimeoutException in `error` is not what the runtime
+    // produces.
+    test('a connectionTimeout with no error is unreachable', () {
+      expect(
+        classifySyncFailure(
+          DioException.connectionTimeout(
+            requestOptions: RequestOptions(path: '/api/library/playlists'),
+            timeout: const Duration(seconds: 10),
+          ),
+        ),
+        ConnectivityState.unreachable,
+      );
+    });
+
+    test('a receiveTimeout with no error is unreachable', () {
+      expect(
+        classifySyncFailure(
+          DioException.receiveTimeout(
+            timeout: const Duration(seconds: 30),
+            requestOptions: RequestOptions(path: '/api/library/playlists'),
+          ),
+        ),
+        ConnectivityState.unreachable,
+      );
+    });
+
+    test('a sendTimeout with no error is unreachable', () {
+      expect(
+        classifySyncFailure(
+          DioException.sendTimeout(
+            timeout: const Duration(seconds: 10),
+            requestOptions: RequestOptions(path: '/api/library/playlists'),
+          ),
+        ),
+        ConnectivityState.unreachable,
+      );
+    });
+  });
+
   group('a server that answered is reachable (U1, build item 2)', () {
     test('a DioException carrying a response classifies reachable', () {
       final response = Response(

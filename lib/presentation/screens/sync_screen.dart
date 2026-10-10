@@ -46,39 +46,51 @@ class _SyncScreenState extends State<SyncScreen> {
   /// `offline` keeps the wording the review rated good; `unreachable` gets
   /// the human sentence that names the host. `reachable` and
   /// `unconfigured` show nothing. The raw failure string is never rendered
-  /// here - it lives in History and logs only.
+  /// here - it lives in logs only.
   ///
   /// The offline text is a claim about the list below ("showing cached
   /// playlists"), so it is only shown when the list actually has rows.
   /// Right after saving a URL no fetch has run yet and there is no cache:
   /// the banner would be a lie. The unreachable text is only ever set by a
   /// classified fetch failure, so it is always a true claim.
+  ///
+  /// Exhaustive by design: a state that has no mapping renders nothing, so
+  /// a future fifth state cannot silently default to the red banner
+  /// (invariant 41).
   Widget _buildStateBanner(BuildContext context, SyncProvider provider) {
-    final state = provider.connectivityState;
-    if (state == ConnectivityState.reachable ||
-        state == ConnectivityState.unconfigured) {
-      return const SizedBox.shrink();
+    switch (provider.connectivityState) {
+      case ConnectivityState.reachable:
+      case ConnectivityState.unconfigured:
+        return const SizedBox.shrink();
+      case ConnectivityState.offline:
+        if (provider.availablePlaylists.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        return _banner(
+          Colors.orange,
+          Colors.orange.shade100,
+          'Offline - showing cached playlists',
+        );
+      case ConnectivityState.unreachable:
+        return _banner(
+          Colors.red,
+          Colors.red.shade100,
+          describeUnreachable(provider.serverUrl),
+        );
     }
-    final offline = state == ConnectivityState.offline;
-    if (offline && provider.availablePlaylists.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    final color = offline ? Colors.orange : Colors.red;
+  }
+
+  Widget _banner(Color color, Color background, String text) {
     return Container(
       width: double.infinity,
-      color: offline ? Colors.orange.shade100 : Colors.red.shade100,
+      color: background,
       padding: const EdgeInsets.all(12),
       child: Row(
         children: [
           Icon(Icons.cloud_off, size: 16, color: color),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              offline
-                  ? 'Offline - showing cached playlists'
-                  : describeUnreachable(provider.serverUrl),
-              style: TextStyle(color: color),
-            ),
+            child: Text(text, style: TextStyle(color: color)),
           ),
         ],
       ),
@@ -247,9 +259,11 @@ class _SyncScreenState extends State<SyncScreen> {
   }
 
   Widget _buildPlaylistSelection(BuildContext context, SyncProvider provider) {
-    // The rows are "live" only when the last fetch reached the server; in
-    // every other state the list is the local cache.
-    final live = provider.connectivityState == ConnectivityState.reachable;
+    // The rows are "live" only when the displayed list came from a fetch
+    // that succeeded; reachability alone proves the server answered, not
+    // that the list shown is current (invariant 40). In every other case
+    // the list is the local cache.
+    final live = provider.lastFetchSucceeded;
     return Column(
       children: [
         Padding(

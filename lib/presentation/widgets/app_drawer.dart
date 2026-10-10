@@ -38,6 +38,8 @@ class AppDrawer extends StatelessWidget {
         return 'Last sync cancelled $when';
       case 'skipped':
         return 'Last sync skipped $when';
+      case 'interrupted':
+        return 'Last sync interrupted $when';
       default:
         return 'Last sync $when';
     }
