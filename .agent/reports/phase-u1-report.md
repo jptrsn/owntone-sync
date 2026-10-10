@@ -151,3 +151,37 @@ UNKNOWN — behaviour I could not explain
   is a GPU artefact (present in pre-U1 baselines too) — nearly misread as a
   badge; a real badge is a dense solid cluster plus a semantics tooltip.
   Now invariant 42.
+
+## Post-review fix (after the device session)
+
+The agentic re-review of this PR (comment on #3, against the
+device-session head) verified all first-round fixes and found two majors
+in the state machine, both fixed after this report was written:
+
+- An in-flight fetch against the previous server could apply its result
+  after `setServerUrl` and overwrite the save's state — the retry→save
+  recovery flow could re-arm `unreachable` (a banner naming the new host,
+  unprobed) or assert `reachable` + freshness with the old server's list.
+  Fenced by a fetch generation token that `setServerUrl` bumps
+  (invariant 40); two provider tests guard both variants.
+- `fetchPlaylists`' catch fed local failures (the cache write, a
+  malformed 200 body) to the network classifier, rendering `offline`
+  after the server demonstrably answered. The classification boundary is
+  now the network call; a cache-write failure keeps `reachable` + list
+  freshness and is logged, and the next fetch retries the write. The
+  previously untestable fetch-success → `reachable` transition is now
+  guarded by a provider test.
+
+Note for later readers: the Changes and BUILD sections above describe the
+device-session build. At head, `clearError()` (mentioned under Changes)
+was removed by the first review round's fix, the Sync screen's row styling
+keys on `lastFetchSucceeded` rather than reachability, the classifier
+suite is 20 tests, the provider connectivity suite is 15, and the total
+is 90.
+
+BUILD (re-run at head, after the fix)
+  flutter analyze: No issues found!
+  flutter test: All 90 tests passed
+  flutter build apk --debug: built `app-debug.apk`
+  Kotlin: `./gradlew :app:testDebugUnitTest` with JDK 17 (Zulu) —
+  BUILD SUCCESSFUL

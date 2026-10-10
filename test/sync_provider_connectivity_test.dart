@@ -19,13 +19,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// hand-rolled substitute.
 ///
 /// Deliberately no platform database: on the host the permission checks
-/// short-circuit, and the failure path's post-classification cache load
-/// throws an environmental error that is swallowed after the state is set.
-/// The one transition not covered here is fetch *success* -> reachable: its
-/// cache writes need a platform DB. The equivalent "a run proved
-/// reachability" transition is guarded below via the worker's completion
-/// event, and the successful fetch is covered by on-device evidence
-/// (reports/phase-u1-report.md).
+/// short-circuit, and platform DB calls throw an environmental error that
+/// the code under test swallows after the state is set (the failure
+/// path's cache load; the success path's cache write - which is exactly
+/// what the fetch-success test below asserts on).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -72,6 +69,96 @@ void main() {
         requestOptions: options,
         timeout: const Duration(seconds: 10),
       );
+
+  /// Two playlists in the server's JSON shape (playlist.g.dart).
+  const playlistsJson = <String, dynamic>{
+    'items': [
+      {
+        'id': 1,
+        'name': 'radio',
+        'path': '/music/radio.m3u',
+        'parent_id': '0',
+        'type': 'regular',
+        'smart_playlist': false,
+        'random': false,
+        'folder': false,
+        'item_count': 12,
+        'stream_count': 0,
+        'uri': 'library:playlist:1',
+      },
+      {
+        'id': 2,
+        'name': 'jazz',
+        'path': '/music/jazz.m3u',
+        'parent_id': '0',
+        'type': 'regular',
+        'smart_playlist': false,
+        'random': false,
+        'folder': false,
+        'item_count': 30,
+        'stream_count': 0,
+        'uri': 'library:playlist:2',
+      },
+    ],
+    'total': 2,
+    'offset': 0,
+    'limit': 1000,
+  };
+
+  /// A provider whose getPlaylists resolves with [playlistsJson].
+  SyncProvider providerSucceeding() {
+    final dio = Dio();
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          handler.resolve(
+            Response(
+              requestOptions: options,
+              statusCode: 200,
+              data: playlistsJson,
+            ),
+          );
+        },
+      ),
+    );
+    return SyncProvider(
+      apiRepository: (baseUrl) =>
+          OwnToneApiRepository(baseUrl: baseUrl, dio: dio),
+    );
+  }
+
+  /// A provider whose getPlaylists settles [delay] after the request -
+  /// rejecting with [buildError], or resolving with [playlistsJson] when
+  /// [succeed] - so a save can land while the fetch is in flight.
+  SyncProvider providerDelayed(
+    Duration delay, {
+    bool succeed = false,
+    required DioException Function(RequestOptions options) buildError,
+  }) {
+    final dio = Dio();
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) async {
+          await Future<void>.delayed(delay);
+          if (succeed) {
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                statusCode: 200,
+                data: playlistsJson,
+              ),
+            );
+          } else {
+            handler.reject(buildError(options));
+          }
+        },
+      ),
+    );
+    return SyncProvider(
+      apiRepository: (baseUrl) =>
+          OwnToneApiRepository(baseUrl: baseUrl, dio: dio),
+    );
+  }
 
   /// Drives one fetch against a failing server and asserts the resulting
   /// state and freshness. The post-classification cache load needs a
@@ -226,6 +313,62 @@ void main() {
       await provider.setServerUrl('http://192.168.1.13:3689');
       await provider.setServerUrl('');
       expect(provider.connectivityState, ConnectivityState.unconfigured);
+    });
+  });
+
+  group('a successful fetch earns reachable (invariant 40)', () {
+    test('establishes reachable and marks the list fresh; a local '
+        'cache-write failure does not demote it', () async {
+      final provider = providerSucceeding();
+      addTearDown(provider.dispose);
+      await settle();
+      await provider.setServerUrl('http://192.168.1.13:3689');
+      // On the host the cache write below the fetch throws a platform
+      // error (no sqflite): it must be swallowed and keep the state the
+      // fetch earned - not fed to the network classifier.
+      await provider.fetchPlaylists();
+      expect(provider.connectivityState, ConnectivityState.reachable);
+      expect(provider.lastFetchSucceeded, isTrue);
+      expect(provider.availablePlaylists, hasLength(2));
+    });
+  });
+
+  group('a save beats an in-flight fetch (invariant 40)', () {
+    test('an in-flight failure for the previous server does not re-arm '
+        'unreachable after the save', () async {
+      final provider = providerDelayed(
+        const Duration(milliseconds: 300),
+        buildError: connectionTimeout,
+      );
+      addTearDown(provider.dispose);
+      await settle();
+      await provider.setServerUrl('http://192.168.1.13:3689');
+      final fetch = provider.fetchPlaylists(); // in flight for 300 ms
+      // The documented retry->save recovery flow: the old server's timeout
+      // is still running when the corrected URL is saved.
+      await provider.setServerUrl('http://10.0.0.5:3689');
+      await fetch;
+      expect(provider.connectivityState, ConnectivityState.offline);
+      expect(provider.lastFetchSucceeded, isFalse);
+      expect(provider.availablePlaylists, isEmpty);
+    });
+
+    test('an in-flight success for the previous server does not assert '
+        'reachable or freshness after the save', () async {
+      final provider = providerDelayed(
+        const Duration(milliseconds: 300),
+        succeed: true,
+        buildError: connectionTimeout,
+      );
+      addTearDown(provider.dispose);
+      await settle();
+      await provider.setServerUrl('http://192.168.1.13:3689');
+      final fetch = provider.fetchPlaylists();
+      await provider.setServerUrl('http://10.0.0.5:3689');
+      await fetch;
+      expect(provider.connectivityState, ConnectivityState.offline);
+      expect(provider.lastFetchSucceeded, isFalse);
+      expect(provider.availablePlaylists, isEmpty);
     });
   });
 

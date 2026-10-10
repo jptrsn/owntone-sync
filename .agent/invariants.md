@@ -855,6 +855,15 @@ for logs and future surfaces — no current reader — never to a widget.
   the unverified rendering (`offline` when configured, `unconfigured` when
   not) and invalidates list freshness. Saving an address does not prove it
   works; the fetch has to prove it.
+- A save beats an in-flight fetch: `fetchPlaylists` fences its state writes
+  with a fetch generation that `setServerUrl` bumps, so a result (success or
+  failure) for the address being replaced is dropped. Without the fence the
+  documented retry→save recovery flow (the banner's Retry still timing out
+  when the corrected URL is saved) re-arms `unreachable` — or asserts
+  `reachable` with the old server's list — for the new host.
+- The classification boundary is the network call: a local failure after
+  the server answered (the cache write, a malformed 200 body) is logged and
+  keeps `reachable` + list freshness; the next fetch retries the write.
 
 **WHY:** pre-U1 the whole model was one `String? _lastError` plus one bool,
 and every failure mode rendered as a fault. Unreachable is the *normal* state
@@ -865,7 +874,11 @@ server" (a fault), "no network" (normal), and "not checked yet" (nothing).
 re-introduces flapping (the worker's failure and the fetch's failure are the
 same condition); conflating reachability with list freshness shows a stale
 cache as live after an HTTP-error fetch; rendering the raw string anywhere
-re-arms G1.
+re-arms G1; letting a fetch that started against the previous address apply
+its result after a save re-arms a false banner naming the new host (and can
+show the old server's list as live under the new one); classifying a local
+cache-write failure demotes a working connection to `offline` — reachable on
+the near-full partition (invariant 42).
 
 ---
 

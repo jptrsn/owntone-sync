@@ -52,6 +52,10 @@ class SyncProvider extends ChangeNotifier {
   SyncHistoryRecord? _lastSync;
   bool _isCancelling = false;
   bool _isLoadingPlaylists = false;
+  // Bumped by [setServerUrl]. A fetch that started against a previous
+  // address must not apply its result after the save: the save is the
+  // only save-transition owner (invariant 40).
+  int _fetchGeneration = 0;
   SyncSchedule _syncSchedule = SyncSchedule();
   bool _isBatteryOptimizationDisabled = false;
   DateTime? _missedSyncTime;
@@ -186,6 +190,10 @@ class SyncProvider extends ChangeNotifier {
   /// invalidates list freshness - whatever is displayed, if anything,
   /// predates the new address.
   Future<void> setServerUrl(String url) async {
+    // A fetch in flight against the previous address is now stale; the
+    // fence in fetchPlaylists keeps it from touching the state this
+    // method owns.
+    _fetchGeneration++;
     _serverUrl = url;
     _isConfigured = url.isNotEmpty;
     _apiRepo = _createApiRepository(url);
@@ -416,6 +424,12 @@ class SyncProvider extends ChangeNotifier {
   /// (type and errno only, never message text) and marks the displayed list
   /// stale again. The raw failure string is kept in [lastError] for logs
   /// and future surfaces; no UI reads it.
+  ///
+  /// Two fences keep the state it writes trustworthy (invariant 40): a
+  /// save that lands mid-flight bumps the fetch generation, so a result
+  /// for the previous address is dropped; and only the network call feeds
+  /// [classifySyncFailure] - a local cache-write failure after the server
+  /// answered is logged and keeps the state the fetch earned.
   Future<void> fetchPlaylists() async {
     if (!_isConfigured || _apiRepo == null || _dbRepo == null) {
       // Not configured is a state, not an error: the Library empty state is
@@ -432,12 +446,18 @@ class SyncProvider extends ChangeNotifier {
       return;
     }
 
+    final generation = _fetchGeneration;
     try {
       _isLoadingPlaylists = true;
       _lastError = null;
       notifyListeners();
 
       final response = await _apiRepo!.getPlaylists(limit: 1000);
+
+      // A URL was saved while this fetch was in flight: the result is for
+      // the previous address, and the save owns the state (invariant 40).
+      if (generation != _fetchGeneration) return;
+
       _availablePlaylists = response.items;
       _connectivity = ConnectivityState.reachable;
       // The displayed list is what the server just sent: fresh.
@@ -445,12 +465,22 @@ class SyncProvider extends ChangeNotifier {
 
       logger.i('Fetched ${_availablePlaylists.length} playlists from server');
 
-      // Cache the playlists
-      await _dbRepo!.clearPlaylistCache();
-      for (final playlist in _availablePlaylists) {
-        await _dbRepo!.cachePlaylist(playlist);
+      // Cache the playlists. This is local I/O, not a network contact: a
+      // failure here keeps the state reachable and the list fresh, and the
+      // next fetch retries the write (invariant 40).
+      try {
+        await _dbRepo!.clearPlaylistCache();
+        for (final playlist in _availablePlaylists) {
+          await _dbRepo!.cachePlaylist(playlist);
+        }
+      } catch (e) {
+        logger.e('Failed to cache playlists', error: e);
       }
     } catch (e) {
+      // A URL was saved while this fetch was in flight: the failure is for
+      // the previous address, and the save owns the state (invariant 40).
+      if (generation != _fetchGeneration) return;
+
       _lastError = 'Failed to fetch playlists: $e';
       _connectivity = classifySyncFailure(e);
       // The displayed list is the local cache again: not fresh.
