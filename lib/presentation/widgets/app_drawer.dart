@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../data/models/sync_history.dart';
 import '../providers/sync_provider.dart';
 import '../screens/about_screen.dart';
 import '../screens/history_screen.dart';
@@ -19,10 +20,46 @@ class AppDrawer extends StatelessWidget {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
   }
 
+  /// The header's status line: freshness, not fault. The wording follows
+  /// the history row's status and the time is relative (U1 build item 4).
+  /// The header is deliberately a plain column of status lines so the U4
+  /// settings regroup is additive to it.
+  static String describeLastSync(SyncHistoryRecord record) {
+    final when = relativeTime(
+      DateTime.fromMillisecondsSinceEpoch(record.timestamp),
+    );
+    switch (record.status) {
+      case 'success':
+      case 'partial':
+        return 'Last synced $when';
+      case 'failed':
+        return 'Last sync failed $when';
+      case 'cancelled':
+        return 'Last sync cancelled $when';
+      case 'skipped':
+        return 'Last sync skipped $when';
+      case 'interrupted':
+        return 'Last sync interrupted $when';
+      default:
+        return 'Last sync $when';
+    }
+  }
+
+  /// Compact relative time for the drawer header: "just now", "5m ago",
+  /// "2h ago", "3d ago".
+  static String relativeTime(DateTime time) {
+    final diff = DateTime.now().difference(time);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
+
   @override
   Widget build(BuildContext context) {
     final syncProvider = context.watch<SyncProvider>();
     final serverUrl = syncProvider.serverUrl;
+    final lastSync = syncProvider.lastSync;
 
     return Drawer(
       child: Column(
@@ -44,6 +81,15 @@ class AppDrawer extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+                if (lastSync != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    describeLastSync(lastSync),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
               ],
             ),
           ),
@@ -83,10 +129,17 @@ class AppDrawer extends StatelessWidget {
             leading: const Icon(Icons.cloud_download),
             title: const Text('Sync now'),
             onTap: () {
+              final messenger = ScaffoldMessenger.of(context);
               Navigator.of(context).pop();
               if (syncProvider.isConfigured &&
                   syncProvider.hasStoragePermission) {
-                syncProvider.startSync();
+                // A reason for not starting is surfaced here at the tap
+                // site, never as a global error state (U1 build item 1).
+                syncProvider.startSync().then((reason) {
+                  if (reason != null) {
+                    messenger.showSnackBar(SnackBar(content: Text(reason)));
+                  }
+                });
               } else {
                 Navigator.of(
                   context,
