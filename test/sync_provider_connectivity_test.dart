@@ -19,10 +19,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// hand-rolled substitute.
 ///
 /// Deliberately no platform database: on the host the permission checks
-/// short-circuit, and platform DB calls throw an environmental error that
-/// the code under test swallows after the state is set (the failure
-/// path's cache load; the success path's cache write - which is exactly
-/// what the fetch-success test below asserts on).
+/// short-circuit, and platform DB calls throw an environmental error. On
+/// the success path the code under test swallows it (the cache-write
+/// catch - which is exactly what the fetch-success test below asserts
+/// on); on the failure path it propagates out of fetchPlaylists and is
+/// swallowed by this suite's catch in expectFetchState.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -330,6 +331,54 @@ void main() {
       expect(provider.connectivityState, ConnectivityState.reachable);
       expect(provider.lastFetchSucceeded, isTrue);
       expect(provider.availablePlaylists, hasLength(2));
+    });
+  });
+
+  group('a 200 body that fails to parse is still classified (invariant 40)',
+      () {
+    test('valid JSON with the wrong shape throws from the generated '
+        'fromJson and falls to offline - no response object is available '
+        'to prove reachability', () async {
+      final dio = Dio();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                statusCode: 200,
+                data: 'not a map',
+              ),
+            );
+          },
+        ),
+      );
+      final provider = SyncProvider(
+        apiRepository: (baseUrl) =>
+            OwnToneApiRepository(baseUrl: baseUrl, dio: dio),
+      );
+      addTearDown(provider.dispose);
+      await settle();
+      await provider.setServerUrl('http://192.168.1.13:3689');
+      try {
+        await provider.fetchPlaylists();
+      } catch (_) {
+        // Environmental: the post-classification cache load has no
+        // platform DB in this suite. The state is set before it.
+      }
+      expect(provider.connectivityState, ConnectivityState.offline);
+      expect(provider.lastFetchSucceeded, isFalse);
+    });
+
+    test('invalid JSON - the transformer re-wrap carries no response - '
+        'falls to offline the same way', () async {
+      await expectFetchState(
+        (options) => DioException(
+          requestOptions: options,
+          error: const FormatException('Unexpected character'),
+        ),
+        ConnectivityState.offline,
+      );
     });
   });
 

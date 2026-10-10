@@ -172,16 +172,31 @@ in the state machine, both fixed after this report was written:
   previously untestable fetch-success → `reachable` transition is now
   guarded by a provider test.
 
+A second re-review of that fix (third round) found the invariant bullet
+over-claimed the malformed-200-body half: body parsing (dio's
+transformer, or the generated `fromJson`) runs *inside* the network
+boundary, and dio discards the response object on that path, so a 200
+body that fails to parse still classifies `offline` per invariant 39's
+unknown rule — what cannot be proven is not asserted. Invariant 40 now
+says exactly that, the stale-drop path logs, and two provider tests pin
+the malformed-body behaviour. The re-review also found the
+worker-completion write (`success`/`partial` → `reachable`) is the one
+state write the fence does not cover: a run started against the
+previous server can complete after the save and mark the new host
+`reachable`. Milder (quiet icon only, no banner; the next fetch
+re-probes) and not fenceable without the worker stamping its URL into
+the completion event — tracked in `.agent/blockers.md` for U2.
+
 Note for later readers: the Changes and BUILD sections above describe the
 device-session build. At head, `clearError()` (mentioned under Changes)
 was removed by the first review round's fix, the Sync screen's row styling
 keys on `lastFetchSucceeded` rather than reachability, the classifier
-suite is 20 tests, the provider connectivity suite is 15, and the total
-is 90.
+suite is 20 tests, the provider connectivity suite is 17, and the total
+is 92.
 
-BUILD (re-run at head, after the fix)
+BUILD (re-run at head, after the fixes)
   flutter analyze: No issues found!
-  flutter test: All 90 tests passed
+  flutter test: All 92 tests passed
   flutter build apk --debug: built `app-debug.apk`
   Kotlin: `./gradlew :app:testDebugUnitTest` with JDK 17 (Zulu) —
   BUILD SUCCESSFUL

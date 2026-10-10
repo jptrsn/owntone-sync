@@ -456,7 +456,10 @@ class SyncProvider extends ChangeNotifier {
 
       // A URL was saved while this fetch was in flight: the result is for
       // the previous address, and the save owns the state (invariant 40).
-      if (generation != _fetchGeneration) return;
+      if (generation != _fetchGeneration) {
+        logger.i('Dropping stale fetch result - server URL changed mid-flight');
+        return;
+      }
 
       _availablePlaylists = response.items;
       _connectivity = ConnectivityState.reachable;
@@ -479,7 +482,12 @@ class SyncProvider extends ChangeNotifier {
     } catch (e) {
       // A URL was saved while this fetch was in flight: the failure is for
       // the previous address, and the save owns the state (invariant 40).
-      if (generation != _fetchGeneration) return;
+      if (generation != _fetchGeneration) {
+        logger.i(
+          'Dropping stale fetch failure - server URL changed mid-flight: $e',
+        );
+        return;
+      }
 
       _lastError = 'Failed to fetch playlists: $e';
       _connectivity = classifySyncFailure(e);

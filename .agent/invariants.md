@@ -861,9 +861,15 @@ for logs and future surfaces — no current reader — never to a widget.
   documented retry→save recovery flow (the banner's Retry still timing out
   when the corrected URL is saved) re-arms `unreachable` — or asserts
   `reachable` with the old server's list — for the new host.
-- The classification boundary is the network call: a local failure after
-  the server answered (the cache write, a malformed 200 body) is logged and
-  keeps `reachable` + list freshness; the next fetch retries the write.
+- The classification boundary is the network call: a local cache-write
+  failure after the server answered is logged and keeps `reachable` + list
+  freshness; the next fetch retries the write. Only the in-memory state
+  writes are fenced - the local cache is server-agnostic by design and is
+  rewritten by the next successful fetch. A 200 body that fails to parse is
+  **still classified**: it throws inside `getPlaylists` (dio's transformer
+  or the generated `fromJson`) and dio discards the response object on that
+  path, so the classifier cannot prove the server answered and falls to
+  `offline` per invariant 39's unknown rule.
 
 **WHY:** pre-U1 the whole model was one `String? _lastError` plus one bool,
 and every failure mode rendered as a fault. Unreachable is the *normal* state
@@ -877,8 +883,8 @@ cache as live after an HTTP-error fetch; rendering the raw string anywhere
 re-arms G1; letting a fetch that started against the previous address apply
 its result after a save re-arms a false banner naming the new host (and can
 show the old server's list as live under the new one); classifying a local
-cache-write failure demotes a working connection to `offline` — reachable on
-the near-full partition (invariant 42).
+cache-write failure demotes a working connection to `offline` — a live risk
+on the near-full partition (invariant 42).
 
 ---
 
