@@ -115,12 +115,20 @@ class _SyncScreenState extends State<SyncScreen> {
             return _buildSyncingView(context, provider);
           }
 
-          if (!provider.hasStoragePermission) {
-            return _buildPermissionRequest(context, provider);
-          }
-
+          // The guided first-run order (Phase U3, spec C1 SHOULD): server
+          // -> folder -> playlists -> first sync. The URL step comes
+          // first because it is active only while unconfigured - once a
+          // URL is saved the guided entry never appears again, and a
+          // configured user sees exactly the same sequence as before
+          // (this phase only reorders the not-yet-configured case, which
+          // used to ask for the storage grant before the user had a
+          // server to sync from).
           if (!provider.isConfigured) {
             return _buildNotConfigured(context);
+          }
+
+          if (!provider.hasStoragePermission) {
+            return _buildPermissionRequest(context, provider);
           }
 
           if (provider.availablePlaylists.isEmpty) {

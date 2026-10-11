@@ -156,15 +156,12 @@ class SyncProvider extends ChangeNotifier {
 
     // Check permissions on startup
     _hasStoragePermission = await _permissionsService.hasStoragePermission();
-
-    // Request notification permission for background sync
-    if (!await _permissionsService.hasNotificationPermission()) {
-      try {
-        await _permissionsService.requestNotificationPermission();
-      } catch (e) {
-        // Activity may not be ready yet; will retry later
-      }
-    }
+    // The notification permission is NOT requested here (Phase U3,
+    // ux-refactor §6 P5 change 4): the prompt used to be the app's first
+    // word, before its purpose was visible. It is deferred to the first
+    // *successful* sync (_requestNotificationPermissionIfNeeded), where
+    // "we'll tell you when sync finishes" is a promise that has just been
+    // kept once.
 
     // Load saved playlists
     await _loadSavedPlaylists();
@@ -333,6 +330,23 @@ class SyncProvider extends ChangeNotifier {
     }
   }
 
+  /// Requests the notification permission on the first *successful* sync
+  /// (Phase U3, ux-refactor §6 P5 change 4), not at cold start.
+  ///
+  /// The check-before-request is what makes it "first": once the prompt is
+  /// answered (granted, or permanently denied) the check short-circuits on
+  /// every later successful sync, so the user is never asked twice. A
+  /// plain denial does not short-circuit - the next successful sync may
+  /// ask again, which is the system's own re-prompt behaviour.
+  Future<void> _requestNotificationPermissionIfNeeded() async {
+    if (await _permissionsService.hasNotificationPermission()) return;
+    try {
+      await _permissionsService.requestNotificationPermission();
+    } catch (e) {
+      logger.e('Could not request notification permission', error: e);
+    }
+  }
+
   /// Request storage permission
   Future<bool> requestStoragePermission() async {
     _hasStoragePermission = await _permissionsService
@@ -385,6 +399,11 @@ class SyncProvider extends ChangeNotifier {
             if (status == 'success' || status == 'partial') {
               _lastError = null;
               _connectivity = ConnectivityState.reachable;
+              // The notification prompt arrives here, not at cold start
+              // (Phase U3, ux-refactor §6 P5 change 4): the sync that
+              // just finished is what the notifications are for, so its
+              // purpose is now visible.
+              unawaited(_requestNotificationPermissionIfNeeded());
             } else {
               final message = event['message'];
               _lastError = (message is String && message.isNotEmpty)

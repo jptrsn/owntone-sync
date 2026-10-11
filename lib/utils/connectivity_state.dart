@@ -112,6 +112,26 @@ String describeUnreachable(String serverUrl) {
 /// `SyncProvider.startSync()`.
 const String offlineSyncRefusal = "You're offline - syncs when you're home";
 
+/// The first-run test-connection verdict (Phase U3, ux-refactor.md §6).
+///
+/// The probe (OwnToneApiRepository.probeConnection) is a cheap
+/// `GET /api/now-playing`. Its job is to report right/wrong about the
+/// address *before anything is saved*:
+/// - no error, or an error that [classifySyncFailure] reads as
+///   [ConnectivityState.reachable] (an HTTP status of any kind, including
+///   4xx/5xx - the server is up and answering, and its answer to this
+///   probe endpoint is not what is being tested) → true;
+/// - a connection-level failure (offline or unreachable) → false;
+/// - anything unclassifiable → false: an unprovable case reports "wrong",
+///   never a false "right" (invariant 39's unknown rule).
+///
+/// The probe must never be a full playlist fetch (ux-refactor §4, P5 risk
+/// note): [OwnToneApiRepository.probeConnection] keeps it to one cheap GET.
+bool isProbeSuccess(Object? error) {
+  if (error == null) return true;
+  return classifySyncFailure(error) == ConnectivityState.reachable;
+}
+
 /// Whether a manual sync attempt should be refused right now (Phase U2,
 /// ux-refactor.md §6 build item 2).
 ///
