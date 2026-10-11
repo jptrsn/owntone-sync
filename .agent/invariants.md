@@ -863,13 +863,17 @@ for logs and future surfaces — no current reader — never to a widget.
   `reachable` with the old server's list — for the new host.
 - The classification boundary is the network call: a local cache-write
   failure after the server answered is logged and keeps `reachable` + list
-  freshness; the next fetch retries the write. Only the in-memory state
-  writes are fenced - the local cache is server-agnostic by design and is
-  rewritten by the next successful fetch. A 200 body that fails to parse is
-  **still classified**: it throws inside `getPlaylists` (dio's transformer
-  or the generated `fromJson`) and dio discards the response object on that
-  path, so the classifier cannot prove the server answered and falls to
-  `offline` per invariant 39's unknown rule.
+  freshness; the next fetch retries the write. The generation fence covers
+  everything after the check, including the cache write; the cache
+  additionally carries no server identity - it is server-agnostic by design
+  and is rewritten by the next successful fetch, so no per-server cache
+  fence exists or is needed. A 200 body that fails to parse is **still
+  classified**: it throws inside `getPlaylists` (dio's transformer or the
+  generated `fromJson`) and the response object does not reach the
+  classifier on that path (dio discards it on the transformer failure; the
+  throw discards it on the parse failure), so the classifier cannot prove
+  the server answered and falls to `offline` per invariant 39's unknown
+  rule.
 
 **WHY:** pre-U1 the whole model was one `String? _lastError` plus one bool,
 and every failure mode rendered as a fault. Unreachable is the *normal* state
