@@ -98,7 +98,8 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
   /// reuses the four-state vocabulary (U1): any HTTP answer is a live
   /// server (isProbeSuccess), and a connection-level failure gets the
   /// same human sentence the unreachable state uses. Raw exceptions never
-  /// reach the UI.
+  /// reach the UI. A result that lands after the field text changed is
+  /// discarded: it belongs to the URL it tested.
   Future<void> _runProbe() async {
     final url = _urlController.text.trim();
     if (!(_formKey.currentState?.validate() ?? false)) return;
@@ -110,6 +111,14 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
       error = e;
     }
     if (!mounted) return;
+    // The field may have been edited while the probe was in flight: the
+    // onChanged below already reset the phase to idle, but this result
+    // still belongs to the URL it tested. Re-rendering it against the
+    // current field text would be a claim about an address that was
+    // never probed (invariant 44's invalidation, invariant 41's honesty
+    // rule) - so discard it. The mounted check alone does not cover the
+    // screen still being open with edited text (review round 1, finding 1).
+    if (_urlController.text.trim() != url) return;
     if (isProbeSuccess(error)) {
       setState(() => _probe = _ProbePhase.ok);
     } else {

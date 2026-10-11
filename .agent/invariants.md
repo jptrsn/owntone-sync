@@ -1025,6 +1025,19 @@ of the URL step re-arms the five unconnected screens of State 4; letting
 the guided flow appear after a URL is saved turns setup into a permanent
 gate over the already-configured deep paths.
 
+**RESOLVED CONCERN (review round 1, 2026-10-11):** "does the `onChanged`
+reset alone invalidate a probe result?" — no: a probe still in flight lands
+its result *after* the edit, re-sets the phase over the current field text,
+and renders a verdict (e.g. "Can't reach …") for an address that was never
+probed. `_runProbe` therefore compares `_urlController.text.trim()` against
+the captured `url` after the await and discards a mismatched result; the
+`mounted` check alone does not cover the screen still being open with
+edited text. The comparison is what makes the invalidation above true for
+the in-flight window — removing it re-arms the false verdict. (Review
+finding 1, PR #5; device-verified: edited a blackholed URL to the live one
+mid-probe, the timed-out result was discarded, a fresh probe of the live
+URL still reported "Connected".)
+
 ---
 
 ## Environment
