@@ -1,11 +1,43 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/sync_provider.dart';
 import '../widgets/player_scaffold.dart';
 
-class AboutScreen extends StatelessWidget {
+class AboutScreen extends StatefulWidget {
   const AboutScreen({super.key});
+
+  @override
+  State<AboutScreen> createState() => _AboutScreenState();
+}
+
+class _AboutScreenState extends State<AboutScreen> {
+  String? _version;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  /// The version comes from the package: the pubspec `version` becomes the
+  /// Android versionName via the Flutter Gradle plugin, and the
+  /// `getAppVersion` channel returns it. Never a literal — the hard-coded
+  /// "Version 0.1.8" was still showing while the app was 0.2.0+18
+  /// (ux-refactor §3 G9, U4 build item 3). If the channel fails the line
+  /// simply stays absent: it is a cosmetic surface, not a fault.
+  Future<void> _loadVersion() async {
+    try {
+      const channel = MethodChannel('dev.educoder.owntone_sync/sync');
+      final version = await channel.invokeMethod<String>('getAppVersion');
+      if (mounted && version != null) {
+        setState(() => _version = version);
+      }
+    } catch (e) {
+      debugPrint('[AboutScreen] getAppVersion failed: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -31,11 +63,11 @@ class AboutScreen extends StatelessWidget {
           const SizedBox(height: 16),
           const Center(
             child: Text(
-               'Owntone Player',
+              'Owntone Player',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
           ),
-          const Center(child: Text('Version 0.1.8')),
+          if (_version != null) Center(child: Text('Version $_version')),
           const SizedBox(height: 16),
           const Center(
             child: Text(
