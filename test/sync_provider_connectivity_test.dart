@@ -38,6 +38,11 @@ void main() {
   // long enough to establish the progress subscription.
   bool syncRunning = false;
 
+  // Set when a test's startSync actually reaches the worker channel. A
+  // refused start must leave this false: no enqueue, no worker run, no
+  // sync_history row (U2, build item 2).
+  bool triggerBackgroundSyncInvoked = false;
+
   /// A provider whose getPlaylists rejects every request with
   /// [buildError].
   SyncProvider providerFailing(
@@ -69,6 +74,22 @@ void main() {
       DioException.connectionTimeout(
         requestOptions: options,
         timeout: const Duration(seconds: 10),
+      );
+
+  /// A no-route connection error (errno 101): the shape that classifies
+  /// [ConnectivityState.offline] - the normal away-from-LAN condition the
+  /// U2 guard refuses to sync against.
+  DioException netUnreachable(RequestOptions options) =>
+      DioException.connectionError(
+        requestOptions: options,
+        reason: 'Connection failed',
+        error: SocketException(
+          'Connection failed (OS Error: Network is unreachable, '
+          'errno = 101), address = 192.168.1.13, port = 3689',
+          address: InternetAddress('192.168.1.13'),
+          port: 3689,
+          osError: const OSError('Network is unreachable', 101),
+        ),
       );
 
   /// Two playlists in the server's JSON shape (playlist.g.dart).
@@ -210,12 +231,16 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     progressSink = null;
     syncRunning = false;
+    triggerBackgroundSyncInvoked = false;
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
       const MethodChannel(syncChannel),
       (call) async {
         if (call.method == 'isSyncRunning') return syncRunning;
+        if (call.method == 'triggerBackgroundSync') {
+          triggerBackgroundSyncInvoked = true;
+        }
         return null;
       },
     );
@@ -477,6 +502,141 @@ void main() {
       );
       expect(provider.connectivityState, ConnectivityState.unconfigured);
       expect(provider.isSyncing, isFalse);
+    });
+  });
+
+  group('the manual sync guard (U2, build item 2; invariant 43)', () {
+    test('a probe that classified offline refuses the start before the '
+        'worker is reached', () async {
+      final provider = await expectFetchState(
+        netUnreachable,
+        ConnectivityState.offline,
+      );
+      expect(provider.manualSyncBlocked, isTrue);
+      expect(await provider.startSync(), offlineSyncRefusal);
+      // No enqueue: no worker run, so no sync_history row can be written.
+      expect(triggerBackgroundSyncInvoked, isFalse);
+      expect(provider.isSyncing, isFalse);
+    });
+
+    test('saving a URL (unverified) does not refuse: no probe has '
+        'established absence (invariants 39-40)', () async {
+      final provider = providerFailing(netUnreachable);
+      addTearDown(provider.dispose);
+      await settle();
+      await provider.setServerUrl('http://192.168.1.13:3689');
+      expect(provider.connectivityState, ConnectivityState.offline);
+      expect(provider.manualSyncBlocked, isFalse);
+      await provider.togglePlaylistSelection(1);
+      expect(await provider.startSync(), isNull);
+      expect(triggerBackgroundSyncInvoked, isTrue);
+      expect(provider.isSyncing, isTrue);
+    });
+
+    test('a save after an offline probe returns to unverified: the '
+        'previous address\'s classification does not carry over', () async {
+      final provider = await expectFetchState(
+        netUnreachable,
+        ConnectivityState.offline,
+      );
+      await provider.setServerUrl('http://10.0.0.5:3689');
+      expect(provider.connectivityState, ConnectivityState.offline);
+      expect(provider.manualSyncBlocked, isFalse);
+    });
+
+    test('unreachable keeps the manual attempt (U2, build item 2)',
+        () async {
+      final provider = await expectFetchState(
+        connectionTimeout,
+        ConnectivityState.unreachable,
+      );
+      expect(provider.manualSyncBlocked, isFalse);
+      await provider.togglePlaylistSelection(1);
+      expect(await provider.startSync(), isNull);
+      expect(triggerBackgroundSyncInvoked, isTrue);
+    });
+
+    test('a stale completion establishing reachable does not refuse '
+        '(blockers.md 2026-10-10)', () async {
+      final provider = providerFailing(netUnreachable);
+      addTearDown(provider.dispose);
+      await settle();
+      await provider.setServerUrl('http://192.168.1.13:3689');
+      // A run started against the previous server completes after the
+      // save and sets reachable without probing the new host.
+      await emitCompletion(provider, 'success');
+      expect(provider.connectivityState, ConnectivityState.reachable);
+      expect(provider.manualSyncBlocked, isFalse);
+      await provider.togglePlaylistSelection(1);
+      expect(await provider.startSync(), isNull);
+      expect(triggerBackgroundSyncInvoked, isTrue);
+    });
+
+    test('a stale completion after an offline probe does not re-arm the '
+        'block (blockers.md 2026-10-10)', () async {
+      // The probe classified offline; the stale completion flips the state
+      // to reachable but leaves the probe. The guard reads both: the state
+      // is no longer offline, so the attempt is allowed - at worst it
+      // fails for a real reason, as the unreachable retry does.
+      final provider = await expectFetchState(
+        netUnreachable,
+        ConnectivityState.offline,
+      );
+      await emitCompletion(provider, 'success');
+      expect(provider.connectivityState, ConnectivityState.reachable);
+      expect(provider.manualSyncBlocked, isFalse);
+      await provider.togglePlaylistSelection(1);
+      expect(await provider.startSync(), isNull);
+    });
+
+    test('a successful fetch after an offline probe lifts the block',
+        () async {
+      // The return-home flow: the probe that established offline is
+      // superseded by a fetch that reaches the server.
+      DioException Function(RequestOptions)? nextFetchError;
+      final dio = Dio();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            if (nextFetchError != null) {
+              handler.reject(nextFetchError(options));
+            } else {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: playlistsJson,
+                ),
+              );
+            }
+          },
+        ),
+      );
+      final provider = SyncProvider(
+        apiRepository: (baseUrl) =>
+            OwnToneApiRepository(baseUrl: baseUrl, dio: dio),
+      );
+      addTearDown(provider.dispose);
+      await settle();
+      await provider.setServerUrl('http://192.168.1.13:3689');
+
+      nextFetchError = netUnreachable;
+      try {
+        await provider.fetchPlaylists();
+      } catch (_) {
+        // Environmental: the post-classification cache load has no
+        // platform DB in this suite. The state is set before it.
+      }
+      expect(provider.connectivityState, ConnectivityState.offline);
+      expect(provider.manualSyncBlocked, isTrue);
+
+      nextFetchError = null;
+      await provider.fetchPlaylists();
+      expect(provider.connectivityState, ConnectivityState.reachable);
+      expect(provider.manualSyncBlocked, isFalse);
+      await provider.togglePlaylistSelection(1);
+      expect(await provider.startSync(), isNull);
+      expect(triggerBackgroundSyncInvoked, isTrue);
     });
   });
 }

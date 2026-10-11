@@ -2,13 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/sync_provider.dart';
+import '../widgets/player_scaffold.dart';
 
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // PlayerScaffold: the mini player survives navigating here (Phase U2
+    // build item 1); zero-height at idle.
+    return PlayerScaffold(
       appBar: AppBar(
         title: const Text('About'),
         backgroundColor: Theme.of(context).colorScheme.surface,

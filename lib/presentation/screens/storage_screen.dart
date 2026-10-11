@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/sync_provider.dart';
+import '../widgets/player_scaffold.dart';
 
 /// Storage / music folder status and grant.
 class StorageScreen extends StatelessWidget {
@@ -9,7 +10,9 @@ class StorageScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // PlayerScaffold: the mini player survives navigating here (Phase U2
+    // build item 1); zero-height at idle.
+    return PlayerScaffold(
       appBar: AppBar(
         title: const Text('Storage'),
         backgroundColor: Theme.of(context).colorScheme.surface,

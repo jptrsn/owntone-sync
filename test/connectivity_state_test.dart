@@ -241,4 +241,79 @@ void main() {
       );
     });
   });
+
+  group('the manual sync guard refuses verified-offline only '
+      '(U2, build item 2; invariant 43)', () {
+    test('a completed probe that classified offline blocks the sync', () {
+      // The guard exists to keep a guaranteed-failure run (and its
+      // History row) off the record for the normal away-from-LAN state.
+      expect(
+        shouldBlockManualSync(
+          ConnectivityState.offline,
+          ConnectivityState.offline,
+        ),
+        isTrue,
+      );
+    });
+
+    test('unverified offline does not block: no probe has established '
+        'absence', () {
+      // Right after saving a URL, and during the cold-start fetch window,
+      // the state is offline but nothing has been probed. Blocking here
+      // would assert an unprovable fault (invariant 39's unknown rule) and
+      // refuse the retry→save recovery's next step (invariant 40).
+      expect(
+        shouldBlockManualSync(ConnectivityState.offline, null),
+        isFalse,
+      );
+    });
+
+    test('a stale reachable does not block (blockers.md 2026-10-10)', () {
+      // A worker completion for a run started against the previous server
+      // can set reachable without probing the new host. It can only be
+      // produced by a run that reached a server, so a route existed; at
+      // worst the attempt fails for a real reason, as the sanctioned
+      // unreachable retry does.
+      expect(
+        shouldBlockManualSync(ConnectivityState.reachable, null),
+        isFalse,
+      );
+      // The probe may still hold the previous address's offline
+      // classification: the state must itself be offline for the guard to
+      // fire.
+      expect(
+        shouldBlockManualSync(
+          ConnectivityState.reachable,
+          ConnectivityState.offline,
+        ),
+        isFalse,
+      );
+    });
+
+    test('unreachable keeps the manual attempt (U2, build item 2)', () {
+      // A route exists but the server does not answer: the one genuine
+      // fault worth retrying, so the guard never fires for it.
+      expect(
+        shouldBlockManualSync(
+          ConnectivityState.unreachable,
+          ConnectivityState.unreachable,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldBlockManualSync(ConnectivityState.unreachable, null),
+        isFalse,
+      );
+    });
+
+    test('unconfigured is setup, not a refused sync', () {
+      expect(
+        shouldBlockManualSync(
+          ConnectivityState.unconfigured,
+          ConnectivityState.offline,
+        ),
+        isFalse,
+      );
+    });
+  });
 }

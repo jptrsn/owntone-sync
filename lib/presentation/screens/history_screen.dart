@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../data/repositories/local_database_repository.dart';
 import '../../data/models/sync_history.dart';
+import '../widgets/player_scaffold.dart';
 import 'package:intl/intl.dart';
 
 class HistoryScreen extends StatefulWidget {
@@ -128,7 +129,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // PlayerScaffold: the mini player survives navigating here (Phase U2
+    // build item 1); zero-height at idle.
+    return PlayerScaffold(
       appBar: AppBar(
         title: const Text('Sync History'),
         backgroundColor: Theme.of(context).colorScheme.surface,

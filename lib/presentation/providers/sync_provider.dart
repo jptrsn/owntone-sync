@@ -49,6 +49,12 @@ class SyncProvider extends ChangeNotifier {
   // is what it just sent. A failed fetch - even one the server answered
   // with an HTTP error - drops it back to the local cache (invariant 40).
   bool _lastFetchSucceeded = false;
+  // The classification of the last fetch that completed against the
+  // current address; null while unverified - a save invalidates it
+  // (invariant 40) and the cold-start fetch may not have resolved yet.
+  // The manual sync guard (Phase U2) reads it via [manualSyncBlocked]:
+  // the state alone cannot tell a probed offline from an unverified one.
+  ConnectivityState? _lastProbeResult;
   SyncHistoryRecord? _lastSync;
   bool _isCancelling = false;
   bool _isLoadingPlaylists = false;
@@ -88,6 +94,14 @@ class SyncProvider extends ChangeNotifier {
   /// which looks identical to a genuinely offline session because offline
   /// shows nothing at all.
   ConnectivityState get connectivityState => _connectivity;
+
+  /// The Phase U2 manual-sync guard: true only when a completed fetch
+  /// probe has established [ConnectivityState.offline] for the current
+  /// address. The unverified window and a stale
+  /// [ConnectivityState.reachable] (blockers.md 2026-10-10) do not block
+  /// - see [shouldBlockManualSync].
+  bool get manualSyncBlocked =>
+      shouldBlockManualSync(connectivityState, _lastProbeResult);
 
   /// Whether the currently displayed playlist list came from a fetch that
   /// succeeded (invariant 40). Reachability alone proves the server
@@ -206,6 +220,9 @@ class SyncProvider extends ChangeNotifier {
         ? ConnectivityState.offline
         : ConnectivityState.unconfigured;
     _lastFetchSucceeded = false;
+    // The new address has not been probed: the manual sync guard (Phase
+    // U2) must not read the previous address's classification.
+    _lastProbeResult = null;
 
     notifyListeners();
   }
@@ -465,6 +482,9 @@ class SyncProvider extends ChangeNotifier {
       _connectivity = ConnectivityState.reachable;
       // The displayed list is what the server just sent: fresh.
       _lastFetchSucceeded = true;
+      // A probe just completed against the current address: the manual
+      // sync guard (Phase U2) may now read its classification.
+      _lastProbeResult = ConnectivityState.reachable;
 
       logger.i('Fetched ${_availablePlaylists.length} playlists from server');
 
@@ -490,7 +510,11 @@ class SyncProvider extends ChangeNotifier {
       }
 
       _lastError = 'Failed to fetch playlists: $e';
-      _connectivity = classifySyncFailure(e);
+      final classified = classifySyncFailure(e);
+      _connectivity = classified;
+      // The failed fetch is a completed probe: its classification is what
+      // the manual sync guard (Phase U2) may read.
+      _lastProbeResult = classified;
       // The displayed list is the local cache again: not fresh.
       _lastFetchSucceeded = false;
 
@@ -724,7 +748,17 @@ class SyncProvider extends ChangeNotifier {
   /// when it was not. Callers surface the reason locally (a snackbar at the
   /// tap site); it must never become a global error state - the four
   /// connectivity states are the only error surfaces (U1 build item 1).
+  ///
+  /// A refused offline start never reaches the worker: no WorkManager run
+  /// is enqueued, so no `sync_history` row is written (Phase U2 build item
+  /// 2). [manualSyncBlocked] refuses verified-offline only - the
+  /// unverified window and a stale reachable both let the attempt through.
   Future<String?> startSync() async {
+    if (manualSyncBlocked) {
+      logger.i('Sync not started - offline (last fetch probe found no route)');
+      return offlineSyncRefusal;
+    }
+
     if (!_hasStoragePermission) {
       logger.i('Sync not started - storage permission not granted');
       return 'Storage permission not granted';

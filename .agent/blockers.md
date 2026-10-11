@@ -5,7 +5,8 @@
 > - 2026-10-10 — a sync run started against the previous server can complete
 >   after `setServerUrl` and establish `reachable` for the new, unprobed host
 >   (the fetch path is generation-fenced; the worker-completion write is not).
->   Quiet-icon-only artifact; U2's offline sync guard must account for it.
+>   Quiet-icon-only artifact; U2's offline sync guard treats it as
+>   non-blocking (invariant 43). Fix needs the Kotlin URL-stamp fence.
 > - 2026-10-08 — detail-screen title overlaps the back button when collapsed.
 > - 2026-10-08 — Now Playing sheet leaves ~205 logical px blank at the bottom.
 > - 2026-10-06 — "Playlist 4 of 3" during the artwork pass (cosmetic).
@@ -41,10 +42,18 @@ carries no server URL, so the provider cannot tell which address a run
 belongs to. Fencing it needs the worker to stamp its URL into the
 completion event — a Kotlin change.
 
-**Carried into U2:** the U2 offline sync guard gates on
-`connectivityState`; an unverified host that briefly reads `reachable` is a
-case it must account for, alongside the existing unverified≡`offline`
-collapse (ux-refactor §6 "Carried into U2 from U1").
+**Carried into U2 — accounted for (Phase U2, decision D2):** the U2 offline
+sync guard reads `lastProbeResult`, not the raw state, and treats a stale
+`reachable` as non-blocking: a completion that far is only reachable if the
+run got to a server, so a route existed; at worst the manual attempt fails for
+a real reason and that row is the same class of record the sanctioned
+`unreachable` retry writes (invariant 43). The alternatives — a
+probe-before-sync (adds up to the 10 s connect timeout to every sanctioned
+retry) and a fence (needs the worker to stamp its URL into the completion
+event, a Kotlin change) — were both rejected for a "small, low-risk, ships
+alone" phase. **The defect itself stays open:** the unfenced
+worker-completion write still establishes `reachable` for a new, unprobed
+host; the fix is the Kotlin URL-stamp fence described above.
 
 ---
 

@@ -4,6 +4,7 @@ import '../../data/models/sync_progress.dart';
 import '../../data/repositories/local_database_repository.dart';
 import '../../utils/connectivity_state.dart';
 import '../providers/sync_provider.dart';
+import '../widgets/player_scaffold.dart';
 import 'server_config_screen.dart';
 import 'schedule_config_screen.dart';
 
@@ -99,7 +100,10 @@ class _SyncScreenState extends State<SyncScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // PlayerScaffold so the docked mini player survives navigating here
+    // (Phase U2 build item 1): it is zero-height at idle, so the body uses
+    // the full height when nothing plays.
+    return PlayerScaffold(
       appBar: AppBar(
         title: const Text('Sync'),
         backgroundColor: Theme.of(context).colorScheme.surface,
@@ -264,39 +268,58 @@ class _SyncScreenState extends State<SyncScreen> {
     // that the list shown is current (invariant 40). In every other case
     // the list is the local cache.
     final live = provider.lastFetchSucceeded;
+    // Phase U2 build item 2: a verified-offline probe disables the manual
+    // sync with helper text; the refusal in startSync() is the
+    // belt-and-braces guarantee that no run is enqueued (and so no History
+    // row written) even for a tap that slips past this disabled state.
+    // Unreachable stays enabled - a real fault worth retrying.
+    final offlineBlocked = provider.manualSyncBlocked;
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.all(16.0),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Text(
-                  '${provider.selectedPlaylistIds.length} playlists selected',
-                  style: const TextStyle(fontSize: 16),
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${provider.selectedPlaylistIds.length} playlists selected',
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: provider.isSyncing || offlineBlocked
+                        ? null
+                        : () async {
+                            final messenger = ScaffoldMessenger.of(context);
+                            // A reason for not starting is surfaced here at
+                            // the tap site, never as a global error state.
+                            final reason = await provider.startSync();
+                            if (reason != null && mounted) {
+                              messenger.showSnackBar(
+                                SnackBar(content: Text(reason)),
+                              );
+                            }
+                          },
+                    icon: const Icon(Icons.sync),
+                    label: const Text('Sync'),
+                  ),
+                ],
               ),
-                ElevatedButton.icon(
-                  onPressed: provider.isSyncing
-                      ? null
-                       : () async {
-                          final messenger = ScaffoldMessenger.of(context);
-                          // A reason for not starting is surfaced here at
-                          // the tap site, never as a global error state.
-                          final reason = await provider.startSync();
-                          if (reason != null && mounted) {
-                            messenger.showSnackBar(
-                              SnackBar(content: Text(reason)),
-                            );
-                          }
-                        },
-                  icon: const Icon(Icons.sync),
-                  label: const Text('Sync'),
+              if (offlineBlocked)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    offlineSyncRefusal,
+                    style: const TextStyle(fontSize: 13, color: Colors.grey),
+                  ),
                 ),
-              ],
-            ),
+            ],
           ),
-          if (_pendingEventCount != null)
+        ),
+        if (_pendingEventCount != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
               child: Row(
