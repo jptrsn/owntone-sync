@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# release.sh — Build, tag, and publish OwnTone Sync to GitHub releases.
+# release.sh — Build, tag, and publish Owntone Player to GitHub releases.
 #
 # Prerequisites:
 #   - gh CLI installed and authenticated (gh auth login) with access to
@@ -29,7 +29,7 @@ bold()   { printf '\033[1m%s\033[0m\n' "$*"; }
 die() { red "ERROR: $*" >&2; exit 1; }
 
 # ── Preflight checks ────────────────────────────────────────────────────────
-bold "=== OwnTone Sync Release ==="
+bold "=== Owntone Player Release ==="
 echo
 
 # Check dependencies
@@ -138,7 +138,7 @@ bold "Creating release on GitHub..."
 # temp file is needed.
 gh release create "$TAG" \
     --repo "$GH_REPO" \
-    --title "OwnTone Sync ${TAG}" \
+    --title "Owntone Player ${TAG}" \
     --notes-file - \
     --verify-tag \
     $APK_FILES <<< "$RELEASE_NOTES" \
