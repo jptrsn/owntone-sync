@@ -14,6 +14,18 @@ class OwnToneApiRepository {
     _dio.options.receiveTimeout = const Duration(seconds: 30);
   }
 
+  /// Liveness probe for first-run URL entry (Phase U3, ux-refactor §6 P5).
+  ///
+  /// A deliberately cheap contact — `GET /api/now-playing` — never a
+  /// playlist fetch. The endpoint's own status is not significant: a 4xx or
+  /// 5xx is still an answer, and [isProbeSuccess] (connectivity_state.dart)
+  /// treats any HTTP response as a live server. This throws only when the
+  /// connection itself failed (refused, timeout, no route), which the same
+  /// helper classifies offline/unreachable for the human message.
+  Future<void> probeConnection() async {
+    await _dio.get('/api/now-playing');
+  }
+
   /// Fetch all playlists from the server
   Future<PlaylistsResponse> getPlaylists({int? offset, int? limit}) async {
     final response = await _dio.get(
