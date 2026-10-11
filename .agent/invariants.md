@@ -42,7 +42,9 @@ normalised, host change defaults to keep · 38 **`Expanded` only inside a
 `Flex`** (`AppBar.title` is not one) · 40 **`reachable` is earned**; saving
 drops to unverified · 41 offline renders nothing; unreachable is the only red
 · 44 **first run is guided setup; any HTTP answer is a live probe; the
-notification prompt waits for the first successful sync**
+notification prompt waits for the first successful sync** · 45 **the app is
+"Owntone Player"; the drawer is Sync / History / Settings + status header;
+the version comes from the package**
 
 **Environment and tooling** — 10 server address · 11 `pending_events` is not
 shell-readable · 12 scratch files location · 18 uiautomator quoting ·
@@ -637,6 +639,12 @@ Storage, History, About) are now `PlayerScaffold`s — that wrap is why the
 mini player survives navigating to them; the docking rules above are what
 make the wrap safe (real layout inset while playing, zero height at idle).
 
+**ADDENDUM (Phase U4):** the U4 drawer regroup moved the four configuration
+screens (Server, Storage, Schedule, About) under a single Settings screen
+(`settings_screen.dart`), which is itself a `PlayerScaffold` — the wrap on
+each screen is unchanged, and the mini player was observed docked on
+Settings while a track played (invariant 45).
+
 ### 17. The A9 skipped-track notice: home route when the sheet is closed, in-sheet when it is open
 
 Both `LibraryScreen`'s `State` (home route, mounted for the app's lifetime)
@@ -1037,6 +1045,47 @@ the in-flight window — removing it re-arms the false verdict. (Review
 finding 1, PR #5; device-verified: edited a blackholed URL to the live one
 mid-probe, the timed-out result was discarded, a fresh probe of the live
 URL still reported "Connected".)
+
+---
+
+### 45. The app is "Owntone Player"; the drawer is Sync / History / Settings + status header; the version comes from the package
+
+- The user-facing name is **"Owntone Player"** — launcher label
+  (`AndroidManifest.xml`), `MaterialApp.title`, drawer header, About
+  heading, pubspec description, F-Droid `AutoName` and
+  `metadata/en-US/`, `site/`, README, `release.sh`'s release title, and
+  both feature-graphic SVGs. The **package id** `dev.educoder.owntone_sync`
+  and the **repo name** do not change: a package-id change breaks upgrades
+  for every existing install (settled decision 4, 2026-10-08). In strings,
+  "OwnTone" (capital T) is the *server project's* name, not the app's. The
+  rename guard in `test/static_guards_test.dart` keeps the old name
+  "OwnTone Sync" out of lib/.
+- The drawer is a **status header** (app name; the server address — host,
+  plus the port only when typed — as a tap target that opens the Server
+  screen, or "Not set up yet" when unconfigured; a "Server not responding"
+  line only in `unreachable`; "Last synced …" from the newest
+  `sync_history` row), then **Sync / History / Settings**, a divider, and
+  **Sync now**. Server, Storage, Schedule and About are reached only
+  through the Settings screen (`settings_screen.dart`), which is a
+  navigation hub: each destination keeps its own screen and behaviour.
+- About reads the version **from the package**: the `getAppVersion` method
+  on the existing `dev.educoder.owntone_sync/sync` channel returns the
+  package `versionName`, which the Flutter Gradle plugin sets from the
+  pubspec `version`. No version literal in the UI, and no new dependency
+  (settled decision 1).
+
+**WHY:** settled decisions 2 and 4, and ux-refactor G4/G9. The old name
+framed the app as a sync tool (G4) while sync is a background capability;
+the hard-coded "Version 0.1.8" had no link to the build, so it went stale
+silently while the app was 0.2.0+18 (G9). The name is release-facing: the
+store metadata, the site and the binary ship together, so the code's name
+must agree with them.
+
+**BREAKS IF UNDONE:** reverting the name desyncs the binary from the
+F-Droid page and the site on the next release; restoring the six
+configuration screens to the drawer re-arms the "settings index" framing
+(G4) and orphans the Settings hub; re-hard-coding the version re-arms G9 —
+the next release silently shows the wrong version again.
 
 ---
 
