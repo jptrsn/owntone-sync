@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../data/repositories/owntone_api_repository.dart';
+import '../../utils/connectivity_state.dart';
 import '../../utils/server_url.dart';
 import '../providers/browse_provider.dart';
 import '../providers/sync_provider.dart';
 import '../widgets/player_scaffold.dart';
+
+/// The test-connection step's phase (Phase U3, ux-refactor §6 P5): the
+/// result is shown inline, before anything is saved.
+enum _ProbePhase { idle, testing, ok, failedUnreachable, failedOffline }
 
 /// What saving this URL actually does, decided by comparing the
 /// normalised old and new values (see [parseServerUrlIdentity]).
@@ -39,16 +45,17 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
   late final TextEditingController _urlController;
   late final String _originalServerUrl;
 
+  _ProbePhase _probe = _ProbePhase.idle;
+
   @override
   void initState() {
     super.initState();
     final provider = context.read<SyncProvider>();
     _originalServerUrl = provider.serverUrl;
-    _urlController = TextEditingController(
-      text: provider.serverUrl.isNotEmpty
-          ? provider.serverUrl
-          : 'http://192.168.1.100:3689',
-    );
+    // The example URL is a hint, never pre-filled text (U3, P5 change 3):
+    // a pre-filled example is saveable text, and an unattended Save would
+    // configure a dead server (ux-refactor §3, State 4).
+    _urlController = TextEditingController(text: provider.serverUrl);
   }
 
   @override
@@ -82,6 +89,100 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
       return null;
     } catch (e) {
       return 'Invalid URL format';
+    }
+  }
+
+  /// The test-connection step (Phase U3, ux-refactor §6 P5): probe the
+  /// URL currently in the field — not the saved one — with one cheap GET
+  /// and show the verdict inline before anything is saved. The verdict
+  /// reuses the four-state vocabulary (U1): any HTTP answer is a live
+  /// server (isProbeSuccess), and a connection-level failure gets the
+  /// same human sentence the unreachable state uses. Raw exceptions never
+  /// reach the UI.
+  Future<void> _runProbe() async {
+    final url = _urlController.text.trim();
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    setState(() => _probe = _ProbePhase.testing);
+    Object? error;
+    try {
+      await OwnToneApiRepository(baseUrl: url).probeConnection();
+    } on Object catch (e) {
+      error = e;
+    }
+    if (!mounted) return;
+    if (isProbeSuccess(error)) {
+      setState(() => _probe = _ProbePhase.ok);
+    } else {
+      setState(
+        () => _probe = classifySyncFailure(error!) ==
+                ConnectivityState.unreachable
+            ? _ProbePhase.failedUnreachable
+            : _ProbePhase.failedOffline,
+      );
+    }
+  }
+
+  /// The inline probe result. The failure wording is the one the rest of
+  /// the app uses for the same classification (invariant 41's honesty
+  /// rule): a claim shown to the user must be true.
+  Widget _buildProbeResult(BuildContext context, String url) {
+    switch (_probe) {
+      case _ProbePhase.idle:
+        return const SizedBox.shrink();
+      case _ProbePhase.testing:
+        return Row(
+          children: [
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 8),
+            const Text('Testing connection…'),
+          ],
+        );
+      case _ProbePhase.ok:
+        final host = parseServerUrlIdentity(url)?.host ?? url;
+        return Row(
+          children: [
+            Icon(Icons.check_circle, size: 16, color: Colors.green.shade700),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Connected to $host',
+                style: TextStyle(color: Colors.green.shade700),
+              ),
+            ),
+          ],
+        );
+      case _ProbePhase.failedUnreachable:
+        final color = Theme.of(context).colorScheme.error;
+        return Row(
+          children: [
+            Icon(Icons.error_outline, size: 16, color: color),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                describeUnreachable(url),
+                style: TextStyle(color: color),
+              ),
+            ),
+          ],
+        );
+      case _ProbePhase.failedOffline:
+        final color = Colors.orange.shade800;
+        return Row(
+          children: [
+            Icon(Icons.cloud_off, size: 16, color: color),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'No network route to that address - check your connection.',
+                style: TextStyle(color: color),
+              ),
+            ),
+          ],
+        );
     }
   }
 
@@ -340,6 +441,15 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
                 const SizedBox(height: 32),
                 TextFormField(
                   controller: _urlController,
+                  // A result belongs to the URL it tested: editing the
+                  // field invalidates it, or a stale "Connected" would be
+                  // a claim about an address the user no longer has (the
+                  // same honesty rule as invariant 41's banners).
+                  onChanged: (_) {
+                    if (_probe != _ProbePhase.idle) {
+                      setState(() => _probe = _ProbePhase.idle);
+                    }
+                  },
                   decoration: const InputDecoration(
                     labelText: 'Server URL',
                     hintText: 'http://192.168.1.100:3689',
@@ -349,6 +459,14 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
                   keyboardType: TextInputType.url,
                   validator: _validateServerUrl,
                 ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _probe == _ProbePhase.testing ? null : _runProbe,
+                  icon: const Icon(Icons.wifi_tethering, size: 18),
+                  label: const Text('Test connection'),
+                ),
+                const SizedBox(height: 12),
+                _buildProbeResult(context, _urlController.text.trim()),
                 const SizedBox(height: 24),
                 ElevatedButton(
                   onPressed: () async {
