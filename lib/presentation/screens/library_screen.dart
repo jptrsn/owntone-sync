@@ -5,6 +5,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:provider/provider.dart';
 
 import '../../data/repositories/local_database_repository.dart';
+import '../../utils/connectivity_state.dart';
 import '../controllers/playback_controller.dart';
 import '../providers/browse_provider.dart';
 import '../providers/sync_provider.dart';
@@ -242,20 +243,27 @@ class _LibraryScreenState extends State<LibraryScreen>
       drawer: const AppDrawer(),
       body: Column(
         children: [
-          _buildSyncErrorBanner(),
+          _buildConnectivityBanner(),
           Expanded(child: body),
         ],
       ),
     );
   }
 
-  /// Dismissible banner for the last sync error (the app-bar badge only
-  /// carries a tooltip; this is where the message is readable).
-  Widget _buildSyncErrorBanner() {
+  /// The one persistent home banner: the `unreachable` state only.
+  ///
+  /// It is human-readable, names the host, and offers a working retry -
+  /// never a raw exception (U1 build item 3). The `offline` state renders
+  /// **nothing at all**: being away from the home LAN is the expected,
+  /// normal condition, and settled decision 3 shows no banner, note or
+  /// badge for it.
+  Widget _buildConnectivityBanner() {
     return Consumer<SyncProvider>(
       builder: (context, syncProvider, _) {
-        final error = syncProvider.lastError;
-        if (error == null) return const SizedBox.shrink();
+        if (syncProvider.connectivityState !=
+            ConnectivityState.unreachable) {
+          return const SizedBox.shrink();
+        }
         final scheme = Theme.of(context).colorScheme;
         return Material(
           color: scheme.errorContainer,
@@ -271,20 +279,19 @@ class _LibraryScreenState extends State<LibraryScreen>
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
-                      vertical: 8,
+                      vertical: 4,
                     ),
                     child: Text(
-                      error,
+                      describeUnreachable(syncProvider.serverUrl),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: scheme.onErrorContainer),
                     ),
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  tooltip: 'Dismiss',
-                  onPressed: syncProvider.clearError,
+                TextButton(
+                  onPressed: () => syncProvider.fetchPlaylists(),
+                  child: const Text('Retry'),
                 ),
               ],
             ),
@@ -321,6 +328,10 @@ class _LibraryScreenState extends State<LibraryScreen>
     );
   }
 
+  /// The app-bar sync affordance, driven by the four-state connectivity
+  /// model (U1 build item 3). `unreachable` is the only state that may
+  /// carry the red badge; `offline` and `unconfigured` are neutral;
+  /// `reachable` is the quiet confirmation.
   Widget _buildSyncStatusAction(BuildContext context) {
     return Consumer<SyncProvider>(
       builder: (context, provider, _) {
@@ -341,29 +352,38 @@ class _LibraryScreenState extends State<LibraryScreen>
             height: 20,
             child: CircularProgressIndicator(strokeWidth: 2, value: value),
           );
-        } else if (provider.lastError != null) {
-          tooltip = provider.lastError!;
-          icon = Stack(
-            clipBehavior: Clip.none,
-            children: [
-              const Icon(Icons.cloud_done_outlined),
-              Positioned(
-                right: -2,
-                top: -2,
-                child: Container(
-                  width: 9,
-                  height: 9,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.error,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-            ],
-          );
         } else {
-          tooltip = 'Sync';
-          icon = const Icon(Icons.cloud_done);
+          switch (provider.connectivityState) {
+            case ConnectivityState.unreachable:
+              tooltip = describeUnreachable(provider.serverUrl);
+              icon = Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.cloud_off),
+                  Positioned(
+                    right: -2,
+                    top: -2,
+                    child: Container(
+                      width: 9,
+                      height: 9,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.error,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            case ConnectivityState.reachable:
+              tooltip = 'Sync';
+              icon = const Icon(Icons.cloud_done);
+            case ConnectivityState.offline:
+            case ConnectivityState.unconfigured:
+              // Neutral, no badge. Offline shows nothing at all (settled
+              // decision 3); unconfigured is setup, not a fault.
+              tooltip = provider.isConfigured ? 'Sync' : 'Set up sync';
+              icon = const Icon(Icons.cloud_outlined);
+          }
         }
 
         return IconButton(

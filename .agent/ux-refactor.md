@@ -623,7 +623,7 @@ report in `.agent/reports/` · `invariants.md` updated · **do not commit or pus
 | Phase | State |
 |---|---|
 | **U0** Non-destructive server config | **COMPLETE** 2026-10-08 — `reports/phase-u0-report.md`. Do not redo. |
-| **U1** Four-state connectivity model | **NEXT** |
+| **U1** Four-state connectivity model | **COMPLETE** 2026-10-09 — `reports/phase-u1-report.md`. Do not redo. |
 | **U2** Player everywhere + offline sync guard | pending |
 | **U3** First run as setup | pending |
 | **U4** Reframe (incl. rename) | pending — do on a branch, it has release consequences |
@@ -848,6 +848,18 @@ Small, low-risk, ships alone. Independent of U3.
 With a track playing, open every drawer destination — mini player visible and
 functional on each. Airplane-mode Sync tap does nothing and writes no History
 row. `unreachable` still permits a manual sync.
+
+#### Carried into U2 from U1
+
+- The state U2 gates on exists: `SyncProvider.connectivityState`
+  (invariants 39–41). `startSync()` already returns a `String?` reason for
+  refused starts — the offline guard should disable the control with helper
+  text and write no History row, and let `unreachable` through.
+- The device now holds **Brass only (33 tracks)** — user decision after the
+  6 GB partition ran 92 % full. Do not re-sync Soul unless asked.
+- The emulator's serial is not stable while other sessions run: always
+  `-s <serial>` (invariant 42). A full partition fails installs non-atomically —
+  check `pm path` after any install failure.
 
 ---
 

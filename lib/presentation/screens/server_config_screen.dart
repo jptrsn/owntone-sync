@@ -159,7 +159,8 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
     }
   }
 
-  /// Saves the URL, clears any surfaced error, and closes the screen.
+  /// Saves the URL (which drops any surfaced error state to the unverified
+  /// rendering - invariant 40) and closes the screen.
   /// [confirmation] is a snackbar shown after the pop; null saves silently.
   Future<void> _saveUrl(
     SyncProvider provider,
@@ -170,7 +171,6 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
     final messenger = ScaffoldMessenger.of(context);
 
     await provider.setServerUrl(url);
-    provider.clearError();
 
     if (!mounted) return;
     navigator.pop();
@@ -269,9 +269,8 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
       // Reset app data
       await provider.resetAppData(deleteFiles: result == 'delete_files');
 
-      // Set new server URL
+      // Set new server URL (drops the surfaced error state - invariant 40)
       await provider.setServerUrl(newUrl);
-      provider.clearError();
 
       if (!mounted) return;
 

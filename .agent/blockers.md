@@ -2,6 +2,10 @@
 
 > **Currently open (newest first):**
 >
+> - 2026-10-10 — a sync run started against the previous server can complete
+>   after `setServerUrl` and establish `reachable` for the new, unprobed host
+>   (the fetch path is generation-fenced; the worker-completion write is not).
+>   Quiet-icon-only artifact; U2's offline sync guard must account for it.
 > - 2026-10-08 — detail-screen title overlaps the back button when collapsed.
 > - 2026-10-08 — Now Playing sheet leaves ~205 logical px blank at the bottom.
 > - 2026-10-06 — "Playlist 4 of 3" during the artwork pass (cosmetic).
@@ -14,6 +18,35 @@
 > present in released `main`) was fixed and device-verified on 2026-10-03.
 > Everything dated 2026-09 is resolved; the 2026-10-02 star-rendering entry is a
 > struck misobservation, not a defect.
+
+## 2026-10-10 — OPEN: a sync completion started against the previous server can establish `reachable` for the new host
+
+Found in the agentic re-review of PR #3 (`ux-u1`). The fetch path's state
+writes are fenced by the `_fetchGeneration` token (invariant 40), but the
+worker-completion write — `sync_provider.dart:370`,
+`_connectivity = ConnectivityState.reachable` on a `success`/`partial`
+completion — is the one remaining unfenced state write: a run started
+against the previous server (manual `startSync` or scheduled) that
+completes after `setServerUrl` establishes `reachable` for the new,
+unprobed host.
+
+**Why it is milder than the fetch race the fence closes:** the path only
+ever sets `reachable` (quiet icon, no banner, no red), and the next fetch
+re-probes and corrects the state. The visible artifact is the app-bar icon
+flipping from neutral to "Sync" until then.
+
+**Why it is not fenced with the same token:** the worker runs in the
+background (possibly from a previous app session) and the completion event
+carries no server URL, so the provider cannot tell which address a run
+belongs to. Fencing it needs the worker to stamp its URL into the
+completion event — a Kotlin change.
+
+**Carried into U2:** the U2 offline sync guard gates on
+`connectivityState`; an unverified host that briefly reads `reachable` is a
+case it must account for, alongside the existing unverified≡`offline`
+collapse (ux-refactor §6 "Carried into U2 from U1").
+
+---
 
 ## 2026-09-28 — RESOLVED: the two 2026-09 entries were fixed and device-verified in Phase 7
 
