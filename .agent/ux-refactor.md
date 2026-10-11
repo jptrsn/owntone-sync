@@ -624,9 +624,9 @@ report in `.agent/reports/` · `invariants.md` updated · **do not commit or pus
 |---|---|
 | **U0** Non-destructive server config | **COMPLETE** 2026-10-08 — `reports/phase-u0-report.md`. Do not redo. |
 | **U1** Four-state connectivity model | **COMPLETE** 2026-10-09 — `reports/phase-u1-report.md`. Do not redo. |
-| **U2** Player everywhere + offline sync guard | pending |
-| **U3** First run as setup | pending |
-| **U4** Reframe (incl. rename) | pending — do on a branch, it has release consequences |
+| **U2** Player everywhere + offline sync guard | **COMPLETE** 2026-10-11 — `reports/phase-u2-report.md`. Do not redo. |
+| **U3** First run as setup | **COMPLETE** 2026-10-11 — `reports/phase-u3-report.md`. Do not redo. |
+| **U4** Reframe (incl. rename) | **COMPLETE** 2026-10-11 — `reports/phase-u4-report.md`. The rename has release consequences (store metadata, changelog, release notes). Do not redo. |
 
 ### How to run a phase
 

@@ -1,4 +1,4 @@
-# OwnTone Sync
+# Owntone Player
 
 Sync music from your [OwnTone](https://owntone.github.io/owntone-server/) server
 to your Android device and play it offline — with your play counts, skip counts
@@ -28,10 +28,11 @@ Most modern phones need `arm64-v8a`.
 
 ### First run
 
-1. **Grant storage access.** Open the drawer → **Storage**, and pick the folder
-   where music should be saved. Android's folder picker grants the app access to
-   that folder only.
-2. **Point it at your server.** Drawer → **Server**, and enter your OwnTone URL,
+1. **Grant storage access.** Open the drawer → **Settings → Storage**, and pick
+   the folder where music should be saved. Android's folder picker grants the
+   app access to that folder only.
+2. **Point it at your server.** Drawer → **Settings → Server**, and enter your
+   OwnTone URL,
    for example `http://192.168.1.100:3689`. The device must be on the same
    network as the server to sync.
 3. **Choose playlists.** Drawer → **Sync**, load the playlists from your server
@@ -96,7 +97,7 @@ displays offline. Tracks with no artwork in either place show a placeholder.
 
 ### Scheduled sync
 
-Drawer → **Schedule** to sync automatically:
+Drawer → **Settings → Schedule** to sync automatically:
 
 1. Enable automatic sync and pick the days and time.
 2. Optionally require **charging** or **WiFi only**.
@@ -156,7 +157,8 @@ Check the server URL, confirm the server is running (`systemctl status owntone`)
 and make sure the device is on the same network.
 
 **Sync fails immediately**
-Check that folder access was granted (drawer → Storage), that there is free
+Check that folder access was granted (drawer → Settings → Storage), that there
+is free
 space, and that the server URL is right.
 
 **Scheduled syncs don't run**

@@ -109,6 +109,20 @@ void main() {
     expect(violations, isEmpty,
         reason:
             'a `--` comment inside a CREATE TABLE string would show up as a '
-            'schema diff against the migration path:\n${violations.join('\n')}');
+            'schema diff against the migration path:\n'
+            '${violations.join('\n')}');
+  });
+
+  test('the old app name "OwnTone Sync" is gone from lib/ (U4 settled '
+      'decision 4: the app is "Owntone Player"). The name is release-facing '
+      '— the launcher label, store metadata and site already carry the new '
+      'name, so a revert in code would desync them. "OwnTone" alone is the '
+      'server project\'s name and stays.', () {
+    expect(
+      findToken(dartFilesInLib, 'OwnTone Sync'),
+      isEmpty,
+      reason:
+          'U4 rename reverted — "OwnTone Sync" reappeared in lib/',
+    );
   });
 }

@@ -219,6 +219,18 @@ class MainActivity: AudioServiceActivity() {
                         result.success(false)
                     }
                 }
+                "getAppVersion" -> {
+                    // The version About shows is the package's versionName
+                    // (the pubspec `version`, via the Flutter Gradle
+                    // plugin), so it cannot drift from the build the way a
+                    // hard-coded Dart string can (U4 build item 3).
+                    result.success(
+                        applicationContext
+                            .packageManager
+                            .getPackageInfo(packageName, 0)
+                            .versionName
+                    )
+                }
                 else -> {
                     result.notImplemented()
                 }

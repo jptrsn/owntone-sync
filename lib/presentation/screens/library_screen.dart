@@ -405,12 +405,12 @@ class _LibraryScreenState extends State<LibraryScreen>
             const Icon(Icons.music_note, size: 64, color: Colors.grey),
             const SizedBox(height: 24),
             const Text(
-              'No Music Synced',
+              'No music yet',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
             const Text(
-              'Sync some playlists to start browsing your music.',
+              'Connect your server and sync a playlist to start listening.',
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
