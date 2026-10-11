@@ -41,6 +41,8 @@ notice is hosted · 20 `ScaffoldMessenger` is a hub · 21 album identity ·
 normalised, host change defaults to keep · 38 **`Expanded` only inside a
 `Flex`** (`AppBar.title` is not one) · 40 **`reachable` is earned**; saving
 drops to unverified · 41 offline renders nothing; unreachable is the only red
+· 44 **first run is guided setup; any HTTP answer is a live probe; the
+notification prompt waits for the first successful sync**
 
 **Environment and tooling** — 10 server address · 11 `pending_events` is not
 shell-readable · 12 scratch files location · 18 uiautomator quoting ·
@@ -971,6 +973,57 @@ a lesser alarm.
 offline state re-arms the user's actual complaint; dropping the non-empty
 condition re-arms the first-run false claim; making the unreachable banner
 dismissible re-arms G2.
+
+---
+
+### 44. First run is guided setup: URL (probe) → folder → playlists, and the notification prompt waits for the first successful sync
+
+`SyncScreen.build` is the guided-flow container, active only while
+`unconfigured`: the not-configured (URL) step renders **before** the
+storage-permission step. Once a URL is saved the guided entry never appears
+again, and configured users see exactly the pre-U3 sequence — the reorder
+only changes the not-yet-configured case, which used to ask for the folder
+grant before the user had a server to sync from (spec C1 SHOULD, ux-refactor
+P5: server → folder → playlists → first sync).
+
+- The Server screen's example URL is a **hint** (`hintText`), never
+  pre-filled text: pre-filled text is saveable, and an unattended Save would
+  configure a dead server (ux-refactor §3, State 4).
+- Test-connection is one `GET /api/now-playing`
+  (`OwnToneApiRepository.probeConnection`) — **not** a playlist fetch. The
+  verdict (`isProbeSuccess` in `connectivity_state.dart`) counts **any**
+  HTTP answer — including 4xx/5xx — as "connected": what is being tested is
+  that a server is listening at the address, not what the endpoint answers.
+  Only a connection-level failure (classified by `classifySyncFailure`,
+  invariant 39) reports "wrong", and an unclassifiable failure reports
+  "wrong", never a false "right". The user's OwnTone version answers the
+  probe endpoint with a **400** (it is not in the current JSON API docs —
+  the equivalent is `/api/queue?id=now_playing`); a probe that required a
+  2xx would mark every real server wrong. The result is invalidated when
+  the URL text changes — a stale "Connected" would be a claim about an
+  address the user no longer has (invariant 41's honesty rule).
+- The notification permission is **not** requested at cold start. It is
+  requested when the first *successful* sync completes
+  (`SyncProvider._requestNotificationPermissionIfNeeded`, on
+  `success`/`partial`) — the moment "we'll tell you when sync finishes"
+  has been demonstrated once. The check-before-request makes it once: a
+  granted or permanently-denied permission short-circuits every later
+  successful sync.
+
+**WHY:** the first-run acceptance test: no red anywhere in the first screen
+→ one continuous flow to a populated library; the test reports right/wrong
+before save; the prompt at first successful sync, not at launch. Pre-U3 the
+system notification prompt was the app's first word (G8), the example URL
+was saveable text, and the flow asked for the storage grant before the user
+had a server to sync from.
+
+**BREAKS IF UNDONE:** requiring a 2xx from the probe marks every real
+OwnTone server (400) as wrong; moving the prompt back to cold start re-arms
+G8 (the prompt precedes the explanation of what the app is); pre-filling
+the example re-arms the dead-server save; reordering the folder step ahead
+of the URL step re-arms the five unconnected screens of State 4; letting
+the guided flow appear after a URL is saved turns setup into a permanent
+gate over the already-configured deep paths.
 
 ---
 
