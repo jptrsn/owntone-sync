@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/sync_provider.dart';
+import '../widgets/player_scaffold.dart';
 import '../../data/models/sync_schedule.dart';
 
 class ScheduleConfigScreen extends StatefulWidget {
@@ -91,7 +92,9 @@ class _ScheduleConfigScreenState extends State<ScheduleConfigScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // PlayerScaffold: the mini player survives navigating here (Phase U2
+    // build item 1); zero-height at idle.
+    return PlayerScaffold(
       appBar: AppBar(
         title: const Text('Sync Schedule'),
         backgroundColor: Theme.of(context).colorScheme.surface,

@@ -32,7 +32,7 @@ shuffle order · 24 A9 has two outcomes · 25 `playback_state` persistence
 never a skip · 13 the user-intent signal · 14 the position stream is the clock ·
 15 play/skip thresholds · 26 UPDATE-first upsert · 27 server library is in flux ·
 30 rating reconciliation scope · 39 **classify by type + errno only, never
-message text**
+message text** · 43 **the manual-sync guard blocks only a probed `offline`**
 
 **UI** — 16 `PlayerScaffold` docks by layout, never overlay · 17 where the A9
 notice is hosted · 20 `ScaffoldMessenger` is a hub · 21 album identity ·
@@ -565,6 +565,52 @@ proxy) into a red badge — exactly the state the user complained about.
 is the designated single swap point if errno proves unreliable; adding a
 dependency was excluded from U1 by user decision.
 
+### 43. The manual-sync guard blocks only a probed `offline`: the unverified window and a stale `reachable` both let the attempt through
+
+The Phase U2 offline guard is a pure function,
+`shouldBlockManualSync(state, lastProbeResult)` in
+`lib/utils/connectivity_state.dart` — `true` only when `state` is `offline`
+**and** `lastProbeResult` is `offline`. `SyncProvider._lastProbeResult` is
+written only by a `fetchPlaylists` that **completed** (success → `reachable`;
+classified failure → the classification) and is nulled by `setServerUrl` —
+the save drops the probe result exactly as it drops the state (invariant 40).
+
+- `startSync()` checks `manualSyncBlocked` first and returns
+  `offlineSyncRefusal` before any channel call: no WorkManager run is
+  enqueued, so **no `sync_history` row is written**. The disabled control
+  (Sync button + drawer "Sync now", each carrying the helper sentence) is the
+  primary surface; the `startSync` refusal is the belt-and-braces guarantee
+  for a tap that slips past the disabled state.
+- The guard does **not** block two situations, and this entry encodes why:
+  - **unverified `offline`** (`lastProbeResult == null`) — right after a save
+    and before the cold-start fetch resolves. No probe has established
+    absence, so blocking would assert a fault that cannot be proven
+    (invariant 39's unknown rule) and would disable the one control the
+    retry→save recovery flow (invariant 40) needs to work: save the
+    corrected URL, then tap Sync.
+  - **a stale `reachable`** — a worker completion for a run started against
+    the previous server (blockers.md 2026-10-10). It can only be produced by
+    a run that reached a server, so a route existed; at worst the attempt
+    fails for a real reason, and that row is the same class of record the
+    sanctioned `unreachable` retry writes.
+- The guard covers the **manual** start only. Scheduled (WorkManager) runs do
+  not pass through `startSync()` and still write a failed row while offline
+  (phase-u2 report; a candidate for a later phase, deliberately not widened
+  here).
+
+**WHY:** the user's complaint behind the phase: a manual sync away from the
+LAN was logged as a fault. The normal away condition must not write a History
+row, while a real fault (dead server, wrong address) must keep its working
+retry and its record.
+
+**BREAKS IF UNDONE:** keying the guard on `state == offline` alone (the
+literal spec wording) blocks the retry→save recovery flow and flash-disables
+the control on every online cold start; dropping the `setServerUrl`
+invalidation lets a save inherit the previous address's classification — a
+stale `offline` would disable Sync against a new, never-probed host; letting
+`startSync` enqueue past the refusal re-arms the failed-row logging this
+phase exists to stop.
+
 ---
 
 ## UI
@@ -583,6 +629,11 @@ reserves real layout space. `MiniPlayer` returns zero height when no
 **BREAKS IF UNDONE:** bottom list rows hidden behind / under the player
 strip; "last row of every list fully tappable" fails. Verified on device in
 Phase 4 (Brass detail + 233-row Tracks tab).
+
+**ADDENDUM (Phase U2):** all six drawer destinations (Sync, Schedule, Server,
+Storage, History, About) are now `PlayerScaffold`s — that wrap is why the
+mini player survives navigating to them; the docking rules above are what
+make the wrap safe (real layout inset while playing, zero height at idle).
 
 ### 17. The A9 skipped-track notice: home route when the sheet is closed, in-sheet when it is open
 

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../utils/server_url.dart';
 import '../providers/browse_provider.dart';
 import '../providers/sync_provider.dart';
+import '../widgets/player_scaffold.dart';
 
 /// What saving this URL actually does, decided by comparing the
 /// normalised old and new values (see [parseServerUrlIdentity]).
@@ -308,7 +309,9 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // PlayerScaffold: the mini player survives navigating here (Phase U2
+    // build item 1); zero-height at idle.
+    return PlayerScaffold(
       appBar: AppBar(
         title: const Text('Server Configuration'),
         backgroundColor: Theme.of(context).colorScheme.surface,

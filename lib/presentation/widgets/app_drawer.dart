@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../data/models/sync_history.dart';
+import '../../utils/connectivity_state.dart';
 import '../providers/sync_provider.dart';
 import '../screens/about_screen.dart';
 import '../screens/history_screen.dart';
@@ -125,9 +126,16 @@ class AppDrawer extends StatelessWidget {
             onTap: () => _openRoute(context, const AboutScreen()),
           ),
           const Divider(),
+          // Phase U2 build item 2: a verified-offline probe disables the
+          // quick sync with helper text (and startSync() refuses it as the
+          // belt-and-braces guarantee). Unreachable stays enabled.
           ListTile(
             leading: const Icon(Icons.cloud_download),
             title: const Text('Sync now'),
+            subtitle: syncProvider.manualSyncBlocked
+                ? const Text(offlineSyncRefusal)
+                : null,
+            enabled: !syncProvider.manualSyncBlocked,
             onTap: () {
               final messenger = ScaffoldMessenger.of(context);
               Navigator.of(context).pop();

@@ -105,3 +105,37 @@ String describeUnreachable(String serverUrl) {
   final host = (identity?.host ?? serverUrl).trim();
   return "Can't reach $host - is your server running?";
 }
+
+/// The one user-facing sentence for a refused offline manual sync
+/// (Phase U2, ux-refactor.md §6): the helper text on the disabled Sync
+/// control and the refusal reason returned by
+/// `SyncProvider.startSync()`.
+const String offlineSyncRefusal = "You're offline - syncs when you're home";
+
+/// Whether a manual sync attempt should be refused right now (Phase U2,
+/// ux-refactor.md §6 build item 2).
+///
+/// Refuses only when a completed fetch probe has established
+/// [ConnectivityState.offline] for the current address: the app then has
+/// direct evidence of no route, and a sync is known to be unable to
+/// connect - refusing keeps the failed run (and its History row) off the
+/// record for the normal away-from-LAN condition.
+///
+/// Two situations must NOT refuse, and this function encodes why:
+/// - **unverified offline** - [lastProbeResult] is null (a URL was just
+///   saved, or the cold-start fetch has not resolved). No probe has
+///   established absence, and refusing would assert a fault that cannot
+///   be proven (invariant 39's unknown rule) and would block the
+///   retry→save recovery flow's natural next step (invariant 40).
+/// - **a stale [ConnectivityState.reachable]** - a worker completion for a
+///   run started against the previous server (blockers.md 2026-10-10). It
+///   can only be produced by a run that reached a server, so a route
+///   existed; at worst the attempt fails for a real reason, the same class
+///   of record the sanctioned [ConnectivityState.unreachable] retry writes.
+bool shouldBlockManualSync(
+  ConnectivityState state,
+  ConnectivityState? lastProbeResult,
+) {
+  return state == ConnectivityState.offline &&
+      lastProbeResult == ConnectivityState.offline;
+}
