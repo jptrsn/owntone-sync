@@ -71,9 +71,8 @@ class _AboutScreenState extends State<AboutScreen> {
           const SizedBox(height: 16),
           const Center(
             child: Text(
-              'A music player for your OwnTone server. '
-              'Syncs playlists to the device, plays them offline, '
-              'and sends play and skip counts back to the server.',
+              'Your OwnTone library on your phone - '
+              'synced home, played anywhere.',
               textAlign: TextAlign.center,
             ),
           ),
