@@ -1,6 +1,6 @@
 Play the music on your OwnTone (formerly forked-daapd) server on your phone.
 
-OwnTone Sync downloads the playlists you choose and plays them in a built-in player: background playback, lock screen and Bluetooth controls, a queue with shuffle and repeat, and album artwork that works offline.
+Owntone Player downloads the playlists you choose and plays them in a built-in player: background playback, lock screen and Bluetooth controls, a queue with shuffle and repeat, and album artwork that works offline.
 
 Features:
 - Play any track in context, with a reorderable queue, shuffle and repeat

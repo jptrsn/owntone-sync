@@ -1,5 +1,5 @@
 name: owntone_sync
-description: "Sync playlists from OwnTone server to Android device"
+description: "Your OwnTone library on your phone - synced home, played anywhere"
 publish_to: 'none'
 
 version: 0.2.0+18

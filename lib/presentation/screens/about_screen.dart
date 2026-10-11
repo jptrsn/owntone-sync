@@ -31,7 +31,7 @@ class AboutScreen extends StatelessWidget {
           const SizedBox(height: 16),
           const Center(
             child: Text(
-              'OwnTone Sync',
+               'Owntone Player',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
           ),

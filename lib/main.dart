@@ -70,7 +70,7 @@ class MyApp extends StatelessWidget {
         Provider<PlaybackController>.value(value: playbackController),
       ],
       child: MaterialApp(
-        title: 'OwnTone Sync',
+        title: 'Owntone Player',
         theme: ThemeData(
           useMaterial3: true,
           colorScheme: ColorScheme.fromSeed(
