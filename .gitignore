@@ -48,3 +48,9 @@ app.*.map.json
 *.apk
 .aider*
 logs/*
+
+# opencode per-project config (local machine settings)
+opencode.json
+
+# Overnight pipeline per-run ledger — run scratch, not a deliverable
+.agent/reports/overnight-ledger.md
