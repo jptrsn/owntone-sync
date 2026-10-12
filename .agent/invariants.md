@@ -746,6 +746,18 @@ the only identity source available there). `getAllArtists` counts with the same
 like "Too Many Zooz feat. Joshua Gawel" have `album_artist = "Too Many Zooz"`),
 so a row's "N tracks" matches its detail screen.
 
+**ADDENDUM (2026-10-12, QA-2):** the **search screen's artist rows** use the
+same rule too (`searchLibrary`'s artist query counts each matched artist
+string with the `getAllArtists` correlated subqueries, not a plain
+`GROUP BY artist` count). A plain group-by count undercounts an artist with
+feature credits — observed on the user's Pixel 6: search "Thundersmack"
+showed 4 tracks while the browse Artists tab and the artist detail showed 5
+(the row opens `ArtistDetailScreen` and its menu Play/Shuffle/queue all use
+`getTracksByArtist`, so an undercounting row advertises fewer tracks than it
+queues — the exact defect this entry's original rewrite fixed for browse).
+Guarded by `test/database/database_migration_test.dart`
+(`searchArtistCountLifecycle`).
+
 **WHY:** name-only matching is a pre-existing defect Phase 6's surfaces made
 visible (a row advertising "1 track" queued 13 tracks). The artist row count
 originally used plain `GROUP BY artist` and disagreed with the detail screen

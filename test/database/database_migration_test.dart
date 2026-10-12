@@ -213,4 +213,81 @@ void main() {
       expect(schemaDiffs(a, b), isNotEmpty);
     });
   });
+
+  // This group lives in this file (not its own file) because it uses the
+  // same single DB file as the migration lifecycles; flutter test runs
+  // files in parallel, so a second file on the same path would race.
+
+  group('searchLibrary artist rows use the invariant-21 membership rule '
+      '(artist = X OR album_artist = X) — the row must agree with the '
+      'browse Artists tab and the artist detail screen it opens', () {
+    late Map<String, Object?> result;
+
+    setUpAll(() async {
+      result =
+          await Isolate.run(() => runLifecycle(searchArtistCountLifecycle));
+    });
+
+    Map<String, Object?> rowWhere(List rows, String artist) =>
+        (rows.firstWhere((r) => (r as Map)['artist'] == artist) as Map)
+            .cast<String, Object?>();
+
+    test('the feature-credited track is counted on the search artist row '
+        '(QA-2 finding: exact-artist GROUP BY counted 4, the rule counts 5)',
+        () {
+      final rows = result['search_artists']! as List;
+      final thunder = rowWhere(rows, 'Thunder');
+      // Exact-`artist` count is 3 (ids 1, 2, 4); the invariant-21 count is
+      // 4 (adds id 3, the "Thunder feat. Spark" feature credit).
+      expect(thunder['track_count'], 4);
+      expect(thunder['album_count'], 3);
+      // The feature credit is its own row, counted by the same rule.
+      final feat = rowWhere(rows, 'Thunder feat. Spark');
+      expect(feat['track_count'], 1);
+      expect(feat['album_count'], 1);
+      // The search row universe is still LIKE-matched artist strings.
+      expect(
+        rows.map((r) => (r as Map)['artist']),
+        ['Thunder', 'Thunder feat. Spark'],
+      );
+    });
+
+    test('search row count == browse Artists row count == artist detail '
+        'track count, for both artists (invariant 21: row matches detail)',
+        () {
+      final searchRows = result['search_artists']! as List;
+      final browseRows = result['browse_artists']! as List;
+      for (final artist in ['Thunder', 'Thunder feat. Spark']) {
+        final search = rowWhere(searchRows, artist);
+        final browse = rowWhere(browseRows, artist);
+        expect(
+          search['track_count'],
+          browse['track_count'],
+          reason: '$artist: search vs browse Artists tab disagree',
+        );
+        expect(
+          search['album_count'],
+          browse['album_count'],
+          reason: '$artist: search vs browse Artists tab album count',
+        );
+        final detail = artist == 'Thunder'
+            ? result['detail_thunder']
+            : result['detail_feat'];
+        expect(
+          search['track_count'],
+          detail,
+          reason: '$artist: search row vs artist detail screen disagree',
+        );
+      }
+    });
+
+    test('the track results are unchanged: the fix touches artist row '
+        'counts only', () {
+      // Tracks 1-4 match 'thunder' (title/artist/album); track 5 (Bolt) does
+      // not. The pre-fix query returned the same five-row-minus-one set.
+      expect(result['search_track_rows'], 4);
+      expect(result['detail_thunder'], 4);
+      expect(result['detail_feat'], 1);
+    });
+  });
 }

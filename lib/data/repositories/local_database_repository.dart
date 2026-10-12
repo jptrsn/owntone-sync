@@ -855,6 +855,13 @@ class LocalDatabaseRepository {
   /// name. Matching is case-insensitive: the column side is folded with
   /// SQLite's `LOWER` (ASCII) and the query side with Dart's Unicode-aware
   /// `toLowerCase()`, which stock SQLite's `LIKE`/`NOCASE` cannot do alone.
+  ///
+  /// Artist rows count with the invariant-21 membership rule
+  /// (`artist = X OR album_artist = X`) — the same rule as [getAllArtists]
+  /// and [getTracksByArtist] — so a row's "N tracks" matches the browse
+  /// Artists tab and the artist detail screen the row opens (a feature
+  /// credit like "X feat. Y" carries `album_artist = "X"`). A plain
+  /// `GROUP BY artist` count would understate it.
   Future<LibrarySearchResult> searchLibrary(String query) async {
     if (query.trim().isEmpty) {
       return const LibrarySearchResult(
@@ -889,15 +896,22 @@ class LocalDatabaseRepository {
       LIMIT 20
     ''', [q]);
 
+    // Invariant-21 rule: count each matched artist string X as
+    // `artist = X OR album_artist = X`, the same membership rule
+    // getAllArtists and getTracksByArtist use, so the row's count matches
+    // the browse Artists tab and the artist detail screen it opens. The
+    // subqueries qualify `a.artist` because an unqualified `artist` inside
+    // the subquery would resolve to the inner table's own column.
     final artists = await db.rawQuery('''
       SELECT
-        artist AS artist,
-        COUNT(*) AS track_count,
-        COUNT(DISTINCT album) AS album_count
-      FROM synced_tracks
-      WHERE artist != '' AND LOWER(artist) LIKE ? ESCAPE '\\'
-      GROUP BY artist
-      ORDER BY artist ASC
+        a.artist AS artist,
+        (SELECT COUNT(*) FROM synced_tracks t
+          WHERE t.artist = a.artist OR t.album_artist = a.artist) AS track_count,
+        (SELECT COUNT(DISTINCT t.album) FROM synced_tracks t
+          WHERE t.artist = a.artist OR t.album_artist = a.artist) AS album_count
+      FROM (SELECT DISTINCT artist FROM synced_tracks
+            WHERE artist != '' AND LOWER(artist) LIKE ? ESCAPE '\\') a
+      ORDER BY a.artist ASC
       LIMIT 20
     ''', [q]);
 

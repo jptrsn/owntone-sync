@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:owntone_sync/data/database/database_helper.dart';
+import 'package:owntone_sync/data/repositories/local_database_repository.dart';
 
 /// The file `DatabaseHelper` opens (`_initDB` hard-codes the name;
 /// sqflite_common_ffi resolves relative paths against
@@ -856,5 +857,66 @@ Future<Map<String, Object?>> v8IdempotentLifecycle() async {
     };
   } finally {
     await migrated.close();
+  }
+}
+
+/// Fresh v8 -> seed a feature-credit artist -> `searchLibrary('thunder')`.
+///
+/// Guards invariant 21 on the search surface: a search artist row must count
+/// `artist = X OR album_artist = X` (the rule getAllArtists and
+/// getTracksByArtist both use), not the exact `artist` string. The seed
+/// mirrors the 2026-10-12 QA-2 device finding: an artist whose feature
+/// credit carries a different `artist` string ("Thunder feat. Spark") with
+/// `album_artist = "Thunder"` — the row that opened the artist detail and
+/// queued the tracks had to advertise the rule-based count.
+Future<Map<String, Object?>> searchArtistCountLifecycle() async {
+  await prepareFreshIsolate();
+  final db = await DatabaseHelper.instance.database;
+  try {
+    // Exact-`artist` count for 'Thunder' is 3 (ids 1, 2, 4); the invariant-21
+    // count is 4 (adds id 3, the feature credit). 'Bolt' is a control that
+    // must never appear for the 'thunder' query.
+    final tracks = [
+      {'id': 1, 'artist': 'Thunder', 'album_artist': 'Thunder', 'album': 'Album A'},
+      {'id': 2, 'artist': 'Thunder', 'album_artist': 'Thunder', 'album': 'Album A'},
+      {'id': 3, 'artist': 'Thunder feat. Spark', 'album_artist': 'Thunder', 'album': 'Album B'},
+      {'id': 4, 'artist': 'Thunder', 'album_artist': 'Storm', 'album': 'Album C'},
+      {'id': 5, 'artist': 'Bolt', 'album_artist': 'Bolt', 'album': 'Album D'},
+    ];
+    for (final t in tracks) {
+      await db.insert('synced_tracks', {
+        'id': t['id'],
+        'title': 'T${t['id']}',
+        'artist': t['artist'],
+        'album': t['album'],
+        'album_artist': t['album_artist'],
+        'local_path': '/music/t${t['id']}.mp3',
+        'server_path': '/media/t${t['id']}.mp3',
+        'download_timestamp': 1,
+        'file_size': 1,
+      });
+    }
+
+    final repo = LocalDatabaseRepository();
+    final search = await repo.searchLibrary('thunder');
+    final browse = await repo.getAllArtists();
+    final detailThunder = await repo.getTracksByArtist('Thunder');
+    final detailFeat = await repo.getTracksByArtist('Thunder feat. Spark');
+
+    Map<String, Object?> row(Map<String, dynamic> r) => {
+          'artist': r['artist'],
+          'track_count': r['track_count'],
+          'album_count': r['album_count'],
+        };
+
+    return {
+      'search_artists': [for (final r in search.artists) row(r)],
+      'search_track_rows': search.tracks.length,
+      'browse_artists': [for (final r in browse) row(r)],
+      'detail_thunder': detailThunder.length,
+      'detail_feat': detailFeat.length,
+    };
+  } finally {
+    await db.close();
   }
 }
