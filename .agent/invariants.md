@@ -1052,9 +1052,12 @@ URL still reported "Connected".)
 
 - The user-facing name is **"Owntone Player"** — launcher label
   (`AndroidManifest.xml`), `MaterialApp.title`, drawer header, About
-  heading, pubspec description, F-Droid `AutoName` and
-  `metadata/en-US/`, `site/`, README, `release.sh`'s release title, and
-  both feature-graphic SVGs. The **package id** `dev.educoder.owntone_sync`
+  heading, pubspec description, `metadata/en-US/`, `site/`, README,
+  `release.sh`'s release title, and both feature-graphic SVGs. The project
+  publishes **GitHub releases only** (`release.sh`); it does not publish on
+  F-Droid — the former `metadata/dev.educoder.owntone_sync.yml` was removed
+  2026-10-11 and must not be re-added. The **package id**
+  `dev.educoder.owntone_sync`
   and the **repo name** do not change: a package-id change breaks upgrades
   for every existing install (settled decision 4, 2026-10-08). In strings,
   "OwnTone" (capital T) is the *server project's* name, not the app's. The
@@ -1078,11 +1081,11 @@ URL still reported "Connected".)
 framed the app as a sync tool (G4) while sync is a background capability;
 the hard-coded "Version 0.1.8" had no link to the build, so it went stale
 silently while the app was 0.2.0+18 (G9). The name is release-facing: the
-store metadata, the site and the binary ship together, so the code's name
-must agree with them.
+GitHub release (title/banners from `release.sh`), the site and the binary
+ship together, so the code's name must agree with them.
 
 **BREAKS IF UNDONE:** reverting the name desyncs the binary from the
-F-Droid page and the site on the next release; restoring the six
+GitHub release and the site on the next release; restoring the six
 configuration screens to the drawer re-arms the "settings index" framing
 (G4) and orphans the Settings hub; re-hard-coding the version re-arms G9 —
 the next release silently shows the wrong version again.
