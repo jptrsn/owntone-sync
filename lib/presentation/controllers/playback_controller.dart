@@ -7,6 +7,7 @@ import 'package:rxdart/rxdart.dart';
 
 import '../../data/repositories/local_database_repository.dart';
 import '../services/audio_handler.dart';
+import '../services/playback_position_tracker.dart';
 import '../services/track_uri_resolver.dart';
 
 /// Where the current queue came from ("Playing from ...").
@@ -92,9 +93,7 @@ class PlaybackController with WidgetsBindingObserver {
   bool _hasQueue = false;
   SequenceSnapshot _latestSnapshot =
       const SequenceSnapshot(baseIds: [], shuffleIndices: []);
-  int? _persistedCurrentId;
-  Duration _latestPosition = Duration.zero;
-  int _lastPersistedPositionMs = -1;
+  final PlaybackPositionTracker _positionTracker = PlaybackPositionTracker();
   AudioServiceShuffleMode _lastShuffleMode = AudioServiceShuffleMode.none;
   AudioServiceRepeatMode _lastRepeatMode = AudioServiceRepeatMode.none;
   bool _modesSeen = false;
@@ -332,7 +331,7 @@ class PlaybackController with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // The process may die in paused/hidden; flush the current state first.
     if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
-      unawaited(_persist());
+      unawaited(_persist(_positionTracker.position.inMilliseconds));
     }
   }
 
@@ -345,20 +344,18 @@ class PlaybackController with WidgetsBindingObserver {
       // reconciled away) clears the persisted state. An empty snapshot with
       // no prior queue is the cold-start seed and must not wipe a row that
       // [restorePlaybackState] has not read yet.
-      _persistedCurrentId = null;
+      _positionTracker.currentTrackId = null;
       if (wasNonEmpty) unawaited(_dbRepo.clearPlaybackState());
       return;
     }
-    final i = snap.currentIndex;
-    _persistedCurrentId =
-        (i != null && i >= 0 && i < snap.baseIds.length)
-            ? snap.baseIds[i]
-            : null;
-    // A track change resets the live position; do not persist the previous
-    // track's position under the new one.
-    _latestPosition = Duration.zero;
-    _lastPersistedPositionMs = -1;
-    unawaited(_persist());
+    // just_audio re-broadcasts the sequence state on every playback event
+    // (just_audio 0.10.6 `_currentIndexSubscription`) and in the
+    // load/seek/setLoopMode burst of a restore — most of those emissions
+    // carry an unchanged current track. Only a real current-track change
+    // may reset the tracked position; a reset on a re-emission persisted 0
+    // over the position a restore had just read (QA-11).
+    _positionTracker.onSnapshot(snap);
+    unawaited(_persist(_positionTracker.position.inMilliseconds));
   }
 
   void _onPlaybackStateChanged(PlaybackState state) {
@@ -374,18 +371,16 @@ class PlaybackController with WidgetsBindingObserver {
     }
     _lastShuffleMode = state.shuffleMode;
     _lastRepeatMode = state.repeatMode;
-    unawaited(_persist());
+    unawaited(_persist(_positionTracker.position.inMilliseconds));
   }
 
   void _onPositionTick(PositionData data) {
-    _latestPosition = data.position;
-    if (!_hasQueue || _lastPersistedPositionMs < 0) return;
-    final delta = (data.position.inMilliseconds - _lastPersistedPositionMs).abs();
-    if (delta < 5000) return;
-    unawaited(_persist());
+    if (_positionTracker.onTick(data.position)) {
+      unawaited(_persist(data.position.inMilliseconds));
+    }
   }
 
-  Future<void> _persist() async {
+  Future<void> _persist(int positionMs) async {
     if (!_hasQueue) return;
     final snap = _latestSnapshot;
     final state = _handler.playbackState.value;
@@ -394,8 +389,8 @@ class PlaybackController with WidgetsBindingObserver {
       await _dbRepo.savePlaybackState(
         PlaybackStateRecord(
           queueIds: List<int>.unmodifiable(snap.baseIds),
-          currentTrackId: _persistedCurrentId,
-          positionMs: _latestPosition.inMilliseconds,
+          currentTrackId: _positionTracker.currentTrackId,
+          positionMs: positionMs,
           shuffleEnabled: state.shuffleMode == AudioServiceShuffleMode.all,
           shuffleIndices: List<int>.unmodifiable(snap.shuffleIndices),
           repeatMode: state.repeatMode.name,
@@ -404,7 +399,7 @@ class PlaybackController with WidgetsBindingObserver {
           originName: origin?.displayName,
         ),
       );
-      _lastPersistedPositionMs = _latestPosition.inMilliseconds;
+      _positionTracker.markPersisted(positionMs);
     } catch (e) {
       if (kDebugMode) {
         debugPrint('[PlaybackController] persist failed: $e');
@@ -478,6 +473,15 @@ class PlaybackController with WidgetsBindingObserver {
             perm.length == playable.length,
         shuffleIndices: perm,
       );
+      // The load above re-broadcast the sequence state several times (the
+      // platform settles the current index after the seek, and an event can
+      // still arrive after restoreCollection has returned), and those
+      // snapshot persists wrote the load-time 0. Anchor the position to the
+      // restored value and persist it: later re-emissions keep the current
+      // track unchanged, so they re-persist this anchored value rather than
+      // reset it (invariant 46) — the row ends at the restored position.
+      _positionTracker.anchor(record.positionMs);
+      unawaited(_persist(record.positionMs));
     } catch (e) {
       if (kDebugMode) {
         debugPrint('[PlaybackController] restore failed: $e');

@@ -26,7 +26,8 @@ not renumber**.
 3 the player owns the queue · 4 `setAudioSources` not `ConcatenatingAudioSource` ·
 5 `playMediaItem` is a no-op · 6 tree-scoped content URIs · 7 `positionData` is
 broadcast · 19 **one index space** (`sequence` is base order) · 23 restoring a
-shuffle order · 24 A9 has two outcomes · 25 `playback_state` persistence
+shuffle order · 24 A9 has two outcomes · 25 `playback_state` persistence ·
+46 **the position never resets on a sequence re-emission; a restore anchors it**
 
 **Sync and statistics** — 8 event upload is not gated · 9 completion is a play,
 never a skip · 13 the user-intent signal · 14 the position stream is the clock ·
@@ -57,7 +58,9 @@ shell-readable · 12 scratch files location · 18 uiautomator quoting ·
 If you are touching playback order or the queue, read **19** twice: a session
 once had that model exactly inverted and it cost a day. If you are debugging
 anything visual, read **29** first. If you are touching connectivity or any
-error surface, read **39–41** in order.
+error surface, read **39–41** in order. If you are touching the
+`playback_state` writes or the cold-start restore, read **25 and 46**
+together: they were broken independently and the fix only holds as a pair.
 
 ---
 
@@ -356,6 +359,38 @@ invariant 14).
 **BREAKS IF UNDONE:** restart loses the queue (pre-Phase 7), or the
 cold-start seed wipes the saved state on every launch, or restore throws on
 a partially-synced library and kills startup.
+
+### 46. The persisted position never comes from a sequence re-emission: `PlaybackPositionTracker` resets only on a real current-track change, and a restore anchors it
+
+`PlaybackController` tracks the live position in a `PlaybackPositionTracker`,
+not a bare field: `onSnapshot` updates `currentTrackId` and resets the
+position **only when the current track id actually changes** (the
+controller's empty-snapshot branch sets it to `null` first, so replaying the
+same track after a clear counts as a change); `onTick` applies the
+invariant-25(c) rule against the last *persisted* value and stays suppressed
+until the first persist has landed; `_persist(positionMs)` writes the value
+it is given and only then calls `markPersisted(positionMs)`.
+`restorePlaybackState` calls `anchor(record.positionMs)` and persists it
+**after** `restoreCollection` returns.
+
+**WHY:** just_audio 0.10.6 re-broadcasts the sequence state on every
+playback event (`_currentIndexSubscription`, just_audio.dart:325) — the
+sparse platform events (every ~26–44 s, invariant 1) *and* the whole
+load/seek/setLoopMode burst of a restore, because the platform settles the
+current index after the seek and events can still arrive after
+`restoreCollection` has returned. The pre-fix code reset the tracked
+position to zero on *every* emission and persisted that, so a restore's own
+writes ended at 0, and a 30-s platform event zeroed the row under a playing
+track — while paused no ticks flow to heal it (QA-11: row 0 after 61 s of
+playback+pause and after both relaunches, while the live session held
+10298 ms; the instrumented run showed ~10 zero-writes in the restore burst,
+the last 1.2 s after `restoreCollection` returned). A re-emission with an
+unchanged current track is not a track change, so it may not zero the
+position.
+
+**BREAKS IF UNDONE:** killing and relaunching the app loses the saved
+position (QA-11), or a sparse platform event zeroes the row mid-playback and
+the user loses their spot for the whole paused interval.
 
 ---
 
