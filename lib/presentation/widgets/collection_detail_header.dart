@@ -127,8 +127,9 @@ class _HeaderRowFade extends StatelessWidget {
     final double gap0 = 16.0 + delta - 1.5 * h - rowHeight; // gap at t = 0
     final double slope = 0.75 * delta - 0.5 * h; // how fast the gap closes
     if (slope <= 0 || gap0 <= 8.0) {
-      // Degenerate (the row already reaches the title when expanded): fade
-      // the row across the whole collapse rather than overlap it.
+      // Degenerate: slope <= 0 — the gap never closes (no collision risk);
+      // gap0 <= 8 — the row already reaches the title when expanded, so no
+      // fade window exists. Either way: fade across the whole collapse.
       return 1.0 - t;
     }
     final double tGone = ((gap0 - 8.0) / slope).clamp(0.05, 0.95);

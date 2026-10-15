@@ -120,7 +120,7 @@ void main() {
       (tester) async {
         await pumpScreen(
           tester,
-          const PlaylistDetailScreen(playlistId: 1, playlistName: 'Brass'),
+          const PlaylistDetailScreen(playlistId: 101, playlistName: 'Brass'),
           ready: find.descendant(
             of: find.byType(FlexibleSpaceBar),
             matching: _metaText,

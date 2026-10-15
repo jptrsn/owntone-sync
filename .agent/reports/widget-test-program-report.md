@@ -150,6 +150,34 @@ orchestrator after each unit.
 flutter build apk --debug: not run (see NOT VERIFIED).
 flutter test (full suite, final): `00:09 +143: All tests passed!`
 
+## Review pass (2026-10-15, agentic review of PR #7)
+
+An independent reviewer (agentic-code-review skill: grounded in the pinned
+3.41.7 SDK source + docs-mcp, gates re-run by the reviewer: analyze ✓,
+143/143 ✓, CI ✓) returned **approve-with-nits** with five findings. All five
+were applied before merge:
+
+1. `blockers.md` 2026-10-13 entry pointed at the deleted probe file and
+   told the reader to run it — now points at the promoted guard.
+2. `blockers.md` F1 entry misquoted the framework error ("…is not
+   allowed" / provider check) — actual 3.41.7 message is "…is unsafe."
+   (`widgets/framework.dart:5050`), check at `framework.dart:5046`.
+3. Seeded playlist ids 1/2 collided with the v3 migration fixture's
+   `Brass`/`Soul` in the shared file: a false-quiescence window under CI
+   load could have doubled the counts the smoke tests read. Playlists now
+   seed at ids 101/102 (guard updated to `playlistId: 101`), and the two
+   exact-count smoke assertions are shared-state-tolerant
+   (`findsWidgets` / `textContaining`).
+4. The F1 `FlutterError.onError` tolerance now matches the framework's
+   exact error summary, not a message prefix.
+5. The degenerate-branch comment in `collection_detail_header.dart`
+   describes both guarded conditions.
+
+The reviewer's clean findings (all SDK claims verified against source,
+fade math re-derived and sound, guards provably fail on the recorded
+pre-fix rects, harness race/FakeAsync discipline intact, invariants 47–49
+consistent with the code) are recorded in its report.
+
 ## UNKNOWN — behaviour you could not explain
 
 - None new. Unit B's one UNKNOWN (why a `Row` containing an `Expanded`

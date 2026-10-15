@@ -238,14 +238,18 @@ Future<void> _waitForSharedDbQuiescence() async {
 
 List<_SeedSpec> _seedSpecs(int now) {
   return [
+    // `path` is UNIQUE on synced_playlists (and on the v3 fixture's rows,
+    // which own '/playlists/brass' and '/playlists/soul'), so the fixture
+    // paths are distinct too — a path collision would fail the insert
+    // outright, not just double a count.
     _SeedSpec(
       'synced_playlists',
       'id = ?',
-      [1],
+      [101],
       {
-        'id': 1,
+        'id': 101,
         'name': 'Brass',
-        'path': '/playlists/brass',
+        'path': '/playlists/brass-fixture',
         'type': 'static',
         'last_synced': now,
       },
@@ -253,17 +257,21 @@ List<_SeedSpec> _seedSpecs(int now) {
     _SeedSpec(
       'synced_playlists',
       'id = ?',
-      [2],
+      [102],
       {
-        'id': 2,
+        'id': 102,
         'name': 'Soul',
-        'path': '/playlists/soul',
+        'path': '/playlists/soul-fixture',
         'type': 'static',
         'last_synced': now,
       },
     ),
-    // Track ids 101+ deliberately avoid the 1-3 range the v3 migration
-    // fixture (this same shared file, during a full-suite run) uses.
+    // Track ids 101+ and playlist ids 101/102 deliberately avoid the 1-3
+    // range the v3 migration fixture (this same shared file, during a
+    // full-suite run) uses — that fixture seeds playlists id 1 'Brass' /
+    // id 2 'Soul', tracks 1-3, and one unsynced pending event, so a
+    // collision there would survive the check-and-insert and double the
+    // counts the smoke tests read (PR #7 review finding).
     // Fixture names must not collide with each other: no track is titled
     // 'Brass', 'Soul', 'Album X' or 'Solo Artist'.
     _SeedSpec(
@@ -375,25 +383,25 @@ List<_SeedSpec> _seedSpecs(int now) {
         'track_number': 1,
       },
     ),
-    // Playlist 1 'Brass' holds two tracks; playlist 2 'Soul' holds one.
+    // Playlist 101 'Brass' holds two tracks; playlist 102 'Soul' holds one.
     // (playlist_tracks has a composite primary key and no id column.)
     const _SeedSpec(
       'playlist_tracks',
       'playlist_id = ? AND track_id = ?',
-      [1, 101],
-      {'playlist_id': 1, 'track_id': 101},
+      [101, 101],
+      {'playlist_id': 101, 'track_id': 101},
     ),
     const _SeedSpec(
       'playlist_tracks',
       'playlist_id = ? AND track_id = ?',
-      [1, 102],
-      {'playlist_id': 1, 'track_id': 102},
+      [101, 102],
+      {'playlist_id': 101, 'track_id': 102},
     ),
     const _SeedSpec(
       'playlist_tracks',
       'playlist_id = ? AND track_id = ?',
-      [2, 103],
-      {'playlist_id': 2, 'track_id': 103},
+      [102, 103],
+      {'playlist_id': 102, 'track_id': 103},
     ),
     // Two sync runs: one success, one partial (the partial run's playlist
     // child carries the error_message). Timestamps are recent so
@@ -441,7 +449,7 @@ List<_SeedSpec> _seedSpecs(int now) {
       {
         'id': 501,
         'sync_id': 501,
-        'playlist_id': 1,
+        'playlist_id': 101,
         'playlist_name': 'Brass',
         'tracks_in_playlist': 2,
         'error_message': null,
@@ -454,7 +462,7 @@ List<_SeedSpec> _seedSpecs(int now) {
       {
         'id': 502,
         'sync_id': 502,
-        'playlist_id': 2,
+        'playlist_id': 102,
         'playlist_name': 'Soul',
         'tracks_in_playlist': 1,
         'error_message': 'Simulated download failure',

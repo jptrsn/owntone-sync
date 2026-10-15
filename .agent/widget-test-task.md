@@ -92,7 +92,10 @@ Create `test/widget_test_helpers.dart`:
 - `initWidgetTestDb()`: sets `databaseFactory = databaseFactoryFfiNoIsolate`
   (pattern: `test/database/db_lifecycle_helpers.dart:596`). Idempotent.
 - `seedDetailScreens()`: plain-async seeder, check-and-insert (constraint
-  2): playlist id 1 "Brass" (2 tracks), playlist id 2 "Soul" (1 track),
+  2): playlist id 101 "Brass" (2 tracks), playlist id 102 "Soul" (1 track)
+  (PR #7 review fix 2026-10-15: ids 1/2 collided with the v3 migration
+  fixture in the same shared file, so they moved out of the 1-3 range, as
+  the track ids already were),
   album "Album X" by "Artist A" (2 tracks, one with year 1970), artist
   "Solo Artist" (1 track, album "Other Album"), 2 `sync_history` rows + 2
   `sync_history_playlists` children (one success, one partial with a

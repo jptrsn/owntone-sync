@@ -38,7 +38,7 @@ Found by the widget-test program's Unit C smoke tests
 tree surfaces
 
 ```
-FlutterError: Looking up a deactivated widget's ancestor is not allowed
+FlutterError: Looking up a deactivated widget's ancestor is unsafe.
 ```
 
 reported (not rethrown) from `BuildOwner.finalizeTree`, interrupting the
@@ -50,8 +50,9 @@ tree is disposing anyway — no functional impact observed in the test).
 `dispose()` calls `context.read<SyncProvider>().removeListener(
 _loadPendingEventCount)`. `context.read` is an
 `InheritedWidget` ancestor lookup; inside `dispose` the element is already
-deactivating, which `provider`'s debug check
-(`_debugCheckStateIsActiveForAncestorLookup`) asserts on. The framework's
+deactivating, which the framework's own debug check
+(`_debugCheckStateIsActiveForAncestorLookup`, `widgets/framework.dart:5046`,
+Flutter 3.41.7) asserts on. The framework's
 own error hint: capture the dependency in `didChangeDependencies` via
 `dependOnInheritedWidgetOfExactType` and call `removeListener` on the saved
 reference (or drop the read if the listener is only informational).
@@ -76,11 +77,12 @@ green with the tolerance removed; full suite green.
 ## 2026-10-13 — RESOLVED (widget-test-verified 2026-10-15; device pass deferred to the user): collection detail headers — the title overlaps the icon and track count (expanded)
 
 Reported from device use (playlist screen). **Confirmed by widget-test
-geometry measurement on all three collection detail screens**; the probe
-that produced the numbers below is `test/scratch_playlist_header_probe.dart`
-(deliberately not a `*_test.dart` — see the race note under Verification —
-it currently passes: it measures, it does not yet assert no-overlap).
-Run it with `flutter test test/scratch_playlist_header_probe.dart`.
+geometry measurement on all three collection detail screens**. The
+measurement probe was `test/scratch_playlist_header_probe.dart`
+(deliberately not a `*_test.dart` — see the race note under Verification).
+It was promoted to the permanent guard `test/detail_header_geometry_test.dart`
+by the 2026-10-15 widget-test program and deleted; the guard's pre-fix red
+rects matched the numbers below. Run the guard, not the probe.
 
 ### Resolution (2026-10-15, widget-test program)
 
