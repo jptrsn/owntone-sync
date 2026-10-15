@@ -124,7 +124,12 @@ class _HeaderRowFade extends StatelessWidget {
     final double delta = settings.maxExtent - settings.minExtent;
     final TextStyle titleStyle = Theme.of(context).textTheme.titleLarge!;
     final double h = (titleStyle.fontSize ?? 22.0) * (titleStyle.height ?? 1.0);
-    final double gap0 = 16.0 + delta - 1.5 * h - rowHeight; // gap at t = 0
+    // Gap at t = 0. The leading 16 folds in the default kToolbarHeight (56)
+    // collapsed bar; generally this is minExtent + delta - 40 - 1.5*h -
+    // rowHeight (bar height minus the title's 16 px bottom padding and the
+    // row's 24 top + 16 bottom padding). All current call sites use the 56
+    // px default; with a custom minExtent recompute before reusing.
+    final double gap0 = 16.0 + delta - 1.5 * h - rowHeight;
     final double slope = 0.75 * delta - 0.5 * h; // how fast the gap closes
     if (slope <= 0 || gap0 <= 8.0) {
       // Degenerate: slope <= 0 — the gap never closes (no collision risk);

@@ -178,6 +178,13 @@ fade math re-derived and sound, guards provably fail on the recorded
 pre-fix rects, harness race/FakeAsync discipline intact, invariants 47–49
 consistent with the code) are recorded in its report.
 
+A re-review pass (fresh reviewer, updated diff) confirmed all five
+resolved with no regressions and returned two further notes, both applied:
+the pending-event smoke assertion now requires a *positive* count
+(`[1-9]\d* playback event`) so the zero-count rendering cannot pass it,
+and the `gap0` comment states the folded-in 56 px collapsed-bar assumption
+(generally `minExtent + delta - 40 - 1.5*h - rowHeight`).
+
 ## UNKNOWN — behaviour you could not explain
 
 - None new. Unit B's one UNKNOWN (why a `Row` containing an `Expanded`

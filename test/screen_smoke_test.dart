@@ -311,11 +311,16 @@ void main() {
 
         // Spec D3: a pending-events count is visible on the Sync screen so
         // the user can tell events are queued rather than lost — the helper
-        // seeded exactly one unsynced playback event. Matched by substring:
-        // if the parallel migration suite's v3 fixture (its own unsynced
-        // event) is live in the shared DB file, the count renders as 2 and
-        // the plural form differs (PR #7 review finding).
-        expect(find.textContaining('playback event'), findsOneWidget);
+        // seeded exactly one unsynced playback event. The pattern requires a
+        // positive count: it tolerates the plural form when the parallel
+        // migration suite's v3 fixture (its own unsynced event) is live in
+        // the shared DB file, but not the zero-count rendering ('No playback
+        // events waiting to sync') — a regression to 0 must still fail
+        // (PR #7 review + re-review findings).
+        expect(
+          find.textContaining(RegExp(r'[1-9]\d* playback event')),
+          findsOneWidget,
+        );
 
         // Settle the push transition, then pop the screen inside this
         // test so finding F1's fallout is contained here (header note).
