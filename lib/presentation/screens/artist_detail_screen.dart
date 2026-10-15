@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../data/repositories/local_database_repository.dart';
 import '../controllers/playback_controller.dart';
 import '../services/collection_playback.dart';
+import '../widgets/collection_detail_header.dart';
 import '../widgets/player_scaffold.dart';
 import '../widgets/library_rows.dart';
 import 'album_detail_screen.dart';
@@ -81,32 +82,27 @@ class _ArtistDetailScreenState extends State<ArtistDetailScreen> {
             pinned: true,
             backgroundColor: colorScheme.surface,
             foregroundColor: colorScheme.onSurface,
-            flexibleSpace: FlexibleSpaceBar(
-              title: Text(widget.artistName),
-              background: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-                child: Align(
-                  alignment: Alignment.bottomLeft,
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 36,
-                        child: Text(
-                          artistInitials(widget.artistName),
-                          style: const TextStyle(fontSize: 24),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      if (!_isLoading && _tracks.isNotEmpty)
-                        Text(
-                          '${groups.length} ${groups.length == 1 ? 'album' : 'albums'} \u2022 ${_tracks.length} ${_tracks.length == 1 ? 'track' : 'tracks'}',
-                          style: Theme.of(context).textTheme.titleMedium,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                    ],
+            flexibleSpace: CollectionDetailHeader(
+              name: widget.artistName,
+              rowHeight: 72,
+              row: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 36,
+                    child: Text(
+                      artistInitials(widget.artistName),
+                      style: const TextStyle(fontSize: 24),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 16),
+                  if (!_isLoading && _tracks.isNotEmpty)
+                    Text(
+                      '${groups.length} ${groups.length == 1 ? 'album' : 'albums'} \u2022 ${_tracks.length} ${_tracks.length == 1 ? 'track' : 'tracks'}',
+                      style: Theme.of(context).textTheme.titleMedium,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                ],
               ),
             ),
           ),

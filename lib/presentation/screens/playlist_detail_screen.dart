@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../data/repositories/local_database_repository.dart';
 import '../controllers/playback_controller.dart';
 import '../services/collection_playback.dart';
+import '../widgets/collection_detail_header.dart';
 import '../widgets/player_scaffold.dart';
 import '../widgets/library_rows.dart';
 
@@ -76,28 +77,23 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             pinned: true,
             backgroundColor: colorScheme.surface,
             foregroundColor: colorScheme.onSurface,
-            flexibleSpace: FlexibleSpaceBar(
-              title: Text(widget.playlistName),
-              background: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-                child: Align(
-                  alignment: Alignment.bottomLeft,
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.queue_music,
-                        size: 64,
-                        color: colorScheme.surfaceContainerHighest,
-                      ),
-                      const SizedBox(width: 16),
-                      if (!_isLoading && _tracks.isNotEmpty)
-                        Text(
-                          '${_tracks.length} ${_tracks.length == 1 ? 'track' : 'tracks'}',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                    ],
+            flexibleSpace: CollectionDetailHeader(
+              name: widget.playlistName,
+              rowHeight: 64,
+              row: Row(
+                children: [
+                  Icon(
+                    Icons.queue_music,
+                    size: 64,
+                    color: colorScheme.surfaceContainerHighest,
                   ),
-                ),
+                  const SizedBox(width: 16),
+                  if (!_isLoading && _tracks.isNotEmpty)
+                    Text(
+                      '${_tracks.length} ${_tracks.length == 1 ? 'track' : 'tracks'}',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                ],
               ),
             ),
           ),
