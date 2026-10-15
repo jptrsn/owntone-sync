@@ -45,7 +45,8 @@ drops to unverified · 41 offline renders nothing; unreachable is the only red
 · 44 **first run is guided setup; any HTTP answer is a live probe; the
 notification prompt waits for the first successful sync** · 45 **the app is
 "Owntone Player"; the drawer is Sync / History / Settings + status header;
-the version comes from the package**
+the version comes from the package** · 47 **detail headers: one layout owner
+per visible scroll state** (`FlexibleSpaceBar` layers are independent)
 
 **Environment and tooling** — 10 server address · 11 `pending_events` is not
 shell-readable · 12 scratch files location · 18 uiautomator quoting ·
@@ -53,7 +54,9 @@ shell-readable · 12 scratch files location · 18 uiautomator quoting ·
 33 triggering a sync · 34 cancelling a sync · 35 artwork cache and the 204 ·
 42 the shared emulator: identity, disk, screencap lies
 
-**Tests** — 36 the suite and its CI gate
+**Tests** — 36 the suite and its CI gate · 48 the widget-test environment:
+FakeAsync I/O and the shared FFI DB file · 49 the geometry guards are a
+contract, not a snapshot
 
 If you are touching playback order or the queue, read **19** twice: a session
 once had that model exactly inverted and it cost a day. If you are debugging
@@ -1139,6 +1142,42 @@ the next release silently shows the wrong version again.
 
 ---
 
+### 47. Detail headers: `FlexibleSpaceBar` `title` and `background` are independent layers; each visible scroll state has exactly one layout owner
+
+`collection_detail_header.dart` (the three collection detail screens'
+shared header). `FlexibleSpaceBar` lays out `title` and `background` as
+independent layers of one Stack that reserve no space against each other.
+With `pinned: true` the bar's `toolbarOpacity` is always 1.0
+(`app_bar.dart:1375`), so the title is fully visible in **every** scroll
+state, while the background fades to opacity 0 at full collapse
+(`flexible_space_bar.dart:244-275`). Hence the division of ownership:
+
+- the `title` (`Text(name, maxLines: 1, ellipsis)`) is the **collapsed-state**
+  owner of the name — at full collapse the background is invisible, so the
+  name can only be visible there if it is the title;
+- the background's icon/artwork + 16 px + meta row is the **expanded-state**
+  owner, anchored **top-left** (out of the title's bottom-left zone), pinned
+  to its natural height (`SizedBox(height: rowHeight)`), and faded out via
+  `FlexibleSpaceBarSettings` before the collapsing title sweep reaches it.
+
+**WHY:** the pre-fix shape anchored the row bottom-left too, so both layers
+claimed the same region: the name painted over the icon and track count
+when expanded (blockers 2026-10-13, measured) and, on older SDKs, the
+unbounded title ran under the back button when collapsed (blockers
+2026-10-08). Note: `collapsedTitle` / `collapsedTitlePadding` **do not
+exist** in Flutter 3.41.7 (the 2026-10-15 widget-test program's task doc
+named them; a grep of the SDK found none) — verify against the SDK source
+before designing around them.
+
+**BREAKS IF UNDONE:** re-anchoring the row bottom-left, dropping the fade,
+or removing the height pin re-opens the 2026-10-13 overlap (an `Expanded`
+child stretches the album row to the full background height, pushing its
+bottom-aligned meta back into the title zone); an unconstrained title
+re-arms the 2026-10-08 overflow for long names. The extremes are caught by
+`test/detail_header_geometry_test.dart` (see invariant 49).
+
+---
+
 ## Environment
 
 ### 10. The OwnTone server is at `192.168.1.13`
@@ -1455,6 +1494,64 @@ token is failing for a reason — do not adjust the test to match a regression.
   across app uninstall; only the app DB is wiped. A fresh install re-syncs but
   the 194 files are already on disk (the worker logs
   "Found N existing files in tracks directory").
+
+---
+
+### 48. Widget-test environment: two constraints the harness is built around
+
+Both are documented in the header of `test/widget_test_helpers.dart` and cost
+a session to discover (the 2026-10-13 widget-test program):
+
+1. **FakeAsync I/O.** `testWidgets()` bodies run under a fake event loop in
+   which the FFI SQLite layer's real I/O (opening the file) never completes.
+   All database setup therefore happens in plain `test()` calls (the real
+   async zone) that run first, and a pump loop must never await a DB future —
+   the screen's own `_loadTracks()` completes during pumping against the
+   database already opened in the real zone, and the test only pumps until
+   the rendered output appears.
+2. **Shared FFI DB file race.** `databaseFactoryFfiNoIsolate` resolves to the
+   fixed path `.dart_tool/sqflite_common_ffi/databases/owntone_sync.db`
+   (`DatabaseHelper` hard-codes the file name), and
+   `test/database/database_migration_test.dart` drives that same file in
+   parallel isolates under `flutter test`'s default file parallelism.
+   Seeding is **check-and-insert**: never delete or recreate the file, never
+   delete rows, and wait for the file to go quiescent before writing
+   (a stable `mtime` across two polls after observed churn, or a 7 s
+   no-churn observation).
+
+**BREAKS IF UNDONE:** awaiting a DB future inside a pump loop hangs the test
+to its timeout (constraint 1 — a hang with no progress is a zone bug, not
+slowness); deleting/recreating the shared file makes the suite flaky under
+parallelism (constraint 2 — two connections at one path with different
+inodes are not safe to write concurrently: `database is locked`, `disk I/O
+error`, or a poisoned `readonly` connection). Any new widget test that seeds
+or opens the DB must go through the helper, not re-derive this.
+
+---
+
+### 49. The geometry guards are a contract, not a snapshot
+
+`test/detail_header_geometry_test.dart` encodes the **requirement** — spec B3
+(detail header with artwork/title/metadata, collapsing on scroll) plus the two
+blocker entries (2026-10-13 expanded, 2026-10-08 collapsed) — **not current
+behaviour**. Nobody may weaken them (shrink finders, add tolerances, remove
+assertions) to make them pass: a guard that no longer measures overlap is
+worse than none. If one looks wrong, it gets adjudicated (orchestrator +
+user), not edited.
+
+**WHY:** this is constraint 5 of the widget-test program, and the reason Unit
+A was required to end **RED** on the overlap assertions (harness errors like
+`MissingPluginException` or finder-not-found mean fix the harness, not loosen
+the guard). A guard that has been quietly widened to match a regression
+turns the whole suite green while the defect ships.
+
+**BREAKS IF UNDONE:** re-anchoring, re-theming, or "tidying" the detail
+headers in a way that reintroduces an overlap will fail these guards — that
+failure is the point. Editing the guards to make a real regression green
+silently re-arms the 2026-10-13 / 2026-10-08 defects with no other signal.
+The screen smoke tests (`test/screen_smoke_test.dart`) are the same class of
+net: render + a few cited assertions, not a behaviour spec — they are not a
+licence to loosen the geometry guards.
 
 ---
 
