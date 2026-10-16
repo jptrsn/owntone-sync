@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../data/repositories/local_database_repository.dart';
 import '../controllers/playback_controller.dart';
 import '../services/collection_playback.dart';
+import '../widgets/collection_detail_header.dart';
 import '../widgets/player_scaffold.dart';
 import '../widgets/library_rows.dart';
 
@@ -97,47 +98,42 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
             pinned: true,
             backgroundColor: colorScheme.surface,
             foregroundColor: colorScheme.onSurface,
-            flexibleSpace: FlexibleSpaceBar(
-              title: Text(widget.albumName),
-              background: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-                child: Align(
-                  alignment: Alignment.bottomLeft,
-                  child: Row(
-                    children: [
-                      AlbumArtTile(
-                        artworkPath: widget.artworkPath,
-                        size: 120,
-                        borderRadius: 8,
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            Text(
-                              widget.artistName,
-                              style: Theme.of(context).textTheme.titleMedium,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            if (!_isLoading && _tracks.isNotEmpty) ...[
-                              const SizedBox(height: 4),
-                              Text(
-                                '${_tracks.length} ${_tracks.length == 1 ? 'track' : 'tracks'} \u2022 ${_formatTotalDuration()}'
-                                '${_tracks.first.year > 0 ? ' \u2022 ${_tracks.first.year}' : ''}',
-                                style: Theme.of(context).textTheme.bodySmall,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ],
+            flexibleSpace: CollectionDetailHeader(
+              name: widget.albumName,
+              rowHeight: 120,
+              row: Row(
+                children: [
+                  AlbumArtTile(
+                    artworkPath: widget.artworkPath,
+                    size: 120,
+                    borderRadius: 8,
                   ),
-                ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Text(
+                          widget.artistName,
+                          style: Theme.of(context).textTheme.titleMedium,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (!_isLoading && _tracks.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            '${_tracks.length} ${_tracks.length == 1 ? 'track' : 'tracks'} \u2022 ${_formatTotalDuration()}'
+                            '${_tracks.first.year > 0 ? ' \u2022 ${_tracks.first.year}' : ''}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

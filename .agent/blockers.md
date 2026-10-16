@@ -2,23 +2,195 @@
 
 > **Currently open (newest first):**
 >
+> - 2026-10-15 — `SyncScreen.dispose` does an ancestor lookup
+>   (`context.read<SyncProvider>()`) on a deactivated element — a debug-only
+>   FlutterError at tree finalization, first surfaced by the widget-test
+>   program's smoke tests (finding F1). Tolerated in exactly that signature in
+>   `test/screen_smoke_test.dart`; fix is a one-line lib change, unmade because
+>   the program authorized test-side changes only.
 > - 2026-10-10 — a sync run started against the previous server can complete
 >   after `setServerUrl` and establish `reachable` for the new, unprobed host
 >   (the fetch path is generation-fenced; the worker-completion write is not).
 >   Quiet-icon-only artifact; U2's offline sync guard treats it as
 >   non-blocking (invariant 43). Fix needs the Kotlin URL-stamp fence.
-> - 2026-10-08 — detail-screen title overlaps the back button when collapsed.
 > - 2026-10-08 — Now Playing sheet leaves ~205 logical px blank at the bottom.
 > - 2026-10-06 — "Playlist 4 of 3" during the artwork pass (cosmetic).
 > - 2026-10-06 — playback started on its own after a long sync (cause unknown;
 >   needs logcat, not source reading).
 >
-> Resolved: the 2026-10-08 search entry (the field never rendered — search was
-> entirely unusable) was fixed and device-verified the same day. The 2026-10-02
-> scheduled-sync entry (two compounding defects, both
+> Resolved: the 2026-10-13 and 2026-10-08 (collapsed title) detail-header
+> entries were fixed and **widget-test-verified** by the 2026-10-15
+> widget-test program (guards in `test/detail_header_geometry_test.dart`);
+> their device pass is explicitly deferred to the user (no device was
+> available to the program). The 2026-10-08 search entry (the field never
+> rendered — search was entirely unusable) was fixed and device-verified the
+> same day. The 2026-10-02 scheduled-sync entry (two compounding defects, both
 > present in released `main`) was fixed and device-verified on 2026-10-03.
 > Everything dated 2026-09 is resolved; the 2026-10-02 star-rendering entry is a
 > struck misobservation, not a defect.
+
+## 2026-10-15 — OPEN: `SyncScreen.dispose` ancestor lookup on a deactivated element (finding F1)
+
+Found by the widget-test program's Unit C smoke tests
+(`test/screen_smoke_test.dart`), not on device.
+
+**Symptom:** pumping `SyncScreen` in a widget test and then unmounting the
+tree surfaces
+
+```
+FlutterError: Looking up a deactivated widget's ancestor is unsafe.
+```
+
+reported (not rethrown) from `BuildOwner.finalizeTree`, interrupting the
+unmount. Debug-only; release is unaffected (the lookup in a deactivated
+element is an assertion, and the listener it removes is on a provider the
+tree is disposing anyway — no functional impact observed in the test).
+
+**Mechanism:** `lib/presentation/screens/sync_screen.dart:33` —
+`dispose()` calls `context.read<SyncProvider>().removeListener(
+_loadPendingEventCount)`. `context.read` is an
+`InheritedWidget` ancestor lookup; inside `dispose` the element is already
+deactivating, which the framework's own debug check
+(`_debugCheckStateIsActiveForAncestorLookup`, `widgets/framework.dart:5046`,
+Flutter 3.41.7) asserts on. The framework's
+own error hint: capture the dependency in `didChangeDependencies` via
+`dependOnInheritedWidgetOfExactType` and call `removeListener` on the saved
+reference (or drop the read if the listener is only informational).
+
+**Why it is not fixed here:** the widget-test program authorized
+test-side changes only (no `lib/` edits in Unit C). The smoke test
+tolerates **exactly** this signature (message + `sync_screen.dart` in the
+stack), everything else still fails the test, and it pops the route inside
+the test body so the fallout is contained — see the header of
+`test/screen_smoke_test.dart`.
+
+**Fix direction (one line, when a `lib/` change is in scope):** save the
+`SyncProvider` reference in `didChangeDependencies`
+(`dependOnInheritedWidgetOfExactType`), remove the listener from the saved
+reference in `dispose`. Then delete the tolerance block from the smoke test.
+
+**Verification when fixed:** `flutter test test/screen_smoke_test.dart`
+green with the tolerance removed; full suite green.
+
+---
+
+## 2026-10-13 — RESOLVED (widget-test-verified 2026-10-15; device pass deferred to the user): collection detail headers — the title overlaps the icon and track count (expanded)
+
+Reported from device use (playlist screen). **Confirmed by widget-test
+geometry measurement on all three collection detail screens**. The
+measurement probe was `test/scratch_playlist_header_probe.dart`
+(deliberately not a `*_test.dart` — see the race note under Verification).
+It was promoted to the permanent guard `test/detail_header_geometry_test.dart`
+by the 2026-10-15 widget-test program and deleted; the guard's pre-fix red
+rects matched the numbers below. Run the guard, not the probe.
+
+### Resolution (2026-10-15, widget-test program)
+
+Fixed by Unit B of the program and verified by Unit A's promoted guards
+(`test/detail_header_geometry_test.dart`, which went 1/4 → 4/4 on this
+fix; the expanded failures' printed rects matched the measurements below,
+e.g. playlist title `72.2,122 → 182.2,150` over icon `24.2,100 → 88.2,164`).
+The fix is the shared `lib/presentation/widgets/collection_detail_header.dart`
+(see invariant 47): one layout owner per visible scroll state — the
+`FlexibleSpaceBar` title (`maxLines: 1`, ellipsis) owns the collapsed bar,
+and the icon/artwork + meta row is the expanded-state owner, top-anchored,
+height-pinned, and faded out before the title sweep reaches it.
+**Device verification of both scroll states on all three screens (including
+the long real names) is explicitly deferred to the user** — no device was
+available to the program (scope agreed in `.agent/widget-test-task.md`).
+
+### Mechanism
+
+All three screens use the same shape
+(`playlist_detail_screen.dart:71-103`, `album_detail_screen.dart:95-143`,
+`artist_detail_screen.dart:79-111`):
+
+```dart
+SliverAppBar(
+  expandedHeight: 180 / 260 / 200,
+  pinned: true,
+  flexibleSpace: FlexibleSpaceBar(
+    title: Text(name),                          // layer A
+    background: Padding(24, 24, 24, 16) →
+      Align(bottomLeft) → Row(icon, 16px, meta) // layer B
+  ),
+)
+```
+
+`FlexibleSpaceBar` lays out `background` and `title` as **independent layers
+of one Stack**; nothing reserves space between them. The background content
+is anchored bottom-left of the flexible space (24 px in, 16 px up), and in
+the expanded state the bar's title is also placed at the bottom of the
+flexible space (measured: always 30 px above the bar's bottom edge, for all
+three `expandedHeight`s). The two independent layouts claim the same
+bottom-left region, so the name paints over the icon and the track count.
+
+### Measured (expanded, initial load; logical px, 800×600 test surface)
+
+| screen (expandedHeight) | title | icon / art | meta |
+|---|---|---|---|
+| playlist (180) | x 72–182, y 122–150 | x 24–88, y 100–164 | x 104–233, y 120–144 |
+| artist (200) | x 72–204, y 142–170 | x 24–96, y 112–184 | x 112–403, y 136–160 |
+| album (260) | x 72–182, y 202–230 | x 24–144, y 74–194 | x 160–358, y 228–244 |
+
+- **playlist:** title∩icon = true (16 px horizontal), title∩count = true
+  (78 px of the name over the count) — the reported defect.
+- **artist:** title∩avatar = true (24 px), title∩meta = true (92 px).
+- **album:** title∩art = false (8 px clear), title∩meta = true (2 px, with a
+  short fixture name — a wider real name collides more). Most latent, same
+  defect.
+- In all three, the icon and the meta do **not** overlap each other (the
+  Row's 16 px gap holds); every overlap is the title against them. The
+  horizontal extent of the collision is name-width dependent.
+
+### Same root pattern as the 2026-10-08 entry, at the other scroll extreme
+
+The 2026-10-08 entry (title over the back button, collapsed) is the same
+defect class: the `FlexibleSpaceBar` title is a layer that reserves no space
+against anything else the bar shows — here the bottom-left background
+content (expanded), there the toolbar's leading slot (collapsed). A fix that
+addresses only the expanded layout leaves the collapsed overlap open (and
+vice versa); **verify both states on all three screens**.
+
+### Why the suite missed it
+
+Every existing test is pure logic, DB migration, or static source guard —
+there are no widget tests, so nothing measures layout. This is the defect
+class a widget geometry guard closes: the probe asserts
+`!title.overlaps(icon)` and `!title.overlaps(meta)` on the real screens in
+the expanded state, plus the collapsed-state title/back-button assertion the
+2026-10-08 entry calls for. It is the first concrete candidate for a widget
+test in this repo.
+
+### Fix direction
+
+Give the header content one owner. Either (a) put the name inside the
+`background` layout (e.g. a `Column` with the name above the icon/meta row)
+and pass a `collapsedTitle` for the collapsed bar, or (b) keep `title` and
+re-anchor the background content away from the title zone. Option (a)
+concentrates the whole header in one layout, which makes this overlap class
+structurally impossible; it still needs the 2026-10-08 entry's collapsed-bar
+fix (`titlePadding` + `maxLines: 1` + ellipsis) to close both entries at
+once. Spec requirement: B3 (`player-ux-spec.md` — header with
+artwork/title/metadata, collapsing on scroll).
+
+### Verification
+
+The promoted probe must pass **expanded and collapsed** on all three
+screens. Device check: open each detail screen and confirm no overlap at
+rest, then scroll until the bar is fully collapsed and confirm again
+(long-name playlists/albums/artists — the library has names long enough to
+trigger the collapsed variant; see the 2026-10-08 entry).
+
+**Race note for whoever promotes the probe to a permanent `*_test.dart`:**
+the probe's seed step deletes and recreates
+`.dart_tool/sqflite_common_ffi/databases/owntone_sync.db` — the same file
+`database_migration_test.dart` drives through parallel isolates
+(`DatabaseHelper` hard-codes the file name). A permanent geometry test must
+seed without deleting the file first (check-and-insert, not recreate), or
+the suite will be flaky under `flutter test`'s default file parallelism.
+
+---
 
 ## 2026-10-10 — OPEN: a sync completion started against the previous server can establish `reachable` for the new host
 
@@ -427,7 +599,7 @@ the same sheet on a shorter device may have no gap, or clip.
 
 ---
 
-## 2026-10-08 — OPEN: detail-screen title overlaps the back button when the app bar collapses
+## 2026-10-08 — RESOLVED (widget-test-verified 2026-10-15; device pass deferred to the user): detail-screen title overlaps the back button when the app bar collapses
 
 The defect the "Now Playing overlap sweep" was sent to find. It is **not** on the
 Now Playing sheet — that screen has no `AppBar` and no back button at all, which
@@ -465,6 +637,28 @@ correctly — but did not then ask whether the geometry it had just captured
 revealed anything *else* wrong. The empty-sheet defect above was visible in its
 own output. When a targeted sweep finds nothing, inspect the layout you measured
 for other anomalies before concluding there is no defect.
+
+### Resolution (2026-10-15, widget-test program)
+
+Two independent facts, both verified against the Flutter 3.41.7 SDK source:
+
+1. The overlap itself does not reproduce on this SDK's defaults: with
+   `centerTitle: false` and a leading widget, `FlexibleSpaceBar`'s title
+   now defaults to a 72 px start padding (`flexible_space_bar.dart:323-329`),
+   which clears the 56 px leading slot. The device observation above
+   predates that framework default (the program's collapsed-phase guard —
+   title found in the bar, clear of `Icons.arrow_back`, within the bar's
+   bounds — passes on 3.41.7).
+2. The fix the entry asks for is in place regardless: Unit B constrained
+   the title to `maxLines: 1` + ellipsis in
+   `collection_detail_header.dart`, so a long name (e.g. the two named
+   above) can no longer wrap or run past the bar's right/bottom edges —
+   asserted by the guard's collapsed phase, which pre-checks the bar
+   actually collapsed (height ≤ 57) before measuring.
+
+**Device verification (the long real names, fully-collapsed bar on all
+three screens) is explicitly deferred to the user** — no device was
+available to the program.
 
 ---
 
