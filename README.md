@@ -67,6 +67,17 @@ and **Add to queue**.
 Playback continues when the app is in the background or the screen is off, and
 responds to lock-screen, notification and Bluetooth controls.
 
+**It also survives the app being closed.** Your queue, current position,
+shuffle order and repeat mode are saved as you listen, so if you quit the app —
+or Android closes it to reclaim memory — they are restored the next time you
+open it, and you continue from where you left off.
+
+**A track that can't be played is skipped, not fatal.** If a file is missing or
+otherwise unplayable, the player moves on automatically and shows a brief
+notice (`Skipped "<title>" - could not be played`). If an entire queue turns out
+to be unplayable, it stops and offers to sync again to repair the missing files,
+instead of leaving the player stuck in an error state.
+
 ### Ratings
 
 On the **Now Playing** screen, tap the artwork to reveal a five-star rating

@@ -2,6 +2,18 @@
 
 > **Currently open (newest first):**
 >
+> - 2026-10-17 — History date renders "PMt" instead of "at" (e.g.
+>   `Oct 9, 26 PMt 3:12 PM`): the `at` inside the DateFormat pattern is parsed
+>   as the AM/PM marker plus a literal `t` (history_screen.dart:75,78); `y` is
+>   also 2-digit. Cosmetic.
+> - 2026-10-17 — Launch dead end: when the default Library tab (Playlists) is
+>   empty but other categories hold synced data, the app shows the "No music
+>   yet" empty state with no TabBar and no in-app way out (`loadData` loads
+>   only the current category, but `hasContent` ORs all four lists).
+> - 2026-10-17 — Now Playing tap-to-rate overlay did not appear on tap during
+>   the screenshot pass (several attempts, `input tap` and `input swipe`, taps
+>   confirmed delivered via the queue button). Needs investigation; not touched
+>   here (docs/screenshots session, no `lib/` edits).
 > - 2026-10-15 — `SyncScreen.dispose` does an ancestor lookup
 >   (`context.read<SyncProvider>()`) on a deactivated element — a debug-only
 >   FlutterError at tree finalization, first surfaced by the widget-test
@@ -28,6 +40,141 @@
 > present in released `main`) was fixed and device-verified on 2026-10-03.
 > Everything dated 2026-09 is resolved; the 2026-10-02 star-rendering entry is a
 > struck misobservation, not a defect.
+
+## 2026-10-17 — OPEN: History date renders "PMt" instead of "at" (cosmetic)
+
+Observed on the History screen during the 2026-10-17 screenshot pass: the
+oldest sync entry rendered
+
+```
+Sync Completed
+Oct 9, 26 PMt 3:12 PM
+1 playlists • 33 tracks downloaded
+```
+
+The word "at" is being mangled into "PMt".
+
+**Root cause:** `history_screen.dart` builds two of its four date strings with
+`at` **inside** the DateFormat pattern:
+
+```dart
+return DateFormat('EEEE at h:mm a').format(date);        // :75 (this week)
+return DateFormat('MMM d, y at h:mm a').format(date);    // :78 (older)
+```
+
+In a `DateFormat` pattern, a bare `a` is the **AM/PM marker**, not a literal.
+So the `at` in the pattern is parsed as `a` (→ "PM" for a 3:12 PM timestamp)
+followed by the literal `t` — producing "PMt". The `y` in the :78 pattern is
+also the 2-digit year, so the intended "Oct 9, 2026 at 3:12 PM" comes out as
+"Oct 9, 26 PMt 3:12 PM".
+
+The other two branches are correct: `:61-69` (today) builds plain Dart strings,
+and `:72` (yesterday) puts "at" in the **interpolated** Dart string
+(`'Yesterday at ${DateFormat('h:mm a').format(date)}'`), where it is a literal.
+
+**Fix direction:** quote the literal in the pattern —
+`DateFormat("EEEE 'at' h:mm a")` and `DateFormat("MMM d, yyyy 'at' h:mm a")`
+(`yyyy` if a 4-digit year is wanted, `y` if 2-digit is acceptable). Verify the
+"this week" and "older" branches each render "at", not "PMt".
+
+**Not fixed here:** this was a docs/screenshots session with no `lib/` edits in
+scope. Cosmetic — the timestamp is still readable, but it is the History
+screen's headline text for anything older than yesterday.
+
+---
+
+## 2026-10-17 — OPEN: launch dead end when the default Library tab is empty but other categories have data
+
+Observed on emulator-5554 during the 2026-10-17 screenshot pass. The device DB
+held 33 synced tracks (Artists/Albums/Tracks all populated) but an empty
+`synced_playlists` table. On launch the app showed the **"No music yet"** empty
+state and offered **no way in**: no TabBar, no list, no route to the data that
+was sitting in the database. (The session recovered by repopulating
+`synced_playlists`; see the report for the fixture detail.)
+
+**Mechanism:** `lib/presentation/providers/browse_provider.dart`:
+
+- `loadData()` (:104) loads **only the current category**
+  (`_loadCategory(_currentCategory)`). `LibraryScreen` calls it from `initState`,
+  so at launch only the default tab (**Playlists**) is loaded; the other three
+  lists stay empty.
+- `hasContent` (:70) is `_playlists.isNotEmpty || _artists.isNotEmpty ||
+  _albums.isNotEmpty || _tracks.isNotEmpty` — an OR over **all four** in-memory
+  lists.
+
+So when the default tab is empty and the others have not been loaded, every
+list is empty and `hasContent` is `false` — even though Artists/Albums/Tracks
+hold rows. `LibraryScreen` then swaps the whole tabbed body for the empty state,
+and (as the 2026-09-27 entry established) the empty state has **no TabBar**, so
+there is no in-app control that would trigger `setCategory` → `loadData()` for
+another category. Dead end; only a relaunch into a different default tab, or a
+sync, recovers.
+
+**Why this is not the resolved 2026-09-27 defect.** That entry was the
+*after-sync* case — the library not refreshing once a sync finished — and Phase 7
+closed it by refreshing `BrowseProvider` on sync completion (and adding
+`reloadAll()` for the wiped-library case). This is the *launch* case: no sync is
+in flight, the data is already in the DB, and nothing re-evaluates `hasContent`
+across categories. The Phase 7 refresh never fires because no sync completes.
+
+**When it is reachable:** any state where the default tab's table is empty but
+another category is not — e.g. all playlists deselected/removed while tracks
+remain, a partial or interrupted sync, or (as here) a DB whose
+`synced_playlists` is empty while `synced_tracks` is not. Not the common
+happy path, but a real trap with no in-app escape.
+
+**Fix direction (two options):** (a) make `hasContent` reflect the database, not
+the four in-memory lists — e.g. a cheap "does any category have rows" count — so
+an empty current tab can't hide populated others; or (b) on launch load all
+categories (call `reloadAll()`, not `loadData()`) so `hasContent` is computed
+from real data. Either way, verify: seed a DB with an empty Playlists table but
+populated Tracks, launch, and confirm the Tabbed library (not the empty state)
+appears with no relaunch or sync.
+
+**Not fixed here:** docs/screenshots session, no `lib/` edits in scope.
+
+---
+
+## 2026-10-17 — OPEN: Now Playing tap-to-rate overlay did not appear on tap
+
+Observed on emulator-5554 during the 2026-10-17 screenshot pass. The README and
+the player UX spec both document: on the Now Playing sheet, **tap the artwork to
+reveal the five-star rating strip** (`player_screen.dart`
+`_AlbumArtWithRating`, `onTap: _toggle` → `_visible = true`, rendered under
+`if (_visible && _loaded)`). During the pass, tapping the artwork did **not**
+reveal the overlay.
+
+**What was tried (all on a stable, paused track with artwork confirmed loaded):**
+
+- `adb shell input tap 640 688` (artwork centre) — no change.
+- `adb shell input swipe 640 688 640 688 120` (a 120 ms press) — no change.
+- Pixel diff of a pre-tap baseline vs post-tap capture: the artwork region was
+  byte-identical (centre brightness 89.2 before and after); a `Colors.black38`
+  pill over this artwork would have darkened it measurably. It did not.
+- **Tap delivery was confirmed working on the same sheet** in the same session:
+  tapping the Queue button opened the queue, and tapping Play/Pause toggled
+  playback. So the sheet receives taps; the artwork specifically did not toggle.
+
+The code path reads correctly (`_toggle` sets `_visible`, `_loadRating` sets
+`_loaded` unconditionally after its DB read, and `item.id` is a numeric track id
+so `_trackId` is non-null), which is why this is flagged as *needs
+investigation* rather than a confirmed defect — but the on-device behaviour
+repeatedly contradicts the documented behaviour, and the two are exactly the
+class of discrepancy this project has lost sessions to (a negative/absent result
+is a claim about the feature **and** the harness).
+
+**Suggested next step:** reproduce with a hot-reloaded debug build and read the
+`E/flutter` console during the tap (attach `flutter run`, per the rendering-bug
+trap in AGENTS.md); add a `debugPrint` in `_toggle`/`_loadRating` to confirm
+whether the tap reaches `_toggle` and whether `_loaded` is true. Only then
+decide whether it is a hit-test issue (the `Hero`/`ClipRRect` wrapping the
+`GestureDetector`), a `_loaded`-never-set issue, or a harness artifact.
+
+**Not fixed here:** docs/screenshots session, no `lib/` edits in scope. The
+README's "Ratings" section documents the intended behaviour and was left
+unchanged; this entry records that the behaviour did not reproduce on device.
+
+---
 
 ## 2026-10-15 — OPEN: `SyncScreen.dispose` ancestor lookup on a deactivated element (finding F1)
 
