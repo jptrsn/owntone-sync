@@ -2,10 +2,6 @@
 
 > **Currently open (newest first):**
 >
-> - 2026-10-17 — Launch dead end: when the default Library tab (Playlists) is
->   empty but other categories hold synced data, the app shows the "No music
->   yet" empty state with no TabBar and no in-app way out (`loadData` loads
->   only the current category, but `hasContent` ORs all four lists).
 > - 2026-10-17 — Now Playing tap-to-rate overlay did not appear on tap during
 >   the screenshot pass (several attempts, `input tap` and `input swipe`, taps
 >   confirmed delivered via the queue button). Needs investigation; not touched
@@ -26,7 +22,11 @@
 > - 2026-10-06 — playback started on its own after a long sync (cause unknown;
 >   needs logcat, not source reading).
 >
-> Resolved: the 2026-10-17 History-date "PMt" entry was fixed and
+> Resolved: the 2026-10-17 launch-dead-end entry was fixed and
+> device-verified 2026-10-19 on `fix/launch-dead-end` (the launch load is
+> now `reloadAll()`, all four categories, so an empty default tab cannot
+> hide populated ones; guards in `test/browse_provider_launch_test.dart`,
+> invariant 51). The 2026-10-17 History-date "PMt" entry was fixed and
 > device-verified 2026-10-18 on `fix/history-date-pmt` (quoted `'at'`
 > literal + `yyyy` in the two patterns; guard in
 > `test/history_timestamp_test.dart`, invariant 50). The 2026-10-13 and
@@ -101,7 +101,25 @@ screen's headline text for anything older than yesterday.
 
 ---
 
-## 2026-10-17 — OPEN: launch dead end when the default Library tab is empty but other categories have data
+## 2026-10-17 — RESOLVED (device-verified 2026-10-19): launch dead end when the default Library tab is empty but other categories have data
+
+### Resolution (2026-10-19, fix/launch-dead-end)
+
+Fixed with the entry's recommended option (b): `LibraryScreen`'s launch
+load (the `initState` post-frame callback) now calls
+`BrowseProvider.reloadAll()` — all four categories — instead of
+`loadData()` (current category only), so `hasContent` is computed from
+real data on launch. The tab-switch path and the post-sync refresh keep
+`loadData()`. Device-verified on emulator-5554 against the gold-seed DB
+(genuine 10-16 pull of this entry's state: `synced_playlists` empty,
+33 `synced_tracks`): RED reproduced with the pre-fix build ("No music
+yet", no TabBar, no data); GREEN with the fixed build — the TabBar with
+all four tabs rendered on first launch, no relaunch and no sync, the
+Playlists tab showing its genuine empty list, and Artists/Albums/Tracks
+showing the seeded Brass data. Guard:
+`test/browse_provider_launch_test.dart` (cites invariant 51). Option (a)
+(DB-backed `hasContent`) was not needed — (b) proved right on device.
+See `.agent/reports/fix-launch-dead-end-report.md`.
 
 Observed on emulator-5554 during the 2026-10-17 screenshot pass. The device DB
 held 33 synced tracks (Artists/Albums/Tracks all populated) but an empty

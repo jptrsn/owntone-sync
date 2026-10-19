@@ -47,7 +47,9 @@ notification prompt waits for the first successful sync** · 45 **the app is
 "Owntone Player"; the drawer is Sync / History / Settings + status header;
 the version comes from the package** · 47 **detail headers: one layout owner
 per visible scroll state** (`FlexibleSpaceBar` layers are independent) ·
-50 **DateFormat literals are quoted**; a bare `a` is the AM/PM marker
+50 **DateFormat literals are quoted**; a bare `a` is the AM/PM marker ·
+51 **the launch load is `reloadAll()`**; an empty default tab must not
+hide populated categories
 
 **Environment and tooling** — 10 server address · 11 `pending_events` is not
 shell-readable · 12 scratch files location · 18 uiautomator quoting ·
@@ -1203,6 +1205,45 @@ rendering for every History row older than yesterday; swapping `yyyy` for
 `y` re-arms the 2-digit year. The guard is
 `test/history_timestamp_test.dart` (pins all four branches and asserts no
 "PMt"/"AMt" in any output, citing the 2026-10-17 entry).
+
+---
+
+### 51. The Library launch load is `reloadAll()`, not `loadData()`
+
+`library_screen.dart`'s `initState` defers the launch load to a post-frame
+callback and calls `BrowseProvider.reloadAll()` (all four categories).
+`hasContent` (browse_provider.dart) is an OR over all four in-memory
+lists while `loadData()` fills only the *current* one: a current-
+category-only launch load leaves `hasContent` false whenever the default
+tab (Playlists) is empty and the others have not yet been loaded — even
+with rows in Artists/Albums/Tracks — and the Library then swaps the whole
+tabbed body for the "No music yet" empty state, which has **no TabBar**,
+so no in-app control can trigger `setCategory` → `loadData()` for
+another category. Dead end; only a relaunch or a sync recovers.
+
+**WHY:** found on device 2026-10-17 (screenshot pass) and fixed +
+re-verified 2026-10-19 on emulator-5554 with the gold-seed DB (genuine
+10-16 pull: `synced_playlists` 0 rows, 33 `synced_tracks`): RED reproduced
+with the pre-fix build (empty state, no TabBar, no data); GREEN with
+`reloadAll()` — the TabBar with all four tabs rendered on first launch,
+no relaunch, no sync, and the populated tabs showing the seeded data
+(blockers.md 2026-10-17 launch dead end; the 2026-09-27 entry was the
+*after-sync* sibling of this *launch* case and its refresh never fires
+when no sync completes). The post-sync refresh (`_onSyncCompleted`) and
+tab switches (`setCategory`) deliberately keep `loadData()`: by then the
+launch load has populated all four lists and only the current category
+needs a fresh read.
+
+**BREAKS IF UNDONE:** "tidying" the launch load back to `loadData()` (it
+looks like wasted startup I/O — four queries instead of one) re-arms the
+dead end for any state where the default tab's table is empty and another
+category is not — all playlists deselected/removed while tracks remain, a
+partial or interrupted sync, or an externally edited DB. The guard is
+`test/browse_provider_launch_test.dart` (launch-path + provider seam,
+citing this entry; the true dead-end state — playlists empty, tracks
+populated — cannot be expressed against the shared FFI DB file because
+constraint 2 forbids deleting the fixture playlists, so the device
+go/no-go covers it).
 
 ---
 
