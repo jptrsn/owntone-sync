@@ -2,10 +2,6 @@
 
 > **Currently open (newest first):**
 >
-> - 2026-10-17 — Now Playing tap-to-rate overlay did not appear on tap during
->   the screenshot pass (several attempts, `input tap` and `input swipe`, taps
->   confirmed delivered via the queue button). Needs investigation; not touched
->   here (docs/screenshots session, no `lib/` edits).
 > - 2026-10-15 — `SyncScreen.dispose` does an ancestor lookup
 >   (`context.read<SyncProvider>()`) on a deactivated element — a debug-only
 >   FlutterError at tree finalization, first surfaced by the widget-test
@@ -22,7 +18,11 @@
 > - 2026-10-06 — playback started on its own after a long sync (cause unknown;
 >   needs logcat, not source reading).
 >
-> Resolved: the 2026-10-17 launch-dead-end entry was fixed and
+> Resolved: the 2026-10-17 tap-to-rate overlay entry was diagnosed 2026-10-19
+> as **not a defect** — the overlay does appear on tap and auto-hides after
+> 5 s; the 10-17 "byte-identical" pixel diff is a capture after the auto-hide
+> (harness artifact; the feature works as documented, see the entry's
+> Resolution). The 2026-10-17 launch-dead-end entry was fixed and
 > device-verified 2026-10-19 on `fix/launch-dead-end` (the launch load is
 > now `reloadAll()`, all four categories, so an empty default tab cannot
 > hide populated ones; guards in `test/browse_provider_launch_test.dart`,
@@ -171,7 +171,44 @@ appears with no relaunch or sync.
 
 ---
 
-## 2026-10-17 — OPEN: Now Playing tap-to-rate overlay did not appear on tap
+## 2026-10-17 — RESOLVED (not a defect — device-diagnosed 2026-10-19): Now Playing tap-to-rate overlay did not appear on tap
+
+### Resolution (2026-10-19, device diagnosis, overnight run 2 — not a defect)
+
+Diagnosed on a hot-reloaded debug build on emulator-5554
+(Pixel_9_Pro_API_36) with `debugPrint` instrumentation in
+`_AlbumArtWithRatingState._toggle`/`_loadRating`, a queue seeded from five
+playable tracks (the app data had been wiped by an earlier unit's
+storage-induced reinstall), the artwork cache restored from the MP3s'
+embedded covers, and an instrumented pixel harness that captured the
+artwork region at ~1 s / ~3 s / ~5 s / ~8 s after tapping the artwork
+centre — (640, 688), re-derived from a fresh uiautomator dump as the
+[288,336]–[992,1040] square, which coincides with the 10-17 coordinates:
+
+- The tap reached `_toggle` with `_loaded` already true (`_trackId=1870`,
+  the track row present, rating 0) — the hit-test hypothesis (the
+  `Hero`/`ClipRRect` wrapping the `GestureDetector`) and the
+  `_loaded`-never-true hypothesis both fall.
+- The overlay **does** appear: the pill band darkened (Δ −45.7 vs
+  baseline) in the ~1 s, ~3 s and ~5 s captures; the console read
+  `build state: visible=true loaded=true`.
+- The overlay auto-hides via `_toggle`'s 5 s `_hideTimer`: the ~8 s
+  capture was byte-identical to the pre-tap baseline (console
+  `visible=false`); a second tap inside the window dismissed it, as
+  designed.
+
+The 10-17 "byte-identical artwork region" is exactly the signature of a
+capture taken after the auto-hide: the overlay lives 5 s after the tap,
+and that session's tap→capture adb round-trip exceeded the window. Its
+own queue-button tap-delivery control is consistent with `_toggle`
+firing. This is a harness artifact — the feature works as documented
+(tap reveals the star strip, 5 s auto-hide, second tap dismisses). No
+code change, no invariant needed; full evidence (verbatim console lines,
+pixel measurements, timings, positive controls) is in the 2026-10-19
+overnight ledger entry for Unit 3. Same class as the 2026-10-02
+star-rendering struck misobservation — a screencap-based negative result
+(verification-protocol §4: confirm the harness can see a known-present
+thing, and can see the feature, before concluding absence).
 
 Observed on emulator-5554 during the 2026-10-17 screenshot pass. The README and
 the player UX spec both document: on the Now Playing sheet, **tap the artwork to
