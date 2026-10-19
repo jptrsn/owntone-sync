@@ -43,56 +43,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
   }
 
-  String _formatTimestamp(int timestamp) {
-    final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
-    final now = DateTime.now();
-
-    // Create date-only versions (midnight of each day)
-    final dateOnly = DateTime(date.year, date.month, date.day);
-    final todayOnly = DateTime(now.year, now.month, now.day);
-
-    final daysDifference = todayOnly.difference(dateOnly).inDays;
-
-    // Calculate actual time elapsed
-    final elapsed = now.difference(date);
-
-    if (daysDifference == 0) {
-      // Same calendar day - use relative time
-      if (elapsed.inSeconds < 60) {
-        return 'a few seconds ago';
-      } else if (elapsed.inMinutes < 60) {
-        final minutes = elapsed.inMinutes;
-        return '$minutes minute${minutes == 1 ? '' : 's'} ago';
-      } else {
-        final hours = elapsed.inHours;
-        return '$hours hour${hours == 1 ? '' : 's'} ago';
-      }
-    } else if (daysDifference == 1) {
-      // Yesterday
-      return 'Yesterday at ${DateFormat('h:mm a').format(date)}';
-    } else if (daysDifference < 7 && _isInCurrentWeek(date, now)) {
-      // This week
-      return DateFormat('EEEE at h:mm a').format(date);
-    } else {
-      // Older
-      return DateFormat('MMM d, y at h:mm a').format(date);
-    }
-  }
-
-  bool _isInCurrentWeek(DateTime date, DateTime now) {
-    // Find the start of the current week (most recent Sunday at midnight)
-    final startOfWeek = now.subtract(Duration(days: now.weekday % 7));
-    final startOfWeekOnly = DateTime(
-      startOfWeek.year,
-      startOfWeek.month,
-      startOfWeek.day,
-    );
-
-    // Check if date is on or after the start of this week
-    final dateOnly = DateTime(date.year, date.month, date.day);
-    return !dateOnly.isBefore(startOfWeekOnly);
-  }
-
   Color _getStatusColor(String status) {
     switch (status) {
       case 'success':
@@ -224,7 +174,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 4),
-            Text(_formatTimestamp(record.timestamp)),
+            Text(formatSyncTimestamp(record.timestamp)),
             if (record.status == 'success' ||
                 record.status == 'partial' ||
                 record.status == 'failed') ...[
@@ -386,4 +336,62 @@ class _HistoryScreenState extends State<HistoryScreen> {
       ],
     );
   }
+}
+
+/// History-row timestamp formatting, extracted from [HistoryScreen] as a
+/// pure function (blockers.md 2026-10-17, "PMt" entry; invariant 50) so
+/// the four branches can be pinned by test with an injected `now`.
+///
+/// The `at` literals are QUOTED inside the DateFormat patterns. A bare `a`
+/// in a pattern is the AM/PM marker, so an unquoted `at` renders as
+/// "PMt"/"AMt" — do not tidy the quotes back out (invariant 50).
+String formatSyncTimestamp(int timestampMs, {DateTime? now}) {
+  final now_ = now ?? DateTime.now();
+  final date = DateTime.fromMillisecondsSinceEpoch(timestampMs);
+
+  // Create date-only versions (midnight of each day)
+  final dateOnly = DateTime(date.year, date.month, date.day);
+  final todayOnly = DateTime(now_.year, now_.month, now_.day);
+
+  final daysDifference = todayOnly.difference(dateOnly).inDays;
+
+  // Calculate actual time elapsed
+  final elapsed = now_.difference(date);
+
+  if (daysDifference == 0) {
+    // Same calendar day - use relative time
+    if (elapsed.inSeconds < 60) {
+      return 'a few seconds ago';
+    } else if (elapsed.inMinutes < 60) {
+      final minutes = elapsed.inMinutes;
+      return '$minutes minute${minutes == 1 ? '' : 's'} ago';
+    } else {
+      final hours = elapsed.inHours;
+      return '$hours hour${hours == 1 ? '' : 's'} ago';
+    }
+  } else if (daysDifference == 1) {
+    // Yesterday: "at" is a literal in the interpolated Dart string, which
+    // is why this branch never mangled it.
+    return 'Yesterday at ${DateFormat('h:mm a').format(date)}';
+  } else if (daysDifference < 7 && _isInCurrentWeek(date, now_)) {
+    // This week
+    return DateFormat("EEEE 'at' h:mm a").format(date);
+  } else {
+    // Older (yyyy = the 4-digit year; 2-digit y gave "Oct 9, 26")
+    return DateFormat("MMM d, yyyy 'at' h:mm a").format(date);
+  }
+}
+
+bool _isInCurrentWeek(DateTime date, DateTime now) {
+  // Find the start of the current week (most recent Sunday at midnight)
+  final startOfWeek = now.subtract(Duration(days: now.weekday % 7));
+  final startOfWeekOnly = DateTime(
+    startOfWeek.year,
+    startOfWeek.month,
+    startOfWeek.day,
+  );
+
+  // Check if date is on or after the start of this week
+  final dateOnly = DateTime(date.year, date.month, date.day);
+  return !dateOnly.isBefore(startOfWeekOnly);
 }
