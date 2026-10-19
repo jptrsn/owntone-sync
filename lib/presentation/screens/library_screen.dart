@@ -44,12 +44,19 @@ class _LibraryScreenState extends State<LibraryScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    // loadData() notifies listeners; running it in the first build phase
-    // throws "setState() or markNeedsBuild() called during build".
+    // reloadAll(), not loadData(): hasContent spans all four categories
+    // while loadData fills only the current one. A current-category-only
+    // launch load leaves hasContent false when the default tab (Playlists)
+    // is empty but Artists/Albums/Tracks hold rows, swaps the whole tabbed
+    // body for the empty state, and — with no TabBar rendered — removes
+    // every in-app route back to the data (blockers 2026-10-17 launch
+    // dead end; invariant 51). It notifies listeners; running it in the
+    // first build phase throws "setState() or markNeedsBuild() called
+    // during build".
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => context
           .read<BrowseProvider>()
-          .loadData()
+          .reloadAll()
           .then((_) {
             if (mounted) setState(() => _initialLoadDone = true);
           }),
