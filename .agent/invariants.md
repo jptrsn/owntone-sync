@@ -46,7 +46,8 @@ drops to unverified · 41 offline renders nothing; unreachable is the only red
 notification prompt waits for the first successful sync** · 45 **the app is
 "Owntone Player"; the drawer is Sync / History / Settings + status header;
 the version comes from the package** · 47 **detail headers: one layout owner
-per visible scroll state** (`FlexibleSpaceBar` layers are independent)
+per visible scroll state** (`FlexibleSpaceBar` layers are independent) ·
+50 **DateFormat literals are quoted**; a bare `a` is the AM/PM marker
 
 **Environment and tooling** — 10 server address · 11 `pending_events` is not
 shell-readable · 12 scratch files location · 18 uiautomator quoting ·
@@ -1175,6 +1176,33 @@ child stretches the album row to the full background height, pushing its
 bottom-aligned meta back into the title zone); an unconstrained title
 re-arms the 2026-10-08 overflow for long names. The extremes are caught by
 `test/detail_header_geometry_test.dart` (see invariant 49).
+
+---
+
+### 50. DateFormat patterns: literal words must be quoted — a bare `a` is the AM/PM marker
+
+`history_screen.dart`'s History-row formatter (the pure top-level
+`formatSyncTimestamp`, extracted so the branches are test-pinned) builds
+its "this week" and "older" strings with **quoted** literals:
+`DateFormat("EEEE 'at' h:mm a")` and `DateFormat("MMM d, yyyy 'at' h:mm a")`.
+In a DateFormat pattern a bare `a` is the AM/PM marker, so an unquoted
+`at` parses as `a` + literal `t` and renders as "PMt"/"AMt" (blockers.md
+2026-10-17 — the History screen's headline text read "Oct 9, 26 PMt 3:12
+PM"); `y` is the 2-digit year, `yyyy` the 4-digit. The "today" and
+"yesterday" branches put "at" in plain / interpolated Dart strings, where
+it is already a literal — the quoting rule applies only inside patterns.
+
+**WHY:** found on device 2026-10-17 (screenshot pass), fixed 2026-10-18.
+`flutter analyze` cannot see it: the unquoted pattern is legal and
+compiles; only the rendered string is wrong — the same "visible only in
+the rendered output" class as invariants 18/29.
+
+**BREAKS IF UNDONE:** "tidying" the quotes back out (e.g. rewriting
+`"EEEE 'at' h:mm a"` as `'EEEE at h:mm a'` for style) re-arms the "PMt"
+rendering for every History row older than yesterday; swapping `yyyy` for
+`y` re-arms the 2-digit year. The guard is
+`test/history_timestamp_test.dart` (pins all four branches and asserts no
+"PMt"/"AMt" in any output, citing the 2026-10-17 entry).
 
 ---
 

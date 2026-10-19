@@ -2,10 +2,6 @@
 
 > **Currently open (newest first):**
 >
-> - 2026-10-17 — History date renders "PMt" instead of "at" (e.g.
->   `Oct 9, 26 PMt 3:12 PM`): the `at` inside the DateFormat pattern is parsed
->   as the AM/PM marker plus a literal `t` (history_screen.dart:75,78); `y` is
->   also 2-digit. Cosmetic.
 > - 2026-10-17 — Launch dead end: when the default Library tab (Playlists) is
 >   empty but other categories hold synced data, the app shows the "No music
 >   yet" empty state with no TabBar and no in-app way out (`loadData` loads
@@ -30,7 +26,11 @@
 > - 2026-10-06 — playback started on its own after a long sync (cause unknown;
 >   needs logcat, not source reading).
 >
-> Resolved: the 2026-10-13 and 2026-10-08 (collapsed title) detail-header
+> Resolved: the 2026-10-17 History-date "PMt" entry was fixed and
+> device-verified 2026-10-18 on `fix/history-date-pmt` (quoted `'at'`
+> literal + `yyyy` in the two patterns; guard in
+> `test/history_timestamp_test.dart`, invariant 50). The 2026-10-13 and
+> 2026-10-08 (collapsed title) detail-header
 > entries were fixed and **widget-test-verified** by the 2026-10-15
 > widget-test program (guards in `test/detail_header_geometry_test.dart`);
 > their device pass is explicitly deferred to the user (no device was
@@ -41,7 +41,25 @@
 > Everything dated 2026-09 is resolved; the 2026-10-02 star-rendering entry is a
 > struck misobservation, not a defect.
 
-## 2026-10-17 — OPEN: History date renders "PMt" instead of "at" (cosmetic)
+## 2026-10-17 — RESOLVED (device-verified 2026-10-18): History date renders "PMt" instead of "at" (cosmetic)
+
+### Resolution (2026-10-18, fix/history-date-pmt)
+
+The two patterns now quote the literal and use the 4-digit year
+(`history_screen.dart`): `DateFormat("EEEE 'at' h:mm a")` and
+`DateFormat("MMM d, yyyy 'at' h:mm a")`. The formatter was extracted from
+the widget to the pure top-level `formatSyncTimestamp(timestampMs, {now})`
+and all four branches are pinned by `test/history_timestamp_test.dart`
+(cites this entry), including the "this week" branch with a Monday
+timestamp against a pinned Wednesday `now` — on a Sunday that branch is
+unreachable on device (startOfWeek == today). Device-verified 2026-10-18 on
+emulator-5554: the Oct 9 row renders "Oct 9, 2026 at 3:12 PM" (0× "PMt" in
+the screen dump; a "Yesterday at …" control row renders correctly).
+Process note: the device's natural rows were wiped by a storage-induced
+reinstall during the pass (INSTALL_FAILED_INSUFFICIENT_STORAGE → flutter
+auto-uninstall), so the Oct 9 row was re-seeded locally as an exact
+reproduction of this entry's row (allowed for rows with no natural row) —
+see `.agent/reports/fix-history-date-pmt-report.md`. Guard: invariant 50.
 
 Observed on the History screen during the 2026-10-17 screenshot pass: the
 oldest sync entry rendered
