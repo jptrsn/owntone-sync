@@ -1160,9 +1160,12 @@ renderings of the same name** and splits ownership by fade:
   one row (the media, pinned square via `SizedBox.square`, left-aligned at
   24 px, top-pinned via an `Align(topCenter)` so it never centres in slack —
   see the compact-geometry contract below — and to its right the name,
-  `titleLarge`, one line, ellipsis, above the meta line). `_HeaderFade`
-  fades the whole row out over collapse fractions 0.35–0.5 (fixed
-  hand-off);
+  `titleLarge`, one line, ellipsis, above the meta line, which sits in a
+  `Flexible`: at an enlarged system text scale the column's height is capped
+  at the media's, so the tight content box never overflows (at Android's
+  largest scale the meta's box shrinks and its glyphs may spill a few px
+  into the 8 dp bottom margin)). `_HeaderFade` fades the whole row out over
+  collapse fractions 0.35–0.5 (fixed hand-off);
 - **collapsed** — the framework `title` slot owns the name, rendered at the
   framework's collapsed position (bottom-left, start 72 / bottom 16 — *beside*
   the back button, the standard Material position). `_CollapsingTitle`
@@ -1189,10 +1192,20 @@ its content:
   the media bottom** — the "no dead band" requirement;
 - the fade is a **fixed hand-off at t = 0.5**, not a derived crossing: in
   this compact geometry the collapsed title's sweep band overlaps the
-  expanded name for the entire collapse (they coincide at the hand-off,
-  which is what makes the morph read), so "one rendering at a time" is the
-  only clean contract — header 1→0 over [0.35, 0.5], title 0→1 over
-  [0.5, 0.7], never both visible.
+  expanded name for the entire range in which the header is visible
+  (t ≤ 0.5) at every call site (they coincide at the hand-off, which is
+  what makes the morph read), so "one rendering at a time" is the only
+  clean contract — header 1→0 over [0.35, 0.5], title 0→1 over [0.5,
+  0.7], never both visible;
+- the background **also** receives the framework's own parallax fade
+  (`FlexibleSpaceBar` defaults to `CollapseMode.parallax`,
+  `flexible_space_bar.dart:245-252`): it starts at
+  `1 - kToolbarHeight/mediaSize` (0.125/0.222/0.533 for the 64/72/120 call
+  sites), so the *painted* header opacity is that fade times the [0.35,
+  0.5] window — below 1.0 from early in the collapse on the two smaller
+  media sizes, and exactly 0 by t = 0.5 either way. The "never both
+  visible" contract is unaffected (both fades monotone, header exactly 0
+  where the title starts).
 
 Geometry facts pinned by the 2026-10-19 device passes (Pixel 6,
 `P` = 49 dp there): bar extent 168.8 dp = `P + 120`; arrow glyph
@@ -1202,7 +1215,9 @@ meta (104, 132.8); media bottom → bar bottom 8.0 dp; media bottom → Play
 top 15.8 dp (was **61 dp** on the first revision — the dead band the user
 reported); album artwork [24, 96.8] × [144, 216.8] under a 224.8 dp bar.
 Fade measured at t = 0.375 / 0.5 / 0.6: header 0.833 / 0.000 / 0.000,
-title 0.000 / 0.000 / 0.500 — the fixed hand-off holds on device. The name's
+title 0.000 / 0.000 / 0.500 — the fixed hand-off holds on device (header
+values are the `_HeaderFade` widget layer; the painted value is that times
+the framework parallax fade above). The name's
 line height is whatever the theme says (M3 `titleLarge` is 22 × 1.27 = 28,
 **not** 1.17) — any hand computation must use the SDK table.
 
@@ -1247,10 +1262,16 @@ around them.
   taller bar re-opens the dead band while a shorter one clips the media;
 - replacing the fixed hand-off with a crossing-derived window: in this
   geometry the title's sweep band overlaps the expanded name for the
-  entire collapse (the crossing is at negative `t`), so a derived window
-  is meaningless; the only clean contract is the contiguous 0.35–0.5 /
+  entire range in which the header is visible (t ≤ 0.5) at every call
+  site (the crossing is at negative `t`), so a derived window is
+  meaningless; the only clean contract is the contiguous 0.35–0.5 /
   0.5–0.7 pair (at t = 0.5 both opacities are exactly 0 — verified on
   device);
+- unwrapping the meta's `Flexible` (letting the name/meta column set the
+  row's height) re-arms the tight content box's overflow at enlarged
+  system text scales: at Android's largest scale (1.3) the playlist row's
+  column is ~72 px in a 64 px box — a 7 px RenderFlex overflow measured
+  in the 2026-10-20 review probe (guarded by the text-scale test);
 - removing `_CollapsingTitle`'s opacity (always-visible framework title)
   paints the name twice while expanded;
 - dropping the `SizedBox.square` pin lets a stretching media (an
@@ -1263,7 +1284,9 @@ media 8 dp under the arrow glyph, name right of the media and above the
 meta, one line, media bottom 8 dp above the bar bottom, Play button 16 dp
 below the media bottom, the t = 0.5 hand-off instant (both opacities 0)
 and the title-alone state just past it, collapsed title visible +
-clearing the back button + fitting the bar.
+clearing the back button + fitting the bar, and the enlarged-text-scale
+guard (at scale 1.3 the meta's `Flexible` cap keeps the tight content box
+overflow-free and the 8/8/16 contract intact).
 
 ---
 

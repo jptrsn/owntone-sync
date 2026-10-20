@@ -19,6 +19,10 @@
 //     the meta line; the name is one line; the media bottom is 8 px above
 //     the bar bottom and the Play button top is 16 px below the media
 //     bottom (no dead band);
+//   * enlarged text scale: at Android's largest font scale (1.3) the
+//     name/meta column yields to the mediaSize row cap (the meta sits in a
+//     Flexible — invariant 47, 2026-10-20 review finding) — no flex
+//     overflow, the 8/8/16 contract intact;
 //   * mid-scroll: early in the collapse the expanded content is still
 //     visible and the collapsed-state title is still hidden (no double
 //     name); at the t = 0.5 hand-off instant neither rendering is painted;
@@ -149,21 +153,17 @@ void main() {
     final meta = headerRect(tester, _metaText);
     final back = globalRect(tester, find.byIcon(Icons.arrow_back));
 
-    // The media sits 8 px under the back arrow glyph, not over it
+    // The media sits exactly 8 px under the back arrow glyph, not over it
     // (2026-10-19: the top-left anchor painted the icon over the arrow by
-    // ~28 x 28 px). Tolerated band 8-12 px: the contract is "directly
-    // under", and a second band of dead space would reappear with a
-    // looser inset.
+    // ~28 x 28 px). The inset is P-independent by construction (top inset
+    // P + kToolbarHeight - 16 + 8 vs the glyph bottom P + 40), so the
+    // contract is exactly 8; the 1 px epsilon covers physical-pixel
+    // quantization. A looser band would admit fresh dead space between the
+    // arrow and the media (2026-10-20 review finding).
     expect(
-      m.top >= back.bottom + 8,
-      isTrue,
-      reason: '$screen (expanded) media too close to (or overlapping) the '
-          'back arrow: media=$m back=$back',
-    );
-    expect(
-      m.top <= back.bottom + 12,
-      isTrue,
-      reason: '$screen (expanded) dead band between back arrow and media: '
+      m.top,
+      moreOrLessEquals(back.bottom + 8.0, epsilon: 1.0),
+      reason: '$screen (expanded) media not 8 px under the back arrow: '
           'media=$m back=$back',
     );
     // Left-aligned: the media starts near the screen's left edge, not
@@ -187,8 +187,8 @@ void main() {
       reason: '$screen (expanded) name not above the meta: name=$name '
           'meta=$meta',
     );
-    // One line: titleLarge is 25.7 px tall; allow metric slack, but not a
-    // second line.
+    // One line: M3 titleLarge is 22 x 1.27 = 28 px tall (invariant 47);
+    // allow metric slack, but not a second line.
     expect(
       name.height,
       lessThanOrEqualTo(34),
@@ -236,7 +236,11 @@ void main() {
     String screen,
     double delta,
   ) async {
-    // Early mid (t ≈ 0.12-0.23, below the fade start at 0.35).
+    // Early mid (t ≈ 0.12-0.23, below the _HeaderFade window's start at
+    // 0.35). The framework's own parallax fade (invariant 47) is already
+    // dimming the painted background on the smaller media sizes — this
+    // assertion reads the keyed _HeaderFade opacity, not the painted
+    // product.
     final bar = await scrollToOffset(tester, 15.0);
     // Harness sanity (verification-protocol §4): confirm the measured state
     // is actually a partially collapsed bar before asserting on it.
@@ -438,6 +442,73 @@ void main() {
         // Collapsed — drag the bar away.
         await scrollToCollapsed(tester);
         await assertCollapsed(tester, 'artist');
+      },
+    );
+  });
+
+  group('playlist detail header (enlarged text scale)', () {
+    testWidgets(
+      'at the largest Android font scale (1.3) the meta yields to the '
+      'row height cap: no flex overflow, the 8/8/16 contract holds, '
+      'the scale is applied (invariant 47)',
+      (tester) async {
+        // The test binding is per-test, so the value cannot leak into other
+        // tests; cleared after the pump for hygiene.
+        tester.view.platformDispatcher.textScaleFactorTestValue = 1.3;
+        await pumpScreen(
+          tester,
+          const PlaylistDetailScreen(playlistId: 101, playlistName: 'Brass'),
+          ready: find.descendant(
+            of: find.byType(FlexibleSpaceBar),
+            matching: _metaText,
+          ),
+        );
+        tester.view.platformDispatcher.clearTextScaleFactorTestValue();
+
+        // If the meta's Flexible cap were absent, the pump above would have
+        // thrown "A RenderFlex overflowed" on the tight 64 px content box
+        // (the 2026-10-20 review probe measured 7 px at this scale) —
+        // reaching this point is the primary guard.
+        final m = globalRect(tester, find.byIcon(Icons.queue_music));
+        final name = globalRect(tester, _expandedName);
+        final meta = headerRect(tester, _metaText);
+        final barBottom =
+            globalRect(tester, find.byKey(const Key('detail-header-row-fade')))
+                .bottom;
+        final play =
+            globalRect(tester, find.widgetWithText(FilledButton, 'Play'));
+
+        // Harness sanity (§4): the scale is actually applied — the
+        // one-line name is 22 x 1.27 x 1.3 ≈ 36 px, not the default 28;
+        // a wrapped second line (~72 px) fails the same band.
+        expect(
+          name.height,
+          moreOrLessEquals(28 * 1.3, epsilon: 2.5),
+          reason: 'text scale not applied or name wrapped: name=$name',
+        );
+        expectNoOverlap('playlist (scale 1.3) name vs meta', name, meta);
+        // The tight content box stayed 64 px tall: the bar still ends 8 px
+        // below the media...
+        expect(
+          barBottom - m.bottom,
+          moreOrLessEquals(8.0, epsilon: 1.0),
+          reason: 'scale broke the compact-geometry contract: media=$m '
+              'barBottom=$barBottom',
+        );
+        // ...the meta's box yields into the cap (it does not grow the row
+        // past the media)...
+        expect(
+          meta.bottom,
+          lessThanOrEqualTo(m.bottom + 1.0),
+          reason: 'meta box grew the row past the media: meta=$meta '
+              'media=$m',
+        );
+        // ...and the Play row still follows 16 px below the media.
+        expect(
+          play.top - m.bottom,
+          moreOrLessEquals(16.0, epsilon: 1.0),
+          reason: 'scale broke the media-to-Play gap: media=$m play=$play',
+        );
       },
     );
   });

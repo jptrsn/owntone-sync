@@ -72,21 +72,36 @@ const double _kFadeLead = 0.15;
 ///   fade ended), the framework title is fully visible: title + back button
 ///   only.
 ///
-/// Compact geometry (2026-10-19): the bar is sized to its content —
-/// `expandedHeight = kToolbarHeight + mediaSize` — so the media's bottom
-/// sits [_kBottomMargin] above the bar's bottom and the Play/Shuffle row
-/// (next sliver) follows 16 px below the media. A taller bar leaves a dead
-/// band between the media and the buttons (the 2026-10-19 defect: 61 px on
-/// the reference Pixel); the assert in [_HeaderFade.build] pins the
-/// `expandedHeight` contract.
-///
-/// The fade hand-off is a fixed window, not a derived crossing: in this
-/// compact geometry the collapsed title's sweep band overlaps the expanded
-/// name for the entire collapse (they coincide at the hand-off, which is
-/// what makes the morph read as the name settling into the collapsed bar),
-/// so the only clean contract is "one rendering at a time" — the header
-/// fades out over `[_kTitleInStart - _kFadeLead, _kTitleInStart]` and the
-/// title fades in over `[_kTitleInStart, _kTitleInEnd]`.
+ /// Compact geometry (2026-10-19): the bar is sized to its content —
+ /// `expandedHeight = kToolbarHeight + mediaSize` — so the media's bottom
+ /// sits [_kBottomMargin] above the bar's bottom and the Play/Shuffle row
+ /// (next sliver) follows 16 px below the media. A taller bar leaves a dead
+ /// band between the media and the buttons (the 2026-10-19 defect: 61 px on
+ /// the reference Pixel); the assert in [_HeaderFade.build] pins the
+ /// `expandedHeight` contract. At an enlarged system text scale the name
+ /// keeps the user's scale and the meta (placed in a `Flexible`) yields to
+ /// the row's [mediaSize] height cap, so the tight content box never
+ /// overflows (at the largest Android scale the meta's box shrinks and its
+ /// glyphs may spill a few px into the bottom margin).
+ ///
+ /// The background also receives the framework's own parallax fade
+ /// (`FlexibleSpaceBar` defaults to `CollapseMode.parallax`,
+ /// `flexible_space_bar.dart:245-252`): it starts at collapse fraction
+ /// `1 - kToolbarHeight / mediaSize` (0.125 / 0.222 / 0.533 for the 64/72/120
+ /// call sites), so the *painted* header opacity is that fade times the
+ /// [_HeaderFade] window — below 1.0 from early in the collapse on the two
+ /// smaller media sizes, and exactly 0 by t = 0.5 either way. The "one
+ /// rendering at a time" contract is unaffected: both fades are monotone and
+ /// the title starts where the header is exactly 0.
+ ///
+ /// The fade hand-off is a fixed window, not a derived crossing: in this
+ /// compact geometry the collapsed title's sweep band overlaps the expanded
+ /// name for the entire range in which the header is visible (t ≤ 0.5) —
+ /// they coincide at the hand-off, which is what makes the morph read as the
+ /// name settling into the collapsed bar — so the only clean contract is
+ /// "one rendering at a time": the header fades out over
+ /// `[_kTitleInStart - _kFadeLead, _kTitleInStart]` and the title fades in
+ /// over `[_kTitleInStart, _kTitleInEnd]`.
 ///
 /// The expanded name must keep `maxLines: 1` + ellipsis: a wrapping name
 /// would break the single-row shape and, in the collapsed bar, the
@@ -120,7 +135,10 @@ class CollectionDetailHeader extends StatelessWidget {
   final double mediaSize;
 
   /// The meta line under the name ('N tracks' family). Styled by the call
-  /// site; omitted (null) while the screen is still loading.
+  /// site; omitted (null) while the screen is still loading. Placed in a
+  /// `Flexible` (see the class doc): at an enlarged system text scale it
+  /// yields to the row's [mediaSize] height cap instead of overflowing the
+  /// tight content box.
   final Widget? meta;
 
   @override
@@ -167,7 +185,16 @@ class CollectionDetailHeader extends StatelessWidget {
                       ),
                       if (meta != null) ...[
                         const SizedBox(height: _kNameMetaGap),
-                        meta!,
+                        // Flexible: the content box is tight at [mediaSize]
+                        // (the _HeaderFade assert), so an unconstrained
+                        // name + gap + meta column would RenderFlex-overflow
+                        // it at an enlarged system text scale (measured 7 px
+                        // on the playlist screen at scale 1.3). The flex cap
+                        // makes the meta yield: its box shrinks to the
+                        // remaining height and the row stays [mediaSize]
+                        // tall. At the default scale the remainder exceeds
+                        // the meta's natural height, so this is a no-op.
+                        Flexible(child: meta!),
                       ],
                     ],
                   ),
@@ -267,9 +294,10 @@ class _HeaderFade extends StatelessWidget {
   /// [_kTitleInStart], and is gone after. The title fades in over
   /// `[_kTitleInStart, _kTitleInEnd]`, so the two renderings of the name
   /// are never painted together. (In this header's compact geometry the
-  /// title's sweep band overlaps the expanded name for the entire collapse
-  /// — they coincide at the hand-off — so a crossing-derived window would
-  /// be meaningless; see the [CollectionDetailHeader] doc.)
+  /// title's sweep band overlaps the expanded name for the entire range in
+  /// which the header is visible (t ≤ 0.5) — they coincide at the hand-off —
+  /// so a crossing-derived window would be meaningless; see the
+  /// [CollectionDetailHeader] doc.)
   static double _headerOpacity(double t) {
     const double tGone = _kTitleInStart;
     assert(
