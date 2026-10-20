@@ -1,72 +1,179 @@
 import 'package:flutter/foundation.dart' show clampDouble;
 import 'package:flutter/material.dart';
 
-/// The shared `FlexibleSpaceBar` header for the collection detail screens
-/// (playlist / album / artist), keeping one layout owner per visible scroll
-/// state.
+/// Vertical gap between the back arrow glyph's bottom and the media's top.
+/// The 24 px glyph is centred in the 56 px toolbar zone, so its bottom sits
+/// `kToolbarHeight - 16` below the status-inset top; the media's top inset
+/// (computed in [CollectionDetailHeader.build]) is that plus this gap, which
+/// keeps the media 8 px under the arrow on every device (the status-inset
+/// height P varies by device and is read from the MediaQuery).
+const double _kMediaArrowGap = 8.0;
+
+/// Start (left) padding for the media.
+const double _kMediaStart = 24.0;
+
+/// Trailing padding for the header content.
+const double _kMediaEnd = 24.0;
+
+/// The margin between the media's bottom and the bar's bottom when expanded.
+/// The call sites size `expandedHeight = kToolbarHeight + mediaSize`, which
+/// makes the bar end exactly this margin below the media (top inset 48 +
+/// media + this margin = P + 56 + mediaSize); the Play/Shuffle row sits in
+/// the next sliver, so the media-to-button gap is this margin + the row's
+/// own top padding (8 px) = 16 px. Checked by the assert in
+/// [_HeaderFade.build].
+const double _kBottomMargin = 8.0;
+
+/// Gap between the media and the name/meta column.
+const double _kMediaGap = 16.0;
+
+/// Gap between the name and the meta line.
+const double _kNameMetaGap = 4.0;
+
+/// The collapse fraction at which the collapsed-state title starts fading
+/// in (fully in by `_kTitleInEnd`). It must stay above the header content's
+/// fade-out end on every call site (checked with an assert in
+/// [_HeaderFade._headerOpacity]) so the two name renderings never paint at
+/// the same time.
+const double _kTitleInStart = 0.5;
+const double _kTitleInEnd = 0.7;
+
+/// How much of the collapse (as a fraction) the header content's fade
+/// starts before it must be gone.
+const double _kFadeLead = 0.15;
+
+/// The shared header for the collection detail screens (playlist / album /
+/// artist), keeping one layout owner per visible scroll state.
 ///
 /// `FlexibleSpaceBar` lays out `title` and `background` as **independent
 /// layers of one Stack** (Flutter 3.41; see `flexible_space_bar.dart`): the
-/// title is anchored to the bar's bottom-left (default padding start 72 /
-/// bottom 16 when `centerTitle` is false and a leading widget exists),
-/// scaled 1.5 -> 1.0 about that corner as the bar collapses; the background
-/// is a parallax layer (up a quarter of the collapse travel) that fades to
-/// opacity 0 at full collapse. With `pinned: true` the bar's
-/// `toolbarOpacity` is always 1, so the title is fully visible in **every**
-/// scroll state, and at full collapse the background is invisible — the
-/// title is the collapsed-state owner of the name, and the background's
-/// icon/artwork + metadata row is the expanded-state owner.
+/// title is anchored to the bar's bottom-left (padding start 72 / bottom 16
+/// while a leading widget exists), scaled 1.5 -> 1.0 about that corner as
+/// the bar collapses; the background is a parallax layer (up a quarter of
+/// the collapse travel) that the framework fades to opacity 0 at full
+/// collapse. With `pinned: true` the bar's `toolbarOpacity` is always 1.
 ///
-/// The pre-fix layout anchored the row bottom-left too, so both layers
-/// claimed the bottom-left region when expanded and the name painted over
-/// the icon and the track count (blockers 2026-10-13; the collapsed
-/// variant is 2026-10-08). The two placements below keep the layers
-/// disjoint in every scroll state:
+/// The design (2026-10-19, user-specified): when expanded the header reads
+/// as one row — the media left-aligned under the back arrow, and to its
+/// right the collection **name** above its **meta** line ('N tracks'
+/// family) — and that row is the background layer's content. The framework
+/// `title` is the same name rendered at the collapsed position (bottom-left,
+/// beside the back button) and is the **collapsed-state owner**: it is
+/// invisible while expanded and fades in at the end of the collapse, when
+/// the background has already gone. Hence:
 ///
-/// * expanded — the row is anchored **top-left**, out of the title's
-///   bottom-left zone;
-/// * collapsing — the row fades out (ending 8 px before the title sweep
-///   would reach it, computed from [FlexibleSpaceBarSettings]), so the
-///   sweep never crosses an opaque row;
-/// * collapsed — the row is gone (and the background is at opacity 0),
-///   leaving the title as the sole visible content.
+/// * **expanded** — the background owns everything visible (media, name,
+///   meta); the framework title is at opacity 0;
+/// * **collapsing** — the background fades out (parallax + fade) and the
+///   framework title fades in; the header is fully gone exactly when the
+///   title starts fading in (fixed hand-off at `_kTitleInStart`), so the
+///   two renderings never paint together;
+/// * **collapsed** — the background is gone (framework-faded, and its own
+///   fade ended), the framework title is fully visible: title + back button
+///   only.
 ///
-/// The title must keep `maxLines: 1` + ellipsis: a wrapping or unsized
-/// title overflows the 56 px collapsed bar (the 2026-10-08 entry's
+/// Compact geometry (2026-10-19): the bar is sized to its content —
+/// `expandedHeight = kToolbarHeight + mediaSize` — so the media's bottom
+/// sits [_kBottomMargin] above the bar's bottom and the Play/Shuffle row
+/// (next sliver) follows 16 px below the media. A taller bar leaves a dead
+/// band between the media and the buttons (the 2026-10-19 defect: 61 px on
+/// the reference Pixel); the assert in [_HeaderFade.build] pins the
+/// `expandedHeight` contract.
+///
+/// The fade hand-off is a fixed window, not a derived crossing: in this
+/// compact geometry the collapsed title's sweep band overlaps the expanded
+/// name for the entire collapse (they coincide at the hand-off, which is
+/// what makes the morph read as the name settling into the collapsed bar),
+/// so the only clean contract is "one rendering at a time" — the header
+/// fades out over `[_kTitleInStart - _kFadeLead, _kTitleInStart]` and the
+/// title fades in over `[_kTitleInStart, _kTitleInEnd]`.
+///
+/// The expanded name must keep `maxLines: 1` + ellipsis: a wrapping name
+/// would break the single-row shape and, in the collapsed bar, the
+/// framework's 1-line title overflows the 56 px bar (the 2026-10-08 entry's
 /// requirement). Guarded by `test/detail_header_geometry_test.dart`.
+///
+/// Precondition: call sites use the 56 px default `minExtent`
+/// (`kToolbarHeight`), the default `titleLarge` title style, and the
+/// framework's default title padding/scale. All current call sites do; with
+/// a custom value recompute the insets and fade windows before reusing.
 class CollectionDetailHeader extends StatelessWidget {
   const CollectionDetailHeader({
     super.key,
     required this.name,
-    required this.row,
-    required this.rowHeight,
+    required this.media,
+    required this.mediaSize,
+    this.meta,
   });
 
-  /// The collection name — the FlexibleSpaceBar `title`.
+  /// The collection name — rendered beside the media when expanded and as
+  /// the framework `title` (collapsed position) always.
   final String name;
 
-  /// The icon/artwork + metadata row — the expanded-state content. Keep
-  /// its internal structure as-is; only this header owns its placement.
-  final Widget row;
+  /// The media — icon / artwork / avatar, pinned to [mediaSize] square.
+  final Widget media;
 
-  /// The height the header pins the row to (icon 64 / avatar 72 / artwork
-  /// 120). Without the pin, a row containing an `Expanded` column
-  /// stretches to the background's full height and its bottom-aligned
-  /// metadata lands in the title zone again; the fade window is also
-  /// derived from it, so it must match the row's content.
-  final double rowHeight;
+  /// The media's square side (icon 64 / avatar 72 / artwork 120). The call
+  /// site sizes the media widget to this; the pin keeps a media that wants
+  /// to stretch (an `Expanded` child, a loose image) from distorting the
+  /// row.
+  final double mediaSize;
+
+  /// The meta line under the name ('N tracks' family). Styled by the call
+  /// site; omitted (null) while the screen is still loading.
+  final Widget? meta;
 
   @override
   Widget build(BuildContext context) {
+    // The background spans the full sliver extent (status inset P plus
+    // expandedHeight), so the top inset must be P-aware: it places the
+    // media [_kMediaArrowGap] below the back arrow glyph (whose bottom sits
+    // `kToolbarHeight - 16` below the inset top) on every device.
+    final double topInset =
+        MediaQuery.paddingOf(context).top + kToolbarHeight - 16 + _kMediaArrowGap;
     return FlexibleSpaceBar(
-      title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      background: _HeaderRowFade(
-        rowHeight: rowHeight,
+      title: _CollapsingTitle(name: name),
+      background: _HeaderFade(
+        mediaSize: mediaSize,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+          padding: EdgeInsets.fromLTRB(
+            _kMediaStart,
+            topInset,
+            _kMediaEnd,
+            _kBottomMargin,
+          ),
+          // Top-pinned: the background arrives with a TIGHT height (the
+          // sliver extent minus the padding), which a bare Row would fill —
+          // centring the media in the slack and reopening the dead band
+          // below it. Align gives the Row loose constraints so it sizes to
+          // the media (its tallest child) and stays at the content top.
           child: Align(
-            alignment: Alignment.topLeft,
-            child: SizedBox(height: rowHeight, child: row),
+            alignment: Alignment.topCenter,
+            child: Row(
+              children: [
+                SizedBox.square(dimension: mediaSize, child: media),
+                const SizedBox(width: _kMediaGap),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        key: const Key('detail-header-expanded-name'),
+                        name,
+                        style: Theme.of(context).textTheme.titleLarge,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (meta != null) ...[
+                        const SizedBox(height: _kNameMetaGap),
+                        meta!,
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -74,13 +181,28 @@ class CollectionDetailHeader extends StatelessWidget {
   }
 }
 
-/// Fades the expanded-state header row out before the collapsing title
-/// sweep reaches it (see [CollectionDetailHeader]).
-class _HeaderRowFade extends StatelessWidget {
-  const _HeaderRowFade({required this.rowHeight, required this.child});
+/// 0 = fully expanded, 1 = fully collapsed. Null when the bar cannot
+/// collapse (or no settings are in scope) — callers then keep everything
+/// fully visible.
+double? _collapseFraction(FlexibleSpaceBarSettings? settings) {
+  if (settings == null) return null;
+  final double delta = settings.maxExtent - settings.minExtent;
+  if (delta <= 0) return null;
+  return clampDouble(
+    1.0 - (settings.currentExtent - settings.minExtent) / delta,
+    0.0,
+    1.0,
+  );
+}
 
-  final double rowHeight;
-  final Widget child;
+/// The collapsed-state name: the framework `title` slot, hidden while
+/// expanded and faded in at the end of the collapse (see
+/// [CollectionDetailHeader]). The framework keeps painting it at full
+/// `toolbarOpacity` (pinned bar), so the opacity lives here.
+class _CollapsingTitle extends StatelessWidget {
+  const _CollapsingTitle({required this.name});
+
+  final String name;
 
   @override
   Widget build(BuildContext context) {
@@ -88,57 +210,74 @@ class _HeaderRowFade extends StatelessWidget {
         .dependOnInheritedWidgetOfExactType<FlexibleSpaceBarSettings>();
     final double? t = _collapseFraction(settings);
     final double opacity =
-        t == null ? 1.0 : _rowOpacity(t, settings!, rowHeight, context);
-    return Opacity(opacity: opacity, child: child);
+        t == null ? 1.0 : Interval(_kTitleInStart, _kTitleInEnd).transform(t);
+    return Opacity(
+      key: const Key('detail-header-collapsed-title'),
+      opacity: opacity,
+      child: Text(
+        name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
   }
+}
 
-  /// 0 = fully expanded, 1 = fully collapsed. Null when the bar cannot
-  /// collapse (or no settings are in scope) — the row then just stays.
-  static double? _collapseFraction(FlexibleSpaceBarSettings? settings) {
-    if (settings == null) return null;
-    final double delta = settings.maxExtent - settings.minExtent;
-    if (delta <= 0) return 0.0;
-    return clampDouble(
-      1.0 - (settings.currentExtent - settings.minExtent) / delta,
-      0.0,
-      1.0,
+/// Fades the expanded-state header (media + name + meta) out so it is fully
+/// gone exactly when the collapsed-state title starts fading in (see
+/// [CollectionDetailHeader]).
+class _HeaderFade extends StatelessWidget {
+  const _HeaderFade({required this.mediaSize, required this.child});
+
+  final double mediaSize;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final FlexibleSpaceBarSettings? settings = context
+        .dependOnInheritedWidgetOfExactType<FlexibleSpaceBarSettings>();
+    if (settings != null) {
+      // The compact-geometry contract: the bar must end exactly
+      // [_kBottomMargin] below the media, i.e. maxExtent (status inset P
+      // plus expandedHeight) = P + kToolbarHeight + mediaSize. A taller
+      // bar reopens the dead band between the media and the Play/Shuffle
+      // row (the 2026-10-19 defect); a shorter one clips the media.
+      final double expectedMaxExtent =
+          MediaQuery.paddingOf(context).top + kToolbarHeight + mediaSize;
+      assert(
+        (settings.maxExtent - expectedMaxExtent).abs() < 1.0,
+        'CollectionDetailHeader call site violates the compact-geometry '
+        'contract: expandedHeight must be kToolbarHeight + mediaSize '
+        '(maxExtent ${settings.maxExtent} != expected $expectedMaxExtent)',
+      );
+    }
+    final double? t = _collapseFraction(settings);
+    final double opacity = t == null ? 1.0 : _headerOpacity(t);
+    return Opacity(
+      key: const Key('detail-header-row-fade'),
+      opacity: opacity,
+      child: child,
     );
   }
 
-  /// The row's opacity at collapse fraction [t].
+  /// The header's opacity at collapse fraction [t].
   ///
-  /// The title's painted top and the row's bottom are both **linear** in
-  /// [t] (title: `barHeight - 16 - h * (1.5 - 0.5 t)` with [h] the title's
-  /// one-line height; row: `24 + rowHeight - delta * t / 4`), so the title
-  /// sweep closes the vertical gap at a constant rate. The row therefore
-  /// stays opaque until 15% of the collapse before the sweep arrives, then
-  /// fades to 0 at the fraction where an 8 px safety margin still remains —
-  /// the two layers are disjoint in every scroll state, not just at the
-  /// expanded/collapsed extremes the guards measure.
-  static double _rowOpacity(
-    double t,
-    FlexibleSpaceBarSettings settings,
-    double rowHeight,
-    BuildContext context,
-  ) {
-    final double delta = settings.maxExtent - settings.minExtent;
-    final TextStyle titleStyle = Theme.of(context).textTheme.titleLarge!;
-    final double h = (titleStyle.fontSize ?? 22.0) * (titleStyle.height ?? 1.0);
-    // Gap at t = 0. The leading 16 folds in the default kToolbarHeight (56)
-    // collapsed bar; generally this is minExtent + delta - 40 - 1.5*h -
-    // rowHeight (bar height minus the title's 16 px bottom padding and the
-    // row's 24 top + 16 bottom padding). All current call sites use the 56
-    // px default; with a custom minExtent recompute before reusing.
-    final double gap0 = 16.0 + delta - 1.5 * h - rowHeight;
-    final double slope = 0.75 * delta - 0.5 * h; // how fast the gap closes
-    if (slope <= 0 || gap0 <= 8.0) {
-      // Degenerate: slope <= 0 — the gap never closes (no collision risk);
-      // gap0 <= 8 — the row already reaches the title when expanded, so no
-      // fade window exists. Either way: fade across the whole collapse.
-      return 1.0 - t;
-    }
-    final double tGone = ((gap0 - 8.0) / slope).clamp(0.05, 0.95);
-    final double tStart = (tGone - 0.15).clamp(0.0, tGone);
+  /// Fixed hand-off at [_kTitleInStart]: the header is fully visible until
+  /// `_kTitleInStart - _kFadeLead`, fades linearly to 0 at
+  /// [_kTitleInStart], and is gone after. The title fades in over
+  /// `[_kTitleInStart, _kTitleInEnd]`, so the two renderings of the name
+  /// are never painted together. (In this header's compact geometry the
+  /// title's sweep band overlaps the expanded name for the entire collapse
+  /// — they coincide at the hand-off — so a crossing-derived window would
+  /// be meaningless; see the [CollectionDetailHeader] doc.)
+  static double _headerOpacity(double t) {
+    const double tGone = _kTitleInStart;
+    assert(
+      _kFadeLead <= tGone && _kTitleInEnd > tGone,
+      'CollectionDetailHeader fade windows are broken: the header fade-out '
+      'must end exactly when the title fade-in starts',
+    );
+    final double tStart = (tGone - _kFadeLead).clamp(0.0, tGone);
     if (t <= tStart) return 1.0;
     if (t >= tGone) return 0.0;
     return 1.0 - (t - tStart) / (tGone - tStart);

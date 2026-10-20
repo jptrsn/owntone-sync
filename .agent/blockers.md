@@ -33,8 +33,11 @@
 > 2026-10-08 (collapsed title) detail-header
 > entries were fixed and **widget-test-verified** by the 2026-10-15
 > widget-test program (guards in `test/detail_header_geometry_test.dart`);
-> their device pass is explicitly deferred to the user (no device was
-> available to the program). The 2026-10-08 search entry (the field never
+> the deferred device pass ran 2026-10-19 on a Pixel 6 — it caught a defect
+> in the 10-15 fix itself (the top-left-anchored row painted the 64 px
+> playlist icon over the back arrow), replaced the same day with the
+> user-specified shape (media under the arrow; name + meta stacked to its
+> right) and device-verified on all three screens; see the entry. The 2026-10-08 search entry (the field never
 > rendered — search was entirely unusable) was fixed and device-verified the
 > same day. The 2026-10-02 scheduled-sync entry (two compounding defects, both
 > present in released `main`) was fixed and device-verified on 2026-10-03.
@@ -294,7 +297,7 @@ green with the tolerance removed; full suite green.
 
 ---
 
-## 2026-10-13 — RESOLVED (widget-test-verified 2026-10-15; device pass deferred to the user): collection detail headers — the title overlaps the icon and track count (expanded)
+## 2026-10-13 — RESOLVED (widget-test-verified 2026-10-15; device-verified 2026-10-19, after the fix itself was re-shaped on device): collection detail headers — the title overlaps the icon and track count (expanded)
 
 Reported from device use (playlist screen). **Confirmed by widget-test
 geometry measurement on all three collection detail screens**. The
@@ -315,9 +318,31 @@ The fix is the shared `lib/presentation/widgets/collection_detail_header.dart`
 `FlexibleSpaceBar` title (`maxLines: 1`, ellipsis) owns the collapsed bar,
 and the icon/artwork + meta row is the expanded-state owner, top-anchored,
 height-pinned, and faded out before the title sweep reaches it.
-**Device verification of both scroll states on all three screens (including
-the long real names) is explicitly deferred to the user** — no device was
-available to the program (scope agreed in `.agent/widget-test-task.md`).
+**Device verification** — the 10-15 fix passed its widget guards but the
+2026-10-19 device pass (Pixel 6, the deferred pass) caught a defect in the
+fix itself: the top-left-anchored row painted the 64 px playlist icon over
+the back arrow (~28 × 28 dp; the guard tests had no back button to compare
+against, which is why they passed). The user specified the replacement
+shape the same day — media left-aligned **under** the back arrow, name and
+meta stacked to its right — and the shared header was re-written to it
+(`_kMediaTop = kToolbarHeight + 16`, square-pinned media, `_HeaderFade` /
+`_CollapsingTitle` cross-fade, invariant 47). Device-verified 2026-10-19 on
+all three screens in both scroll states, including the long real names
+("Wilson Pickett's Greatest Hits", "Scott Bradlee & Postmodern Jukebox
+feat. Robyn Adele Anderson & Drue Davis"): the album render tree measured
+via the lens gives artwork [24, 144] × [96, 216] dp with the arrow glyph
+ending at 89 dp (no overlap), name at x = 24 + mediaSize + 16, meta under
+the name; collapsed state shows the framework title beside the back button
+only. See invariant 47 for the pinned geometry facts.
+**Second device pass, same day (the dead band)** — the user then reported
+the blank band between that header and the Play/Shuffle row (61 dp,
+render-tree measured: centring slack 24.5 + bottom margin 28 + button
+padding 8). Fixed the same day as the compact-geometry contract
+(`expandedHeight = kToolbarHeight + mediaSize`, P-aware 8 dp arrow
+clearance, top-pinned row, fixed 0.5 fade hand-off; invariant 47 rewritten)
+and device-verified on the Pixel 6: media bottom → Play top 15.8 dp
+(playlist) / 15.7 dp (album), hand-off opacities 0.000/0.000 at t = 0.5.
+See `.agent/reports/detail-header-compact-geometry.md`.
 
 ### Mechanism
 
