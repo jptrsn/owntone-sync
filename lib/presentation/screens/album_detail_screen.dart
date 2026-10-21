@@ -94,47 +94,30 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
-            expandedHeight: 260,
+            // Compact-geometry contract (collection_detail_header.dart):
+            // kToolbarHeight + mediaSize (120). A taller bar leaves a dead
+            // band between the artwork and the Play/Shuffle row below.
+            expandedHeight: kToolbarHeight + 120,
             pinned: true,
             backgroundColor: colorScheme.surface,
             foregroundColor: colorScheme.onSurface,
             flexibleSpace: CollectionDetailHeader(
               name: widget.albumName,
-              rowHeight: 120,
-              row: Row(
-                children: [
-                  AlbumArtTile(
-                    artworkPath: widget.artworkPath,
-                    size: 120,
-                    borderRadius: 8,
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Text(
-                          widget.artistName,
-                          style: Theme.of(context).textTheme.titleMedium,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        if (!_isLoading && _tracks.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            '${_tracks.length} ${_tracks.length == 1 ? 'track' : 'tracks'} \u2022 ${_formatTotalDuration()}'
-                            '${_tracks.first.year > 0 ? ' \u2022 ${_tracks.first.year}' : ''}',
-                            style: Theme.of(context).textTheme.bodySmall,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
+              mediaSize: 120,
+              media: AlbumArtTile(
+                artworkPath: widget.artworkPath,
+                size: 120,
+                borderRadius: 8,
               ),
+              meta: (!_isLoading && _tracks.isNotEmpty)
+                  ? Text(
+                      '${widget.artistName} \u2022 ${_tracks.length} ${_tracks.length == 1 ? 'track' : 'tracks'} \u2022 ${_formatTotalDuration()}'
+                      '${_tracks.first.year > 0 ? ' \u2022 ${_tracks.first.year}' : ''}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    )
+                  : null,
             ),
           ),
           SliverToBoxAdapter(

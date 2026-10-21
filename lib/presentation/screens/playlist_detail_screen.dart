@@ -70,7 +70,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
-            expandedHeight: 180,
+            // Compact-geometry contract (collection_detail_header.dart):
+            // kToolbarHeight + mediaSize (64). A taller bar leaves a dead
+            // band between the media and the Play/Shuffle row below.
+            expandedHeight: kToolbarHeight + 64,
             // Pinned so the collapsed bar (title + back button) stays
             // reachable; the header itself collapses from expanded to the
             // compact bar on scroll (B3).
@@ -79,22 +82,20 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             foregroundColor: colorScheme.onSurface,
             flexibleSpace: CollectionDetailHeader(
               name: widget.playlistName,
-              rowHeight: 64,
-              row: Row(
-                children: [
-                  Icon(
-                    Icons.queue_music,
-                    size: 64,
-                    color: colorScheme.surfaceContainerHighest,
-                  ),
-                  const SizedBox(width: 16),
-                  if (!_isLoading && _tracks.isNotEmpty)
-                    Text(
+              mediaSize: 64,
+              media: Icon(
+                Icons.queue_music,
+                size: 64,
+                color: colorScheme.surfaceContainerHighest,
+              ),
+              meta: (!_isLoading && _tracks.isNotEmpty)
+                  ? Text(
                       '${_tracks.length} ${_tracks.length == 1 ? 'track' : 'tracks'}',
                       style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                ],
-              ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    )
+                  : null,
             ),
           ),
           SliverToBoxAdapter(

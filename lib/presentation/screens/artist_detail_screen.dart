@@ -78,32 +78,31 @@ class _ArtistDetailScreenState extends State<ArtistDetailScreen> {
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
-            expandedHeight: 200,
+            // Compact-geometry contract (collection_detail_header.dart):
+            // kToolbarHeight + mediaSize (72). A taller bar leaves a dead
+            // band between the avatar and the Play/Shuffle row below.
+            expandedHeight: kToolbarHeight + 72,
             pinned: true,
             backgroundColor: colorScheme.surface,
             foregroundColor: colorScheme.onSurface,
             flexibleSpace: CollectionDetailHeader(
               name: widget.artistName,
-              rowHeight: 72,
-              row: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 36,
-                    child: Text(
-                      artistInitials(widget.artistName),
-                      style: const TextStyle(fontSize: 24),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  if (!_isLoading && _tracks.isNotEmpty)
-                    Text(
+              mediaSize: 72,
+              media: CircleAvatar(
+                radius: 36,
+                child: Text(
+                  artistInitials(widget.artistName),
+                  style: const TextStyle(fontSize: 24),
+                ),
+              ),
+              meta: (!_isLoading && _tracks.isNotEmpty)
+                  ? Text(
                       '${groups.length} ${groups.length == 1 ? 'album' : 'albums'} \u2022 ${_tracks.length} ${_tracks.length == 1 ? 'track' : 'tracks'}',
                       style: Theme.of(context).textTheme.titleMedium,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                    ),
-                ],
-              ),
+                    )
+                  : null,
             ),
           ),
           SliverToBoxAdapter(
