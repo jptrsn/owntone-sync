@@ -32,11 +32,13 @@ void main() {
 
   MockStreamHandlerEventSink? progressSink;
 
-  // The mocked worker's "is a sync running" answer. Kept false by default:
-  // a running sync would set SyncProvider.isSyncing during _initialize,
-  // which the refusal test must not see. emitCompletion turns it on just
-  // long enough to establish the progress subscription.
-  bool syncRunning = false;
+  // The mocked worker's sync-work-state answer ('none' | 'pending' |
+  // 'running'), mirroring the getSyncWorkState probe. Kept 'none' by
+  // default: a running sync would set SyncProvider.isSyncing during
+  // _initialize, which the refusal test must not see. emitCompletion turns
+  // it to 'running' just long enough to establish the progress
+  // subscription.
+  String syncWorkState = 'none';
 
   // Set when a test's startSync actually reaches the worker channel. A
   // refused start must leave this false: no enqueue, no worker run, no
@@ -213,7 +215,7 @@ void main() {
     if (progressSink == null) {
       // No progress subscription yet: report a running sync so the
       // provider subscribes, then report the run as complete below.
-      syncRunning = true;
+      syncWorkState = 'running';
       await provider.checkIfSyncRunning();
       await settle();
     }
@@ -230,14 +232,14 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     progressSink = null;
-    syncRunning = false;
+    syncWorkState = 'none';
     triggerBackgroundSyncInvoked = false;
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
       const MethodChannel(syncChannel),
       (call) async {
-        if (call.method == 'isSyncRunning') return syncRunning;
+        if (call.method == 'getSyncWorkState') return syncWorkState;
         if (call.method == 'triggerBackgroundSync') {
           triggerBackgroundSyncInvoked = true;
         }
@@ -486,6 +488,62 @@ void main() {
       );
       await emitCompletion(provider, 'success');
       await emitCompletion(provider, 'cancelled');
+      expect(provider.connectivityState, ConnectivityState.reachable);
+    });
+  });
+
+  group('a pending (enqueued) sync still gets a subscriber (invariant 52)',
+      () {
+    test('the probe subscribes without claiming a run; the first progress '
+        'event flips isSyncing on; completion still reconciles', () async {
+      final provider = providerFailing(connectionTimeout);
+      addTearDown(provider.dispose);
+      await settle();
+      // Settle the _initialize probe explicitly against 'none': no
+      // subscription, nothing claimed.
+      syncWorkState = 'none';
+      await provider.checkIfSyncRunning();
+      expect(progressSink, isNull);
+      expect(provider.isSyncing, isFalse);
+
+      // The work is enqueued (scheduled sync before its fire time). The
+      // subscriber must exist or the worker's completion broadcast posts
+      // to a null eventSink and is dropped — the stale-playlist-count
+      // defect (blockers 2026-10-22).
+      syncWorkState = 'pending';
+      await provider.checkIfSyncRunning();
+      expect(
+        progressSink,
+        isNotNull,
+        reason: 'an enqueued work needs a subscriber before it fires',
+      );
+      expect(
+        provider.isSyncing,
+        isFalse,
+        reason: 'nothing is running yet — the UI must not claim it',
+      );
+
+      // The worker starts: the first progress event flips the running UI
+      // on (the subscription made this deliverable).
+      progressSink!.success(<String, Object?>{
+        'currentPlaylist': 'Brass',
+        'totalPlaylists': 1,
+        'currentPlaylistIndex': 0,
+        'totalTracks': 2,
+        'downloadedTracks': 1,
+        'currentTrackTitle': 'a track',
+        'downloadProgress': null,
+      });
+      await settle();
+      expect(provider.isSyncing, isTrue);
+
+      // Completion still reconciles: reachability and the syncCompleted
+      // broadcast the LibraryScreen refresh rides on.
+      final completed = <String>[];
+      final subscription = provider.syncCompleted.listen(completed.add);
+      addTearDown(subscription.cancel);
+      await emitCompletion(provider, 'success');
+      expect(completed, ['success']);
       expect(provider.connectivityState, ConnectivityState.reachable);
     });
   });

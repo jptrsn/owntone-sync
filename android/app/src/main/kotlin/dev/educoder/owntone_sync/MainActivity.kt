@@ -204,19 +204,36 @@ class MainActivity: AudioServiceActivity() {
                     // side does not claim a save that the enqueue threw.
                     result.success(registerBackgroundSync())
                 }
-                "isSyncRunning" -> {
+                "getSyncWorkState" -> {
+                    // Three states, not a bool: a scheduled sync sits
+                    // ENQUEUED (initial delay not yet elapsed) or BLOCKED
+                    // (network constraint unmet) for most of the window
+                    // before it fires. A probe that only reported RUNNING
+                    // made that window invisible, so the Dart side never
+                    // subscribed to the progress channel and the worker's
+                    // completion broadcast posted to a null eventSink and
+                    // was dropped - the library then kept its pre-sync
+                    // counts until a tab switch or relaunch (blockers
+                    // 2026-10-22). "pending" means: not running yet, but a
+                    // subscriber will be needed when it starts.
                     try {
                         val workInfos = WorkManager.getInstance(applicationContext)
                             .getWorkInfosByTag("sync-task")
                             .get()
-                        val isRunning = workInfos.any {
-                            it.state == WorkInfo.State.RUNNING
+                        val states = workInfos.map { it.state }
+                        val state = when {
+                            states.contains(WorkInfo.State.RUNNING) -> "running"
+                            states.any {
+                                it == WorkInfo.State.ENQUEUED ||
+                                    it == WorkInfo.State.BLOCKED
+                            } -> "pending"
+                            else -> "none"
                         }
-                        Log.d("MainActivity", "Sync running check: $isRunning (found ${workInfos.size} work items, states: ${workInfos.map { it.state }})")
-                        result.success(isRunning)
+                        Log.d("MainActivity", "Sync work state: $state (found ${workInfos.size} work items, states: $states)")
+                        result.success(state)
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Error checking sync state", e)
-                        result.success(false)
+                        result.success("none")
                     }
                 }
                 "getAppVersion" -> {

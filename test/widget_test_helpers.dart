@@ -514,8 +514,8 @@ MockStreamHandlerEventSink? mockAppChannels() {
     const MethodChannel('dev.educoder.owntone_sync/sync'),
     (call) async {
       switch (call.method) {
-        case 'isSyncRunning':
-          return false;
+        case 'getSyncWorkState':
+          return 'none';
         case 'getAppVersion':
           // The About screen reads the version from this channel
           // (invariant 45): a test version, never a literal.

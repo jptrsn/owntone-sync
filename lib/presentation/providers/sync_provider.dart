@@ -355,19 +355,35 @@ class SyncProvider extends ChangeNotifier {
     return _hasStoragePermission;
   }
 
-  /// Check if a background sync is running
+  /// Reconcile the provider with any background sync on the device.
+  ///
+  /// The probe reports the `sync-task` work's *state*, not a bool. A
+  /// scheduled sync is ENQUEUED (or BLOCKED on its network constraint) for
+  /// most of the window before it fires; a work in either state still needs
+  /// a subscriber when it does. Without one, the worker's completion
+  /// broadcast posts to a null eventSink and is dropped, so the post-sync
+  /// library refresh, the drawer's "last synced" line and the connectivity
+  /// state all stay at their pre-sync values (blockers 2026-10-22).
+  ///
+  /// Subscribing while the work is pending is deliberately idle-cheap: no
+  /// events flow until the worker starts, and the first *progress* event
+  /// below flips [_isSyncing] on — so the UI never claims a run that has
+  /// not started, and the in-app progress/cancel appears the moment it does.
   Future<void> checkIfSyncRunning() async {
     try {
       const channel = MethodChannel('dev.educoder.owntone_sync/sync');
-      final isRunning = await channel.invokeMethod<bool>('isSyncRunning');
+      final state = await channel.invokeMethod<String>('getSyncWorkState');
 
-      if (isRunning == true) {
+      if (state == 'running') {
         logger.i('Background sync is currently running');
         _isSyncing = true;
         _subscribeToSyncProgress();
         notifyListeners();
+      } else if (state == 'pending') {
+        logger.i('Background sync enqueued — subscribing for its completion');
+        _subscribeToSyncProgress();
       } else {
-        logger.d('No background sync running');
+        logger.d('No background sync running or enqueued');
       }
     } catch (e) {
       logger.e('Error checking sync state', error: e);

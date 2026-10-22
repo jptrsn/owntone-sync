@@ -114,7 +114,12 @@ class _LibraryScreenState extends State<LibraryScreen>
       debugPrint('Queue reconciliation after sync failed: $e');
     }
     if (!mounted) return;
-    await context.read<BrowseProvider>().loadData();
+    // reloadAll(), not loadData(): a sync rewrites the membership of every
+    // selected playlist — a smart playlist in particular can shrink as a
+    // result of the user's own listening — so the counts of the three
+    // *other* tabs are just as stale as the visible one. Reloading only the
+    // current category left them wrong until a tab switch.
+    await context.read<BrowseProvider>().reloadAll();
   }
 
   /// A9: the queue ran out of playable tracks. While the NowPlayingSheet is
