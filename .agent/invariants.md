@@ -57,7 +57,8 @@ hide populated categories
 shell-readable · 12 scratch files location · 18 uiautomator quoting ·
 29 **attach `flutter run` for rendering bugs** · 32 emulator paint wedge ·
 33 triggering a sync · 34 cancelling a sync · 35 artwork cache and the 204 ·
-42 the shared emulator: identity, disk, screencap lies
+42 the shared emulator: identity, disk, screencap lies · 53 **seeding
+on-device data: run-as + base64 chunks, and the prefs list trap**
 
 **Tests** — 36 the suite and its CI gate · 48 the widget-test environment:
 FakeAsync I/O and the shared FFI DB file · 49 the geometry guards are a
@@ -1455,7 +1456,14 @@ regex-based detection.
 The opencode temp dir (`/var/folders/.../T/opencode/`) is wiped by an external
 cleanup process during long sessions (observed twice in Phase 2, once while a
 `flutter run` log file was the active evidence file — the log was lost to the
-unlinked inode). `/tmp/owntone_verify/` is stable. When driving the UI,
+unlinked inode). `/tmp/owntone_verify/` was believed stable — **corrected
+2026-10-22: the whole of `/tmp` was wiped by a host-level event mid-session
+(both AVDs died with it; ~3 h gap; cause unknown), taking the active session's
+evidence files with it.** Treat `/tmp/owntone_verify/` as disposable:
+transcribe the evidence that matters (log excerpts, UI states, DB counts)
+into the `.agent/reports/` entry *while it still exists*, not at the end of
+the session. The AVD's own userdata (installed app, DB, prefs) survives such
+a reset — only the host-side scratch does not. When driving the UI,
 `adb shell cat /sdcard/...` redirects into the temp dir also fail silently in
 some shells — prefer `adb pull` to a file.
 
@@ -1678,7 +1686,16 @@ re-adding a Dart artwork writer (Dart never runs during a background sync).
   a `RemoteDev_API_36` take `emulator-5554` while the working
   `Pixel_9_Pro_API_36` moved to `emulator-5556`. **Always pass `-s <serial>`**,
   and confirm which serial is yours with `adb devices` plus
-  `lsof -p <qemu-pid> | grep avd`.
+  `lsof -p <qemu-pid> | grep avd`. Serials are also not stable across your own
+  restarts: when the other session's AVD is down, `Pixel_9_Pro_API_36` comes
+  back as `emulator-5554` (observed 2026-10-22, previously `emulator-5556`) —
+  re-run the identity check after every relaunch, never reuse a remembered
+  serial.
+- A **physical** device can also be attached (2026-10-22: `25071FDF600953`) —
+  it is the user's phone, with their data. Never install on it, never drive
+  it, never touch it; the session's own AVD is the only legitimate test
+  surface. If a physical device is the only one attached, say BLOCKED
+  (verification needs the AVD) rather than using the phone.
 - The emulator binary is not on PATH:
   `/Users/oblivious/Library/Android/sdk/emulator/emulator -avd
   Pixel_9_Pro_API_36 -no-window -no-audio -gpu swiftshader_indirect`.
@@ -1688,7 +1705,12 @@ re-adding a Dart artwork writer (Dart never runs during a background sync).
   decision (2026-10-09) the synced collection is **Brass only (33 tracks)**
   to keep the disk manageable — do not re-sync Soul unless asked. A failed
   streamed install on a full partition can leave the package half-uninstalled;
-  check `pm path <pkg>` after any install failure.
+  check `pm path <pkg>` after any install failure. Observed 2026-10-22: with
+  /data at 92% (≈495 MB free) even the 153 MB debug APK fails with
+  `INSTALL_FAILED_INSUFFICIENT_STORAGE`, and `pm trim-caches` does not free
+  enough — the reliable fix is deleting the SAF media test artifacts
+  (`/storage/emulated/0/Music/{tracks,playlists}`, ≈280 MB for a full Brass
+  sync), which the worker re-downloads on the next sync anyway.
 - Screencap lie one: a stable diagonal band of red pixels in the top-right
   corner is a GPU artefact (present in every screenshot, including pre-U1
   baselines), not a UI element. A badge is a dense solid cluster plus a
@@ -1698,6 +1720,35 @@ re-adding a Dart artwork writer (Dart never runs during a background sync).
   dialog that owns the top window. A dump with no content-descs is not
   evidence of an empty screen — cross-check with a second instrument (entry
   29's rule applies to dumps too).
+
+### 53. Seeding on-device app data (DB, prefs) for verification: run-as + base64 chunks, and the prefs list trap
+
+There is no sqlite3 on the device and no shell write path into
+`/data/data/`. The working pattern for seeding or restoring
+`databases/owntone_sync.db` or `shared_prefs/FlutterSharedPreferences.xml`
+(both verified 2026-10-22): extract with `run-as <pkg> cat`, edit with the
+host's sqlite3/python, write back by echoing base64 in ≤8 kB chunks
+(`run-as ... sh -c 'echo -n <chunk> >> f.b64'`, then
+`base64 -d f.b64 > dest`). **`adb exec-out run-as ... sh -c 'cat > dest' <
+local` hangs** — stdin is not forwarded through run-as — and truncates the
+target while it hangs (2026-10-22: it zeroed the app DB mid-restore; recovered
+from the host copy). Do not use it.
+
+The SharedPreferences list trap: `flutter.selected_playlist_ids` is stored as
+`base64("This is the prefix for a list.") + "!" + raw JSON` — that exact
+hybrid shape, as the app writes it. The plugin's ListEncoder only recognises
+the prefix, and anything else falls through to the legacy
+Java-serialisation decoder, which crashes `_initialize` at the prefs read
+with `StreamCorruptedException` — the app renders, but the launch load, the
+connectivity fetch and the sync probe never run, which looks like an
+unexplained missing-subscription defect. (Encoding the whole payload as one
+base64 blob is the mistake that triggers it; observed 2026-10-22.)
+
+Edit prefs/DB only while the app is **force-stopped**: a running app caches
+the XML in memory and writes it back over your edit. Writing prefs directly
+bypasses the UI's save-time validation — fine for seeding (the worker and
+`registerBackgroundSync` read the same on-disk values), say so under
+DEVIATIONS if it was the path under test.
 
 ---
 

@@ -46,6 +46,12 @@ Do not defer a check to "manual verification" and report complete. Do not defer
 a check to "real hardware" unless it is one of the three in §7B of the UX spec.
 Everything else is verifiable on `emulator-5554`.
 
+**Timing note for scheduled checks:** an agent session acts slower than the
+schedule it sets. When verifying a scheduled sync (or anything time-triggered
+on the device), set the trigger at least ~10 minutes out, not "a couple of
+minutes" — two 2026-10-22 runs missed their 3–5-minute targets because the
+session's own actions (UI steps, waits) outran the countdown.
+
 ## 4. Verify the harness before trusting the result
 
 If you build a test vehicle (a debug button, a temporary screen), confirm it
