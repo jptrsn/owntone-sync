@@ -44,6 +44,153 @@
 > Everything dated 2026-09 is resolved; the 2026-10-02 star-rendering entry is a
 > struck misobservation, not a defect.
 
+---
+
+## 2026-10-22 — RESOLVED (device-verified 2026-10-22): playlist list shows the pre-sync track count after a background sync (list 8 / detail 2)
+
+Reported from device use on the v0.3.1 release: the user synced the **Rediscover**
+smart playlist (8 tracks), listened to 6, and the smart-playlist rule dropped
+them, so the server playlist shrank to 2. After the overnight scheduled sync the
+playback events had synced and the playlist held 2 tracks — but in the Library's
+Playlists tab the row still read **"8 tracks"**, while navigating into the
+playlist showed the correct **2**. **Device-reproduced end to end on
+emulator-5556** with a debug build of `c94aa9b` (v0.3.1+20); full evidence in
+`.agent/reports/stale-playlist-count-report.md`.
+
+### What the two numbers are
+
+- The list row's count: `BrowseProvider._playlists` — an **in-memory** cache
+  filled by `getAllPlaylistsWithCounts` (a live `COUNT(pt.track_id)` join over
+  `playlist_tracks`, `local_database_repository.dart:832`).
+- The detail screen's count: `_tracks.length` from a **fresh**
+  `getTracksForPlaylist` on every open (`playlist_detail_screen.dart:52-59`).
+
+Both derive from the same `playlist_tracks` table, so at the moment of
+observation the database was already correct (2 rows) — only the in-memory list
+was stale. The bug is a **missed refresh**, not a wrong write: the worker's
+membership rewrite (`clearPlaylistTracks` + re-insert, `BackgroundSyncWorker.kt:640-643`)
+ran and committed during the sync.
+
+### Mechanism (the part verified on device)
+
+The only post-sync refresh is `LibraryScreen._onSyncCompleted`
+(`library_screen.dart:103`) → `BrowseProvider.loadData()`, and it fires only
+when the Dart side **receives the worker's completion event** over the
+`sync_progress` EventChannel. That channel is subscribed exactly two ways:
+
+1. a manual sync started from the UI (`startSync` → `_subscribeToSyncProgress`), or
+2. the cold-start probe `checkIfSyncRunning` returning true — which requires
+   the `sync-task` work to be in the **RUNNING** state at that instant
+   (`MainActivity.kt:207-221`: `workInfos.any { it.state == WorkInfo.State.RUNNING }`).
+
+Work in the **ENQUEUED** state — which for a scheduled sync is most of the
+window between enqueue and fire (initial delay plus any WorkManager deferral) —
+is **invisible to the probe**. So: the app is launched (or is already running)
+while the scheduled sync is still enqueued → no subscription → when the work
+fires and completes, `broadcastSyncComplete` posts to a **null `eventSink`**
+and is silently dropped (`SyncProgressBroadcaster.kt:164-174`; the sink exists
+only between `onListen`/`onCancel`, `MainActivity.kt:133-144`) →
+`_onSyncCompleted` never runs → the in-memory playlist list, the drawer's
+"Last synced" line (updated only on provider init and in that same handler) and
+the connectivity state (invariant 40's transitions also live in that handler)
+all stay at their pre-sync values. Every surface that reads the DB live
+(playlist detail, History rows, search) shows the post-sync truth — exactly the
+8-vs-2 divergence.
+
+**Reproduction (verbatim from the report):** seeded the app DB with Rediscover's
+membership at 8 rows while the server holds 2 (yesterday's pre-shrink state);
+scheduled a sync 1-2 min out; launched the app while the work was ENQUEUED.
+Logcat: probe answered false, **no "Progress listener attached"**; worker ran
+11:23:00→11:23:28, `status=success`, rewrote membership 8→2. Result, with no tab
+switch and no restart: Playlists tab **"Rediscover — 8 tracks"**, playlist
+detail **"2 tracks"** (the two real server tracks), drawer **"Last synced 12d
+ago"**, and a stale `unreachable` banner (from an unrelated transient fetch
+failure at launch — the successful sync would have cleared it, but the state
+transition lives in the same dropped handler). History (live DB) showed the
+fresh "Scheduled" row — the app's own record that the sync had run. A tab switch
+(or a cold restart) refreshed the count to 2.
+
+**Control (protocol §4):** the same flow with the app **subscribed** (manual
+sync from the UI): "Progress listener attached" + `flutter: Sync completed with
+status: success` in logcat, the list auto-refreshed to 2 **without a tab
+switch**, state went reachable, and the first-successful-sync notification
+prompt (invariant 44) fired. The healthy path works; the defect is confined to
+the missed-completion case.
+
+The user's exact trigger timing on the phone is not knowable (process alive or
+dead overnight, which screen was showing); the ENQUEUED-at-launch shape above is
+the one consistent with every observation, since a launch **after** the rewrite
+heals itself via the `reloadAll()` launch load (invariant 51) and a launch that
+catches the work **RUNNING** subscribes and refreshes on completion.
+
+### Contributing gaps (same defect class, milder)
+
+- `_onSyncCompleted` → `loadData()` reloads **only the current category**: even
+  a *received* completion leaves the other three tabs' counts stale until the
+  user happens to switch to them.
+- No refresh on app resume (`WidgetsBindingObserver` exists only for
+  `PlaybackController` and the schedule screen), and no pull-to-refresh on the
+  library tabs (RefreshIndicator exists only on the Sync and History screens).
+- The stale-state side effects reach beyond counts: connectivity state
+  (invariant 40) and the drawer's freshness line are advanced by the same
+  dropped event, so a missed completion can pin a false `unreachable` banner
+  (observed in the reproduction).
+
+### Not a v0.3.1 regression
+
+The refresh-on-completion mechanism dates from Phase 7 (2026-09-28). The
+v0.3.1 release shipped the detail-header and launch-reload work, neither of
+which touched this path. What the release exposed is the workflow: a
+smart playlist that shrinks as a result of the user's own listening makes the
+count divergence visible within a day.
+
+### The fix (shipped, device-verified 2026-10-22)
+
+**(a) + (c) from the options above.** Full report:
+`.agent/reports/stale-playlist-count-fix-report.md`. Now invariant 52.
+
+- The `isSyncRunning` probe (a bool) became `getSyncWorkState`, reporting the
+  `sync-task` work's state: `running` | `pending` (ENQUEUED **or BLOCKED** —
+  BLOCKED covers the network constraint the schedule always carries) |
+  `none` (`MainActivity.kt`). `checkIfSyncRunning` now subscribes to the
+  progress channel on `running` **and** `pending`, but flips `_isSyncing`
+  only on `running` — the first *progress* event (which arrives when the
+  worker actually starts) is what turns the in-app progress/cancel UI on, so
+  an idle-enqueued sync never masquerades as a running one.
+- `_onSyncCompleted` reloads via `reloadAll()`, not `loadData()`: a sync
+  rewrites every selected playlist, so the other three tabs' counts are just
+  as stale as the visible one.
+- New unit test: `sync_provider_connectivity_test.dart` — "a pending
+  (enqueued) sync still gets a subscriber (invariant 52)": probe `pending` →
+  subscription established, `isSyncing` false; first progress event flips
+  `isSyncing` on; completion still reconciles reachability and fires
+  `syncCompleted`.
+
+**Device verification (the entry's repro, unmodified, emulator-5554):**
+seeded Rediscover at 8 membership rows against the server's live 2, saved a
+schedule for 17:10, cold-launched at 16:56 while the work was ENQUEUED.
+Logcat: `Sync work state: pending (found 1 work items, states: [ENQUEUED])`
+→ `Background sync enqueued — subscribing for its completion` → `Progress
+listener attached` → 17:10:00 `Trigger type: scheduled` → 17:10:35 `Playlist
+Rediscover has 2 tracks` → `status=success` → **`Sync completed with status:
+success`** (the line that was absent in the bug run). UI, no tab switch, no
+restart: Playlists tab auto-refreshed to **Rediscover — 2 tracks**; drawer
+**"Last synced 4m ago"**, server reachable; DB `playlist_tracks` id 17 = 2.
+
+**Left open (deliberately, not fixed):**
+
+- Work *enqueued after launch* (e.g. a schedule saved while the app is open)
+  still has no re-probe; a completion for it is dropped until the next
+  launch. Rare (the app must stay alive across the whole scheduled window)
+  and it self-heals on the next cold launch's `reloadAll()`.
+- Option (b) from the original list — a self-healing refresh on app resume —
+  was held: it needs a silent-reload variant of `loadData`/`reloadAll`
+  (both set `_isLoading`, which the library renders as a loading state),
+  i.e. a UX decision rather than a one-liner. Worth doing if
+  stale-while-foregrounding is ever reported again.
+
+---
+
 ## 2026-10-17 — RESOLVED (device-verified 2026-10-18): History date renders "PMt" instead of "at" (cosmetic)
 
 ### Resolution (2026-10-18, fix/history-date-pmt)

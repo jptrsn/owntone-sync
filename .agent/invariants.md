@@ -33,7 +33,9 @@ shuffle order · 24 A9 has two outcomes · 25 `playback_state` persistence ·
 never a skip · 13 the user-intent signal · 14 the position stream is the clock ·
 15 play/skip thresholds · 26 UPDATE-first upsert · 27 server library is in flux ·
 30 rating reconciliation scope · 39 **classify by type + errno only, never
-message text** · 43 **the manual-sync guard blocks only a probed `offline`**
+message text** · 43 **the manual-sync guard blocks only a probed `offline`** ·
+52 **the launch probe reports `pending`; a queued sync still gets a
+subscriber**
 
 **UI** — 16 `PlayerScaffold` docks by layout, never overlay · 17 where the A9
 notice is hosted · 20 `ScaffoldMessenger` is a hub · 21 album identity ·
@@ -655,6 +657,59 @@ invalidation lets a save inherit the previous address's classification — a
 stale `offline` would disable Sync against a new, never-probed host; letting
 `startSync` enqueue past the refusal re-arms the failed-row logging this
 phase exists to stop.
+
+---
+
+### 52. The launch probe reports `pending` (ENQUEUED/BLOCKED) work, and a pending sync still gets a subscriber
+
+`MainActivity`'s `getSyncWorkState` (the platform side of
+`SyncProvider.checkIfSyncRunning`) returns the `sync-task` work's state, not
+a bool: `running` (RUNNING), `pending` (ENQUEUED **or BLOCKED** — scheduled
+work always carries a network constraint, so once its delay has elapsed but
+the network has not, it sits in BLOCKED), or `none`. `checkIfSyncRunning`
+subscribes to the progress EventChannel for `running` **and** `pending`, but
+flips `_isSyncing` only for `running`: the first *progress* event, which
+arrives when the worker starts, is what turns the in-app progress/cancel UI
+on (`sync_screen.dart` gates on `isSyncing && syncProgress != null`), so a
+queued-idle sync never masquerades as a running one.
+
+**WHY:** a scheduled sync is ENQUEUED for most of the window before it
+fires. The old probe (a bool, RUNNING-only) made that window invisible at
+cold launch: no subscription → when the work fired and completed,
+`broadcastSyncComplete` posted to a null `eventSink` and was dropped →
+`_onSyncCompleted` never ran → the in-memory playlist list kept its pre-sync
+counts while every live-DB surface (playlist detail, History) showed the
+post-sync truth, and the drawer's "Last synced" line and the connectivity
+state (invariant 40) stayed stale too. Reproduced on device 2026-10-22
+(list 8 / detail 2; blockers.md 2026-10-22) and the fix verified on the same
+rig (`stale-playlist-count-fix-report.md`): launch while ENQUEUED → `pending`
+probe → subscription → worker completes → Dart logs "Sync completed with
+status: success" → the Playlists tab auto-refreshes with no tab switch. The
+completion refresh's other half of the same defect class: `_onSyncCompleted`
+reloads via `reloadAll()` — a sync rewrites every selected playlist's
+membership, so the other three tabs' counts are just as stale as the
+visible one. This supersedes invariant 51's WHY tail, which described
+`loadData()` there as deliberate.
+
+**BREAKS IF UNDONE:** narrowing the probe back to RUNNING (or to a bool)
+re-arms the dropped-completion defect for every launch that lands in the
+ENQUEUED window — for a scheduled sync that window is the norm, not the
+exception. Not subscribing for `pending` "to save" an idle channel is the
+same hole: the subscription is what carries the completion. Flipping
+`_isSyncing` on for `pending` to "make the UI show something" is a UX
+regression (progress/cancel for a sync that hasn't started) — and "fixing"
+that by narrowing the probe instead re-arms the hole. The launch-time
+`registerBackgroundSync()` re-enqueue (REPLACE) runs in native `onCreate`,
+before the Dart probe — that ordering is what makes the ENQUEUED-at-launch
+case see the work. Guard: the pending-probe test in
+`test/sync_provider_connectivity_test.dart` (cites this entry).
+
+**KNOWN RESIDUAL** (deliberately unfixed, see blockers.md 2026-10-22): work
+*enqueued after launch* (a schedule saved while the app is open) gets no
+re-probe, so its completion is dropped until the next cold launch's
+`reloadAll()` self-heals it. Rare and self-limiting; a resume-time refresh
+(option b in the blockers entry) would close it but needs a silent-reload
+variant of `loadData`/`reloadAll`, a UX decision, not a one-liner.
 
 ---
 
@@ -1338,10 +1393,12 @@ with the pre-fix build (empty state, no TabBar, no data); GREEN with
 no relaunch, no sync, and the populated tabs showing the seeded data
 (blockers.md 2026-10-17 launch dead end; the 2026-09-27 entry was the
 *after-sync* sibling of this *launch* case and its refresh never fires
-when no sync completes). The post-sync refresh (`_onSyncCompleted`) and
-tab switches (`setCategory`) deliberately keep `loadData()`: by then the
-launch load has populated all four lists and only the current category
-needs a fresh read.
+when no sync completes). **Superseded in part (2026-10-22, invariant 52):**
+the post-sync refresh (`_onSyncCompleted`) now calls `reloadAll()`, not
+`loadData()` — the original "only the current category needs a fresh read"
+assumption was wrong for a sync, which rewrites *every* selected playlist's
+membership, so the other three tabs' counts were just as stale. Tab
+switches (`setCategory`) still use `loadData()`.
 
 **BREAKS IF UNDONE:** "tidying" the launch load back to `loadData()` (it
 looks like wasted startup I/O — four queries instead of one) re-arms the
@@ -1535,7 +1592,14 @@ importance afterwards.
 The in-app Cancel button (Sync screen) does **not** appear for a scheduled
 run that starts while the app is already alive: `SyncProvider` subscribes to
 the progress EventChannel only in `_initialize`/`checkIfSyncRunning`
-(construction time). Do not force-stop + relaunch mid-run to "refresh" it:
+(construction time). **Corrected (2026-10-22, invariant 52):** the
+construction-time probe now also subscribes to *pending* (ENQUEUED/BLOCKED)
+work, so for the normal case — the work enqueued at launch — the
+subscription exists before the run starts and the Cancel button **does**
+appear once the worker's first progress event lands; the "does not appear"
+statement now holds only for work enqueued *after* the app is already
+alive (no re-probe; see invariant 52's KNOWN RESIDUAL). Do not force-stop +
+relaunch mid-run to "refresh" it:
 `MainActivity.registerBackgroundSync()` runs on every launch and enqueues a
 `REPLACE` for the `sync-task` unique work, which can clobber the work
 WorkManager recovered from the process death — the run may simply not
