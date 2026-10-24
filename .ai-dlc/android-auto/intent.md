@@ -87,9 +87,15 @@ zero host-specific code.
   detection) is the only new dependency; it is the officially documented
   way to detect projection and is small. Flag it in the report if the
   build pulls unexpected transitive weight.
-- **Emulator baseline:** `emulator-5554` (phone) is the usual phone side;
-  the head unit side is the **Desktop Head Unit (DHU)** — that is this
-  intent's "Android Auto virtual device" (see unit-01). The AAOS emulator
+- **Phone baseline:** the AVD **`Pixel_9_Pro_API_36`** (API 36,
+  `google_apis_playstore` image) is the designated phone side — the
+  Android Auto app needs a GMS + Play Store image (designated 2026-10-23;
+  supersedes the earlier `OwnTone_U2_API_36` designation, a `google_apis`
+  image, which is not used for this intent). `Pixel_9_API_35` (also a Play
+  image) is the fallback. Its adb serial is launch-time — read it from
+  `adb devices` (confirm AVD↔serial identity per invariant 42). The head
+  unit side is the **Desktop Head Unit (DHU)** — that is this intent's
+  "Android Auto virtual device" (see unit-01). The AAOS emulator
   is documented in `docs/android-testing-aaos-emulator.md` as an alternate
   environment but is **out of scope** (it tests the app running *on* the car
   OS, a different architecture than phone-projected Android Auto).

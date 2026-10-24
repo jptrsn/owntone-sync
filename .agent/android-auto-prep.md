@@ -22,20 +22,34 @@ Current uncommitted state (as of 2026-10-23):
 
 - [ ] `git status --short` is empty: ____________________
 
-## 2. Install the Desktop Head Unit (DHU)
+## 2. Desktop Head Unit (DHU) — installed (verified 2026-10-23)
 
-- Android Studio → SDK Manager → **SDK Tools** →
-  **Android Auto Desktop Head Unit Emulator** → install. (CLI equivalent:
-  `sdkmanager --list` to find the package id, then install it.)
-- The binary lands in `SDK_LOCATION/extras/google/auto/`;
+- Installed 2026-10-23: SDK Tools package `extras;google;auto`, binary at
+  `~/Library/Android/sdk/extras/google/auto/desktop-head-unit`
+  (executable, with its `config/` and `voice/` directories beside it —
+  the `libusb` library must stay next to the binary).
+- Only if a fresh host is ever used instead: Android Studio → SDK Manager
+  → **SDK Tools** → **Android Auto Desktop Head Unit Emulator** →
+  install; the binary lands in `SDK_LOCATION/extras/google/auto/`;
   `chmod +x ./desktop-head-unit`.
 
-- [ ] `./desktop-head-unit -v` prints a version: ____________________
-  (full path + version — the orchestrator needs both at Step 0)
+- [ ] `./desktop-head-unit -v` prints a version: `2.0-mac-arm64`
+  (build 2022-03-30-438482292), path
+  `~/Library/Android/sdk/extras/google/auto/desktop-head-unit` — re-run on
+  the machine the run uses and confirm (the orchestrator needs both at
+  Step 0)
 
-## 3. Phone side: `OwnTone_U2_API_36`
+## 3. Phone side: `Pixel_9_Pro_API_36` (Play image)
 
-Launch it (windowed, as on this host) and:
+Designated 2026-10-23: the Android Auto app needs a GMS + Play Store
+image, so the previous designation (`OwnTone_U2_API_36`, a `google_apis`
+image) is dropped for this run. Fallback: `Pixel_9_API_35` (also a Play
+image, API 35).
+
+Launch `Pixel_9_Pro_API_36` (windowed, as on this host). Its adb serial
+is launch-time — record it from `adb devices` (it will be `emulator-5554`
+or `emulator-5556` depending on what else is running; confirm
+AVD↔serial identity per invariant 42). Then:
 
 1. **Android Auto app** installed and updated. Preferred: Play Store
    (requires a signed-in Google account on the AVD — if the AVD has no
@@ -49,13 +63,17 @@ Launch it (windowed, as on this host) and:
    A1.)
 3. **AA Settings → "Previously connected cars" → enable "Add new cars to
    Android Auto".**
-4. Confirm the app's server config is still `http://192.168.1.13:3689`
-   with Brass selected (the run must not re-sync Soul).
+4. **App state:** this AVD carried the app in an earlier session (0.2.0
+   era, Brass synced), so its data may be stale. Install the current
+   debug APK, then confirm the server is `http://192.168.1.13:3689` with
+   Brass (33 tracks) selected. If the data is gone, set the URL and sync
+   Brass — the run must not re-sync Soul.
 
 - [ ] AA app version: ____________________
 - [ ] Developer mode enabled: yes
 - [ ] "Add new cars" enabled: yes
-- [ ] App server/Brass confirmed: yes
+- [ ] Current debug APK installed; server/Brass confirmed: yes
+- [ ] AVD serial: ____________________
 
 ## 4. One-time connection rehearsal (recommended, catches ToS walls now)
 
@@ -86,6 +104,6 @@ Launch it (windowed, as on this host) and:
 Prep complete: <date> — <name>
 DHU: <path> v<version>
 AA app: <version> (source: <Play|sideload>)
-AVD serial: <serial>
+AVD: <Pixel_9_Pro_API_36 or fallback used> / serial: <serial>
 Notes for the run: <anything the orchestrator should know>
 ```

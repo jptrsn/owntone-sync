@@ -11,10 +11,11 @@ quality_gates:
 # Unit 01 — Test harness: Android Auto virtual device
 
 Build the emulated Android Auto environment that every other unit verifies
-against: the **Desktop Head Unit (DHU)** as the car, a **phone** (usually
-`emulator-5554`, or a physical phone if connected), the official **Android
-Auto app** on the phone, and Android Auto **developer mode** enabled so our
-sideloaded debug build is accepted.
+against: the **Desktop Head Unit (DHU)** as the car, a **phone** (the AVD
+`Pixel_9_Pro_API_36`, API 36 `google_apis_playstore` image; a physical
+phone works too), the official **Android Auto app** on the phone, and
+Android Auto **developer mode** enabled so our sideloaded debug build is
+accepted.
 
 Reference: `docs/android-testing-dhu.md` (full DHU guide),
 `docs/android-testing-overview.md` (developer mode + Media Controller Test).
@@ -24,23 +25,38 @@ reproducible script + notes, because the next session must be able to
 rebuild this environment from scratch)
 
 1. **DHU install.** SDK Manager → SDK Tools →
-   *Android Auto Desktop Head Unit Emulator*. Binary lands in
-   `SDK_LOCATION/extras/google/auto/`. `chmod +x ./desktop-head-unit`.
-2. **Phone side.** Confirm the phone (emulator-5554 or physical) has the
-   Android Auto app (`com.google.android.projection.gearhead`) installed from
-   Play and updated. A GMS (Google Play) image is required for the
-   emulator. Sign into Play on the phone.
+   *Android Auto Desktop Head Unit Emulator* (package `extras;google;auto`).
+   Binary lands in `SDK_LOCATION/extras/google/auto/`. `chmod +x
+   ./desktop-head-unit`. **Already installed on this host (2026-10-23):**
+   `~/Library/Android/sdk/extras/google/auto/desktop-head-unit`, version
+   `2.0-mac-arm64` (build 2022-03-30-438482292), executable — confirm with
+   `./desktop-head-unit -v`.
+2. **Phone side.** Launch the AVD `Pixel_9_Pro_API_36` (windowed, as on
+   this host). Its adb serial is launch-time — read it from `adb devices`
+   and confirm AVD↔serial identity per invariant 42 (it will be
+   `emulator-5554` or `emulator-5556` depending on what else is running).
+   It is a `google_apis_playstore` image (Play Store + GMS — the image the
+   Android Auto app needs; do not use `OwnTone_U2_API_36`, a `google_apis`
+   image). Sign into Play if the AVD has no account (interactive). Install
+   the Android Auto app (`com.google.android.projection.gearhead`) from
+   Play, updated. Then install this app's debug APK. The AVD may carry
+   stale app data from an earlier session (0.2.0 era, Brass synced) —
+   confirm the server is `http://192.168.1.13:3689` with Brass (33 tracks)
+   selected; if the data is gone, set the URL and sync Brass (do not sync
+   Soul).
 3. **Developer mode on the phone.** Android Auto → Settings → About → tap
    **Version** 10 times → Allow development settings. This is what lets a
    sideloaded (non-Play) media app appear in the car UI. Verify the
    developer options menu is present.
-4. **Head unit server + connection.** AA app overflow menu → **Start head
-   unit server** (notification appears on the phone). Settings →
-   "Previously connected cars" → confirm **Add new cars to Android Auto**
-   is enabled.
+4. **Head unit server + connection (ADB tunneling).** The AOA
+   (`--usb`) connection mode is physical-phone-only — with an emulator
+   phone, ADB tunneling is the path to use. AA app overflow menu →
+   **Start head unit server** (notification appears on the phone).
+   Settings → "Previously connected cars" → confirm **Add new cars to
+   Android Auto** is enabled.
    `adb -s <phone> forward tcp:5277 tcp:5277`
-   Then run `./desktop-head-unit` (default ADB transport). Accept ToS on
-   the phone screen on first connect.
+   Then run `./desktop-head-unit` (default ADB transport, port 5277).
+   Accept ToS on the phone screen on first connect.
 5. **DHU smoke test.** The AA home screen renders in the DHU window.
    Console: `screenshot harness-connected.png`.
 6. **Media harness sanity (verify the harness before trusting it —
@@ -86,9 +102,10 @@ rebuild this environment from scratch)
 - [ ] If the DHU shows a blank screen: apply the documented workaround
       (restart head unit server, restart DHU, re-grant permissions) and
       record what actually fixed it in the notes.
-- [ ] If the emulator-5554 image lacks GMS/Play Store: document the exact
-      image used or the switch to a physical phone; do not silently swap
-      environments.
+- [ ] If the Play-image AVD cannot run the Android Auto app (no Play
+      sign-in and sideload fails, or GMS misbehaviour): fall back to
+      `Pixel_9_API_35` (also a Play image) or a physical phone, and
+      document the exact environment used; do not silently swap.
 
 ## Risks / unknowns
 

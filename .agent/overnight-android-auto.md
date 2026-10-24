@@ -45,10 +45,18 @@ Read .agent/overnight-pipeline.md, then read .agent/overnight-android-auto.md an
   None touch the media session, the browse path, or the player screen's
   rating commit path — but a build subagent that meets one of them must
   follow the blockers file's rules, not invent a fix.
-- Phone AVD `OwnTone_U2_API_36` (google_apis API 36, `pixel_9_pro`, Brass
-  configured) exists and is the designated phone side.
-- The Android Auto Desktop Head Unit is **not yet installed** and the
-  Android Auto app is **not yet on the phone AVD** — that is human prep
+- Phone AVD **`Pixel_9_Pro_API_36`** (API 36, `google_apis_playstore`
+  image) is the designated phone side (designated 2026-10-23; the earlier
+  `OwnTone_U2_API_36` designation — a `google_apis` image — is dropped:
+  the Android Auto app needs a Play Store image). Fallback:
+  `Pixel_9_API_35`. The AVD is fresh for this run: it may carry stale
+  app data from an earlier session (0.2.0 era, Brass synced) — the
+  current debug APK + server URL + Brass (33 tracks) are confirmed in
+  human prep, not assumed.
+- The Android Auto Desktop Head Unit **is installed** (2026-10-23):
+  `~/Library/Android/sdk/extras/google/auto/desktop-head-unit`, version
+  `2.0-mac-arm64` (build 2022-03-30-438482292), executable. The Android
+  Auto app is **not yet on the phone AVD** — that is human prep
   (`.agent/android-auto-prep.md`), done before kickoff with a person at
   the machine (Play sign-in is interactive by nature).
 
@@ -129,10 +137,11 @@ Per-unit notes:
 9. **Gearslip regression (AA-U6 E1) is out of environment** (Gearslip
    talks to a head unit directly; the harness has no real car/LIVI). It is
    reported as BLOCKED-with-reason, never attempted.
-10. **AA app on the phone AVD:** Play Store install if the AVD has a signed
-    -in Play account (human prep); otherwise sideload the Android Auto APK
-    via `adb install` and record version + source in the ledger. Either
-    way, the version is recorded in the AA-U1 report.
+10. **AA app on the phone AVD:** the AVD is a Play image
+    (`google_apis_playstore`), so Play Store install is the primary path
+    (sign in if needed — human prep); if Play is unavailable, sideload
+    the Android Auto APK via `adb install` and record version + source in
+    the ledger. Either way, the version is recorded in the AA-U1 report.
 
 ## Gates (run-specific values)
 
@@ -172,14 +181,17 @@ push; open the PR (`PR_OPEN`); run the review loop (max 3 rounds,
 SHA. For AA-U4, apply decision 6's soft-blocker path instead of stopping.
 
 **Device plan (ledgered at each unit start):** phone
-`OwnTone_U2_API_36`, launched windowed, `-s <serial>` everywhere; DHU on
-the host at the resolution(s) the unit's matrix requires (U1: all three;
-U2–U5: 480p default; U6: per its matrix); `adb forward tcp:5277 tcp:5277`
+`Pixel_9_Pro_API_36` (Play image), launched windowed, `-s <serial>`
+everywhere (serial is launch-time — record it from `adb devices` in the
+ledger; confirm AVD↔serial identity per invariant 42); DHU on the host
+(`~/Library/Android/sdk/extras/google/auto/desktop-head-unit`) at the
+resolution(s) the unit's matrix requires (U1: all three; U2–U5: 480p
+default; U6: per its matrix); `adb -s <serial> forward tcp:5277 tcp:5277`
 re-issued per DHU session; DHU process killed and forward removed at unit
 end (decision 7). No `pm clear` of the app for U2–U5 (U1's harness work
 may need it only for the fresh-install row — U6 D3 does its own clear +
-re-sync); the device keeps Brass (33 tracks) — **do not re-sync Soul**
-(repo rule).
+re-sync); the device holds Brass (33 tracks) after prep — **do not
+re-sync Soul** (repo rule).
 
 ### Final summary (process doc format)
 
