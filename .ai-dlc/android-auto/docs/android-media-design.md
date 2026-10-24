@@ -1,0 +1,54 @@
+# Create media apps
+
+Media apps designed with Android for Cars help drivers find and control their favorite media while keeping their eyes on the road.
+
+There are two ways to create media apps with Android for Cars. For greater control over the user interface, flow, and branding of your app, use the Car App Library templates as guardrails to help you bring the best of your media app to the car.
+
+If you'd prefer a more straightforward approach with less customization, use the [Media Browser Service](#mediabrowserservice).
+
+## Do more with Car App Library templates
+
+[Car App Library (CAL)](/training/cars/apps) templates let you use more in-app customization and flexibility to bring more features to your media app.
+
+**Important:** Templated media apps are in beta testing. You can publish templated media apps to both internal and closed testing tracks on the Play Store. Publishing to open tracks and production tracks isn't permitted. You can [nominate yourself to become an early access partner](https://docs.google.com/forms/d/e/1FAIpQLSf0z4Nfw8wrloVhlgHDpLgdkg4WXsFj9ni5c1pw0qTvJ3Q4fQ/viewform).
+
+The following templates in particular help you create a great media experience:
+
+- **Sectioned item template:** The [Sectioned item template](/design/ui/cars/guides/templates/sectioned-item-template) lets you mix and match lists and grids to create a customized browsing structure. To get the latest updates and features, move any existing instances of the list or grid templates into the sectioned item template.
+- **Media playback template:** With the [Media playback template](/design/ui/cars/guides/templates/media-playback-template), you can decide which actions drivers can perform from the playback screen. You can choose which buttons to show in the search results section and which playback buttons and images to show (provided through media session).
+- **Sign-in template:** The [Sign-in template](/design/ui/cars/guides/templates/sign-in-template) presents options for signing in to the app while parked.
+- **Tab template:** The [Tab template](/design/ui/cars/guides/templates/tab-template) acts as a container for other templates, providing tabs across the top.
+
+Sample showing a list and a grid in a media app.
+
+Sample showing the now playing view of a media app.
+
+## Media browser service
+
+If you'd prefer to create a more basic media app with limited branding and customization, use `MediaBrowserService` (MBS).
+
+Because the basic visual design and interaction model for much of the Android for Cars media experience is determined by Google and car makers, your role in design is mostly focused on:
+
+- **Creating a browsing structure** for the content
+- **Supplying branding elements and icons** for navigational tabs and custom controls (if needed)
+- Depending on your app, you might need to create additional flows, such as a [sign-in flow](/design/ui/cars/guides/flows/create-sign-in-flow) or [settings](/design/ui/cars/guides/flows/create-settings) for the car screen (for Android Automotive OS) using the templates in the Car App Library (CAL).
+
+**Optional step for Android Auto**:
+
+- [Provide recommendations](/design/ui/cars/guides/app-types/provide-recommendations): Choose 10 items of media content to showcase as recommendations.
+
+## Media app UX requirements
+
+To learn more about media app requirements, read these resources:
+
+- [Create your media app](/design/ui/cars/guides/app-types/media-apps)
+- [Division of roles](/design/ui/cars/guides/app-types/media-apps#roles)
+- [Branding elements requirements](/design/ui/cars/guides/app-types/branding-elements#requirements)
+- [Browsing views elements](/design/ui/cars/guides/app-types/plan-browsing-views#browsing-view-req)
+- [Playback controls requirements](/design/ui/cars/guides/app-types/customize-playback-controls#playback-control-requirements)
+- [Queue requirements](/design/ui/cars/guides/app-types/customize-playback-controls#queue-requirements)
+- [Settings requirements](/design/ui/cars/guides/flows/create-settings)
+- [Navigation requirements](/design/ui/cars/guides/app-types/plan-navigation-tabs)
+- [Recommendation requirements](/design/ui/cars/guides/app-types/provide-recommendations#requirements)
+- [Sign-in flow requirements](/design/ui/cars/guides/flows/create-sign-in-flow#requirements)
+- [Voice action requirements](/design/ui/cars/guides/ux-requirements/voice-actions#voice-action-req)
