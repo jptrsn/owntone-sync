@@ -346,20 +346,23 @@ class TrackRow extends StatelessWidget {
           },
           onLongPress:
               showContextMenu ? () => _showRowMenu(context, _menuActions(context)) : null,
-          // The 40 px column exists only to seat a leading widget; reserving
+          // The 32 px column exists only to seat a leading widget; reserving
           // it when there is nothing to show (search, artist, all-tracks, and
           // playlist rows since the track number was dropped) just steals
-          // width from the title. The now-playing icon occupies the slot for
+          // width from the title. 32 px is the track-number slot: three
+          // bodyMedium digits (~24 px) with acceptable side padding — the
+          // old 40 px read as a fat column for what is a narrow element (user
+          // request 2026-10-26). The now-playing icon occupies the slot for
           // the current track, shifting its row only.
           leading: isCurrent
               ? SizedBox(
-                  width: 40,
+                  width: 32,
                   child: Semantics(
                     label: 'Now playing',
                     child: Icon(Icons.graphic_eq, color: primary, size: 20),
                   ),
                 )
-              : (leading != null ? SizedBox(width: 40, child: leading) : null),
+              : (leading != null ? SizedBox(width: 32, child: leading) : null),
           title: Text(
             track.title,
             maxLines: 1,

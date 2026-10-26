@@ -52,7 +52,7 @@ per visible scroll state** (`FlexibleSpaceBar` layers are independent) ·
 50 **DateFormat literals are quoted**; a bare `a` is the AM/PM marker ·
 51 **the launch load is `reloadAll()`**; an empty default tab must not
 hide populated categories ·
-54 **playlist rows are lead-free**; the 40 px leading column exists only
+54 **playlist rows are lead-free**; the 32 px leading column exists only
 when supplied or current
 
 **Environment and tooling** — 10 server address · 11 `pending_events` is not
@@ -1416,11 +1416,11 @@ go/no-go covers it).
 
 ---
 
-### 54. Playlist track rows are lead-free; the 40 px leading column exists only when something fills it
+### 54. Playlist track rows are lead-free; the 32 px leading column exists only when something fills it
 
 `playlist_detail_screen.dart` passes **no** `leading` to `TrackRow`: a
 playlist row is title + artist • album + stars/duration/⋮ at full width.
-`library_rows.dart`'s `TrackRow` reserves its 40 px leading column only
+`library_rows.dart`'s `TrackRow` reserves its 32 px leading column only
 when the caller supplies a `leading` (album detail still passes the track
 number, where it is meaningful) **or** the row is the current track — the
 `graphic_eq` now-playing icon occupies the slot then (invariant 22). With
@@ -1432,15 +1432,15 @@ music-note filler column) or a repeated album number — the column was
 noise, and it stole 40 px from every row. User request 2026-10-26; before/
 after observed on the device (OwnTone_U2_API_36): synced 33-track playlist
 "Brass", 18 numbered rows before → 0 after, all 33 titles still rendering
-(`.agent/reports/playlist-rows-no-leading.md`).
+(`.agent/reports/playlist-rows-no-leading.md`). Slot width later shrink-wrapped from 40 px to 32 px (same day, user request): the number is a narrow element and 40 px read as a fat column; 32 px fits three bodyMedium digits (~24 px) with acceptable padding and still seats the 20 px `graphic_eq` icon. Both wrappers must stay equal or the current track's row misaligns.
 
 **BREAKS IF UNDONE:** "tidying" `TrackRow`'s leading slot back to an
 unconditional `SizedBox(width: 40, child: leading ?? SizedBox.shrink())`
-silently re-adds a blank 40 px column to every playlist, search,
+silently re-adds a blank 32 px column to every playlist, search,
 artist-detail and all-tracks row — a rendered-output-only regression
 (the invariant 18/29 class; `flutter analyze` cannot see it). Re-adding
 the track number as `leading` on the playlist screen re-steals the width
-by request. The `isCurrent` branch keeps its own 40 px wrapper — do not
+by request. The `isCurrent` branch keeps its own 32 px wrapper — do not
 "flatten" it into the caller-supplied path.
 
 ---
