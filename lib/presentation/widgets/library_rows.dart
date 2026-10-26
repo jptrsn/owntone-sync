@@ -167,8 +167,9 @@ class TrackRow extends StatelessWidget {
   final int index;
   final QueueOrigin origin;
 
-  /// Optional leading widget (track number, disc, ...). Replaced by the
-  /// now-playing indicator while this track is current.
+  /// Optional leading widget (album track number, disc, ...). Omitted on
+  /// playlist rows: the number was removed so the title gets the width. The
+  /// slot is reserved only when there is a leading or this track is current.
   final Widget? leading;
   final String? secondary;
   final bool showContextMenu;
@@ -345,15 +346,20 @@ class TrackRow extends StatelessWidget {
           },
           onLongPress:
               showContextMenu ? () => _showRowMenu(context, _menuActions(context)) : null,
-          leading: SizedBox(
-            width: 40,
-            child: isCurrent
-                ? Semantics(
+          // The 40 px column exists only to seat a leading widget; reserving
+          // it when there is nothing to show (search, artist, all-tracks, and
+          // playlist rows since the track number was dropped) just steals
+          // width from the title. The now-playing icon occupies the slot for
+          // the current track, shifting its row only.
+          leading: isCurrent
+              ? SizedBox(
+                  width: 40,
+                  child: Semantics(
                     label: 'Now playing',
                     child: Icon(Icons.graphic_eq, color: primary, size: 20),
-                  )
-                : (leading ?? const SizedBox.shrink()),
-          ),
+                  ),
+                )
+              : (leading != null ? SizedBox(width: 40, child: leading) : null),
           title: Text(
             track.title,
             maxLines: 1,

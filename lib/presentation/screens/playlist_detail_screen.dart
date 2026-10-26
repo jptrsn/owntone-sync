@@ -148,12 +148,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                     index: index,
                     origin: _origin,
                     onRatingChanged: _loadTracks,
-                    leading: track.trackNumber > 0
-                        ? Text(
-                            '${track.trackNumber}',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          )
-                        : const Icon(Icons.music_note, size: 20),
                   );
                 },
                 childCount: _tracks.length,
