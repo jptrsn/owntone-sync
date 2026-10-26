@@ -24,6 +24,7 @@ Shipped at v0.2.0. The eight-phase player refactor is complete.
 | `.agent/verification-protocol.md` | **Always** | What counts as evidence, and the report format. Short. |
 | `.agent/blockers.md` | **Always** | Open defects. What you are about to fix may already be diagnosed here. |
 | `.agent/player-ux-spec.md` | Changing behaviour | What the app is meant to do: user stories, acceptance criteria. |
+| `.opencode/skills/refresh-site-screenshots/SKILL.md` | Refreshing `site/assets/screenshots/` | Session-driven capture procedure (load it via the `skill` tool). Do not re-attempt a standalone script — external variables defeated one in Oct 2026. |
 | `.agent/player-refactor-plan.md` §2 | Touching playback | The architecture. **§1 and §3 are historical** — they describe code as it was before the refactor. |
 | `.agent/backlog.md` | Asked to | Unscheduled ideas. Not a to-do list. |
 | `.agent/reports/` | Rarely | Historical evidence of what was verified. **Not guidance** — anything still binding was promoted into `invariants.md`. |
