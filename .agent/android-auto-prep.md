@@ -6,6 +6,80 @@ available, **before** the kickoff prompt is pasted. Work top to bottom;
 each box needs its result written in the line below it (the orchestrator
 copies the sign-off into the ledger at Step 0).
 
+## PAUSED (2026-10-24, user decision — low priority)
+
+State of the world when parked. Re-verify devices before resuming; the
+box list below is still the contract, this section is what is already
+true and what the 10-24 session learned.
+
+**The AVD was wiped mid-session (2026-10-24 ~20:15).** Both emulators
+died at once; a `Pixel_9_Pro_API_36` instance then appeared with **clean
+userdata** — most likely relaunched with `-wipe-data` from the emulator
+UI / Android Studio (unconfirmed; the instance that did it is dead).
+The `OwnTone_U2_API_36` instance is gone (the AVD is still on disk).
+Resulting state: `Pixel_9_Pro_API_36` runs as **emulator-5554** (it took
+slot 0 once the other instance died — re-confirm AVD↔serial per
+invariant 42), with AA = the `/product` stub only, our app not
+installed, no Brass in `/sdcard/Music`, Play presumably signed out
+(unverified). Nothing is unrecoverable: the app builds from this repo,
+the tracks re-sync from the server, the AA bundle is below.
+
+**Verified working (do not redo):**
+
+- DHU: `~/Library/Android/sdk/extras/google/auto/desktop-head-unit`,
+  `2.0-mac-arm64` (build 2022-03-30-438482292), executable, runs.
+- Server: `curl -s http://192.168.1.13:3689/api/queue` → 200 (10-23).
+- AA bundle:
+  `~/Downloads/com.google.android.projection.gearhead_17.9.664044-release-179664044_1arch_7dpi_24lang_bfb42d979d63c0c6e9df455edd6b11cd_apkmirror.com.apkm`
+  (37,770,743 B; SHA-256
+  `b28d839219448d7c7e6b35d7b856d9a9a22f55f893a180acee5df54324f94052`,
+  SHA-1 `3f4e3527e645ff15a4542da8d51504b87eade9b7`, MD5
+  `428bd6c6abf943dbf057a7670c772bf9` — all match APKMirror's published
+  values; signer CN=Android, O=Google Inc.).
+- The install path was exercised and works: `pm uninstall --user 0
+  com.google.android.projection.gearhead` (the `/product` stub), then
+  `adb install-multiple base.apk split_config.arm64_v8a.apk
+  split_config.xxhdpi.apk split_config.en.apk` (AVD density is 480 →
+  xxhdpi) → `versionName=17.9.664044-release`, codePath under
+  `/data/app` (10-24). Re-extract the bundle from the `.apkm` when
+  resuming (the temp extraction dir is volatile).
+
+**Blocker found (why prep stalled):** the sideloaded AA app installs
+but will not launch. The launcher alias
+`com.google.android.gearhead.vanagon.VnLaunchPadActivity` is
+`enabled="false"` in the manifest (Play flips it on at install time);
+shell cannot enable it (Android 14 `SecurityException` on component
+state); and its target `VnLaunchPadInternalActivity` (runs in the
+`:projection` process) opens and exits silently in ~140 ms on every
+entry point tried (direct launch, `LAUNCH_ANDROID_AUTO_PHONE` action) —
+no crash, no log. Play itself refuses to install AA on this AVD
+("isn't compatible with your device anymore"), so the documented route
+(sign in to Play + install/update AA, per
+`developer.android.com/training/cars/testing/dhu`) is closed on this
+device.
+
+**Workaround found (not yet exercised — test this first on resume):**
+AA's settings are a registered system-Settings entry:
+`companion.settings.DefaultSettingsActivity` is **exported** with
+`android.intent.action.APPLICATION_PREFERENCES` and
+`com.android.settings.action.SETTINGS` filters (confirmed in the
+installed APK's manifest, 10-24; it is the same entry e.foundation's
+DHU guide uses — Settings → search "Android Auto"). If it renders, it
+reaches developer mode (Version ×10), Start head unit server, and
+"Add new cars to Android Auto" **without the app icon ever working**.
+The documented connection procedure (official DHU page, 10-24 capture)
+is exactly §4: developer mode → start head unit server → "Add new
+cars" → `adb forward tcp:5277 tcp:5277` → run `./desktop-head-unit`
+(no `--usb`; tunnel mode) → accept ToS on the phone.
+
+**Rebuild needed on resume (all recoverable):** Play sign-in (user),
+`flutter install`, sync Brass from `http://192.168.1.13:3689` (the run
+must not re-sync Soul), AA bundle install as above. Then §3 boxes 2–4
+and the §4 rehearsal. Note for the rebuild: storage on this AVD was
+~500 M free of a 6 G data partition before the wipe — with fresh
+userdata there is headroom now, but the overnight run's footprint has
+not been measured.
+
 ## 1. Clean the working tree (Step 0 hard-gates on this)
 
 Current uncommitted state (as of 2026-10-23):
@@ -91,7 +165,10 @@ AVD↔serial identity per invariant 42). Then:
 
 ## 5. Machine state
 
-- [ ] OwnTone server reachable: `curl -s http://192.168.1.13:3689/status`
+- [ ] OwnTone server reachable:
+  `curl -s http://192.168.1.13:3689/api/queue` → HTTP 200
+  (the original line's `/status` path does not exist in OwnTone — it
+  404s; `/api/queue` is a read-only liveness probe. Verified 2026-10-23)
   → ____________________
 - [ ] `flutter devices` shows the AVD; serial: ____________________
 - [ ] Host can run the AVD + DHU + an opencode session overnight (RAM
