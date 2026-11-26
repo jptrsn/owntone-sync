@@ -395,6 +395,23 @@ class OwnToneAudioHandler extends BaseAudioHandler
   @override
   Future<void> pause() => _audioPlayer.pause();
 
+  /// Observability probe (issue #14; witness for #11). Genuine head-unit keys
+  /// arrive through this funnel — `AudioService.java` `onMediaButtonEvent` →
+  /// `onClick` → `BaseAudioHandler.click` — never through the
+  /// `skipToNext()`/`play()` overrides directly. A probe on `skipToNext()`
+  /// would miss real Bluetooth keys entirely, so delivery is witnessed here.
+  @override
+  Future<void> click([MediaButton button = MediaButton.media]) {
+    if (kDebugMode) {
+      final s = playbackState.value;
+      debugPrint(
+        '[BTKEY] click(${button.name}) playing=${s.playing} '
+        'proc=${s.processingState} idx=${_audioPlayer.currentIndex}',
+      );
+    }
+    return super.click(button);
+  }
+
   @override
   Future<void> stop() async {
     _userInitiatedPending = false;
