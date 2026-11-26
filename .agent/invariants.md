@@ -60,7 +60,9 @@ shell-readable · 12 scratch files location · 18 uiautomator quoting ·
 29 **attach `flutter run` for rendering bugs** · 32 emulator paint wedge ·
 33 triggering a sync · 34 cancelling a sync · 35 artwork cache and the 204 ·
 42 the shared emulator: identity, disk, screencap lies · 53 **seeding
-on-device data: run-as + base64 chunks, and the prefs list trap**
+on-device data: run-as + base64 chunks, and the prefs list trap** ·
+55 **the `[BTKEY]` witness means a genuine key event; notification buttons
+bypass `click()`**
 
 **Tests** — 36 the suite and its CI gate · 48 the widget-test environment:
 FakeAsync I/O and the shared FFI DB file · 49 the geometry guards are a
@@ -1780,6 +1782,41 @@ the XML in memory and writes it back over your edit. Writing prefs directly
 bypasses the UI's save-time validation — fine for seeding (the worker and
 `registerBackgroundSync` read the same on-disk values), say so under
 DEVIATIONS if it was the path under test.
+
+---
+
+### 55. `[BTKEY]` means a genuine media-key event; notification buttons bypass `click()`
+
+`OwnToneAudioHandler.click()` (the #14 probe, `kDebugMode`-gated
+`debugPrint`, witness for #11) fires **only** on events arriving as media
+key events: `onMediaButtonEvent` → `onClick` → `click()` (AVRCP from a
+head unit/headset, `cmd media_session dispatch`). Verified on the Pixel 6
++ ESP32 harness 2026-11-26: 4/4 dispatch keys and 4/4 real-AVRCP keys
+printed; in-app transport taps printed nothing (they call the handler
+directly, `playback_controller.dart`).
+
+**The media notification's transport buttons print NOTHING either** — the
+#14 issue text's claim that they share the key-event funnel is wrong: the
+notification is `MediaStyle` with the `android.media.session` Token extra,
+and SystemUI binds those buttons to the session's transport controls
+directly (`onSkipToNext` etc.), never through `click()`. (Verified: a
+notification Next tap advanced the active item id with zero BTKEY lines,
+while the same session printed BTKEY for dispatch/AVRCP.)
+
+**WHY:** #11's broken-state diagnosis reads BTKEY as "the key reached our
+app". If a future session re-adds a probe to `skipToNext()`/`play()`
+(they fire for notification taps too) or trusts `rsp_code 9 = ACCEPT`, the
+capture silently loses its meaning. Also `dumpsys media_session`'s
+"Media button session is …" owner line stays mandatory — BTKEY cannot tell
+*which* session received the key.
+
+**BREAKS IF UNDONE:** re-probing the transport overrides (they no longer
+mean "external key"), or citing the original #14 "notification buttons
+also print BTKEY" assumption in a capture report.
+
+Witness recipe: `adb logcat -s flutter | grep BTKEY` — never
+`logcat -s OwnToneAudioHandler:*` (see 29's tag trap). Full pass:
+`reports/issue-14-btkey-probe-report.md`.
 
 ---
 
