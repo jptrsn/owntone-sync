@@ -219,4 +219,11 @@ UNKNOWN — behaviour you could not explain
 
 RESOLVED FINDINGS
   (empty — until review rounds)
+
+ASSUMPTIONS
+  - "Stopped-shaped" = PAUSED(2) (plan A1); PLAY-from-completed = resume-from-top (A4); no queueExhausted/notice on natural completion (A3); completed only at tail (A2, pinned by T4/T5/D4a).
+  - Server URL seeded via run-as (invariant 53) — URL field is not the path under test.
+  - Emulator `-no-audio` satisfies the audible-playback constraint; played tracks (Mummifried ×~2.5 passes, Show Me That Dance ×1) may sit in local pending_events — never flushed (no sync after playback; zero server writes).
+  - Pre-fix instrumented build existed only in a /tmp worktree (temp debugPrint, never committed); crashed spawn #1's /tmp evidence treated as untrusted, everything re-derived.
+  - Fake placed in plan's separate file (crashed builder had it inlined).
 ```
