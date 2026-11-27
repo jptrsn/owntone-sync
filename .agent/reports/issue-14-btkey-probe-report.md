@@ -92,11 +92,29 @@ NOT VERIFIED — implemented but not exercised, and why
 DEVIATIONS — anything not done as the phase specified
   - The release-silence check used a release-profile APK signed with the
     DEBUG keystore (android/key.properties temporarily pointed at
-    ~/.android/debug.keystore, restored immediately — `git status` clean
-    for it), so it could install -r over the debug build without wiping
-    the AVD's synced state. Signing does not affect kDebugMode; the
-    shipped release remains key.properties-signed. Uninstalling instead
-    would have wiped the AVD app data (server config + DB).
+    ~/.android/debug.keystore), so it could install -r over the debug build
+    without wiping the AVD's synced state. Uninstalling instead would have
+    wiped the AVD app data (server config + DB). Signing does not affect
+    kDebugMode and the `libapp.so` string count (0× BTKEY) is the witness
+    for release silence, so this deviation does not touch that conclusion.
+    CORRECTED 2026-11-27 (PR #20 review): this bullet originally vouched for
+    the restore with "`git status` clean for it". That is not a witness —
+    `android/key.properties` is gitignored (`android/.gitignore:12`), so
+    `git status` cannot see the file in either the modified or the restored
+    state, and `release.sh`'s only relevant preflight (`git status
+    --porcelain`, `release.sh:60`) checks the tracked tree and cannot see it
+    either. The restore was NOT verified by an inspectable read during the
+    session, and "the shipped release remains key.properties-signed" was an
+    inference rather than an observation.
+    CHECK BEFORE THE NEXT `./release.sh`: read the file back
+    (`cat android/key.properties`) and confirm `storeFile` names the release
+    keystore, not `~/.android/debug.keystore` — `android/app/build.gradle.kts:12`
+    reads that path and `:53` applies it to the release `signingConfig`
+    unconditionally, so a leftover redirect would publish a debug-key-signed
+    release with every existing preflight green. `git check-ignore -v
+    android/key.properties` demonstrates why `git status` cannot be the
+    witness. Adjacent, raised not fixed: a `release.sh` preflight that greps
+    `storeFile` out of `key.properties` would close this permanently.
   - Verification ran on the physical Pixel 6 (25071FDF600953) rather than
     an AVD. This is deliberate and user-blessed: #11/#14 designate the
     Pixel 6 + ESP32 as the harness rig (debug build, AntennaPod,

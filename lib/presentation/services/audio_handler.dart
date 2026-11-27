@@ -397,9 +397,13 @@ class OwnToneAudioHandler extends BaseAudioHandler
 
   /// Observability probe (issue #14; witness for #11). Genuine head-unit keys
   /// arrive through this funnel — `AudioService.java` `onMediaButtonEvent` →
-  /// `onClick` → `BaseAudioHandler.click` — never through the
-  /// `skipToNext()`/`play()` overrides directly. A probe on `skipToNext()`
-  /// would miss real Bluetooth keys entirely, so delivery is witnessed here.
+  /// `onClick` → `BaseAudioHandler.click` — so this is the one point where a
+  /// key arrival can be witnessed. `super.click()` still maps onto this
+  /// handler's `play()`/`pause()`/`skipToNext()`/`skipToPrevious()`
+  /// (audio_service 0.18.19 `audio_service.dart:3089-3105`), so a probe there
+  /// would see real keys too; it lives here because those overrides also fire
+  /// for in-app taps and the media notification's transport buttons, and so
+  /// could not single out an external key. See invariant 55.
   @override
   Future<void> click([MediaButton button = MediaButton.media]) {
     if (kDebugMode) {
