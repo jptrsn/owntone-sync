@@ -218,7 +218,8 @@ UNKNOWN — behaviour you could not explain
     shape from restore's seek + platform ENDED event; not traced deeper.
 
 RESOLVED FINDINGS
-  (empty — until review rounds)
+  F1 (major, r1) → fixed via PR-body edit by orchestrator; verified by
+    fixer — see ## Review round 1. (F2 minor not assigned to the fixer.)
 
 ASSUMPTIONS
   - "Stopped-shaped" = PAUSED(2) (plan A1); PLAY-from-completed = resume-from-top (A4); no queueExhausted/notice on natural completion (A3); completed only at tail (A2, pinned by T4/T5/D4a).
@@ -227,3 +228,60 @@ ASSUMPTIONS
   - Pre-fix instrumented build existed only in a /tmp worktree (temp debugPrint, never committed); crashed spawn #1's /tmp evidence treated as untrusted, everything re-derived.
   - Fake placed in plan's separate file (crashed builder had it inlined).
 ```
+
+---
+
+## Review round 1 (2026-11-27, PR #22)
+
+Reviewer r1 (comment 7230378028): 0 blocker / 1 major (F1) / 1 minor (F2) /
+0 nit. Assigned to fixer: F1 only (F2 minor not assigned — orchestrator
+accepted it as transcription-only at ledger 2026-11-27T23:48:54Z).
+
+### F1 (major) — PR body carried a GitHub closing keyword (`Closes #21`); merging would auto-close #21, defeating run.md §Merge/close policy for units 2–4 (host rows H1/H2 need the issue open)
+
+**fixed via PR-body edit by orchestrator per the finding's suggested fix;
+verified by fixer.** The orchestrator owns PR-body writes (the body was
+orchestrator-authored; the fixer role's only GitHub action is `git push`),
+so the keyword removal was effected by `gh pr edit 22`; this round's job was
+verify-by-evidence on the live body and record.
+
+Verification (fixer, 2026-11-27T23:55Z) against the live body
+(`gh pr view 22 --json body -q .body` saved to /tmp/owntone-night/pr22-body.txt):
+
+```
+$ grep -n -i -E '(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)[[:space:]]+#[0-9]+' /tmp/owntone-night/pr22-body.txt
+(no output — grep exit 1: no closing keyword immediately precedes any #<number> reference)
+$ tr '\n' ' ' < /tmp/owntone-night/pr22-body.txt | grep -o -i -E '.{20}(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)[[:space:]]+#[0-9]+.{10}'
+(no output — grep exit 1: same check with newlines flattened, so keyword-at-EOL + reference-at-next-BOL is covered too)
+$ grep -n -E '#[0-9]+' /tmp/owntone-night/pr22-body.txt
+1:Issue: #21 (must NOT auto-close — see merge policy note at end) — end-of-queue left a stale `PLAYING` media-session projection (`playing=true` + `processingState=completed` → `dumpsys media_session` `state=PLAYING(3)` with AudioTrack stopped, mini player "Pause", external PLAY toggling to pause).
+25:Issue linkage: #21 — no closing keyword used on purpose. Per this run's merge policy for units 2-4: the issue must remain OPEN after merge; host rows H1/H2 stay tracked there until the host session runs them; the host session then performs the closure.
+```
+
+The two boundary lines (the only `#<number>` references in the body):
+line 1 opener `Issue: #21 (must NOT auto-close — see merge policy note at
+end) — …` — token immediately before the reference is `Issue:`; the
+substring `auto-close` sits *after* the reference and is followed by `—`,
+never by `#` (and `auto-close`/`closing`/`closure` are not GitHub closing
+keywords anyway). Line 25 linkage `Issue linkage: #21 — no closing keyword
+used on purpose. …` — token immediately before the reference is `linkage:`.
+Keyword occurrences elsewhere in the body (`pre-fix`, `Post-fix`) are
+hyphenated prose, never adjacent to a reference. PR title checked too
+(keyword grep exit 1). Verdict: merging PR #22 as it stands will NOT close
+#21; closure stays with the host session per policy. No residual
+keyword+reference found → not blocked.
+
+Fixer gate re-run (role step 4) on unchanged head 9fd6517 — no code/test
+changes this round; Kotlin gate n/a (`android/` untouched, diff file set
+unchanged):
+- `flutter analyze` → `1 issue found. (ran in 3.3s)`; sole issue = accepted
+  baseline info `queue_sheet.dart:160:27 deprecated_member_use`; 0 errors,
+  0 warnings.
+- `flutter test` → `00:10 +164: All tests passed!`
+- `flutter build apk --debug` → `✓ Built build/app/outputs/flutter-apk/app-debug.apk`
+- Tool churn: none — post-gate `git diff` empty on `analysis_options.yaml`
+  and `android/gradle.properties`; `git status` shows only the pre-existing
+  untracked `.ai-dlc/`/`.opencode/` (never staged).
+
+DEVICE: none — F1 is GitHub metadata; no behaviour change → no AVD created,
+no server call beyond none (zero HTTP this round), no device touched.
