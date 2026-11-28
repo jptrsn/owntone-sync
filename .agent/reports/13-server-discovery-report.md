@@ -121,6 +121,24 @@ with manual entry demoted to the Advanced tile (invariants 41/44 order kept).
     were enabled and POST_NOTIFICATIONS granted **to TalkBack only** so
     content-desc dumps and notification popups behaved.
 
+### ASSUMPTIONS
+  - Kotlin API deviations: `getAttributes()` (API 30+) for TXT,
+    `getHostAddresses()` (API 33+) for IPv4, `serviceName`; on API 27–29
+    TXT is unobtainable → manual-entry fallback (recorded also under
+    DEVIATIONS).
+  - `@visibleForTesting` probe/source seams added for the injected fakes.
+  - `ExpansibleController`-family usage chosen to satisfy the deprecation
+    gate.
+  - The existing smoke test was opened the Advanced tile per the mandated
+    layout (test adaptation, behaviour under test unchanged).
+  - Harness: TalkBack semantics enabled; notification grant given to
+    TalkBack only; IME-occlusion tap lesson recorded.
+  - The first D2a empty-state witness was from the pre-fix build
+    (superseded by the post-fix witnessed rows).
+
+### RESOLVED FINDINGS
+  (empty — until review rounds)
+
 ### BUILD
   flutter analyze: 0 errors / 0 warnings (1 baseline info, `queue_sheet.dart:160`).
   flutter build apk --debug: succeeded (final HEAD).
