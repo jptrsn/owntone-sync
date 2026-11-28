@@ -55,6 +55,14 @@ class SyncProvider extends ChangeNotifier {
   // The manual sync guard (Phase U2) reads it via [manualSyncBlocked]:
   // the state alone cannot tell a probed offline from an unverified one.
   ConnectivityState? _lastProbeResult;
+  // Presentation gate for the red unreachable surfaces (issue 12, amended
+  // invariant 41, invariant 57): true only when the fetch that last
+  // completed classified the state did so as a user-initiated failure
+  // classified unreachable. Derived, never persisted - no prefs key, reset
+  // on every process start - so an unrequested launch/background probe
+  // classifies but never presents, and a failed scheduled sync leaves no
+  // red on the next open.
+  bool _unreachableWarningVisible = false;
   SyncHistoryRecord? _lastSync;
   bool _isCancelling = false;
   bool _isLoadingPlaylists = false;
@@ -94,6 +102,20 @@ class SyncProvider extends ChangeNotifier {
   /// which looks identical to a genuinely offline session because offline
   /// shows nothing at all.
   ConnectivityState get connectivityState => _connectivity;
+
+  /// Whether the red `unreachable` surfaces may present: the home banner,
+  /// the app-bar red badge, the drawer's "Server not responding" line and
+  /// the Sync screen's red banner all render only when this is on **and**
+  /// [connectivityState] is [ConnectivityState.unreachable] (issue 12,
+  /// amended invariant 41, invariant 57).
+  ///
+  /// Red requires a user request: the gate turns on only when a
+  /// *user-initiated* `fetchPlaylists` fails classified unreachable, and
+  /// off when any fetch reaches the server or on [setServerUrl]. It is
+  /// derived, never persisted; unlike [connectivityState] - which stays
+  /// UNGATED as the sole input to [manualSyncBlocked] (invariant 43) - it
+  /// governs presentation only.
+  bool get unreachableWarningVisible => _unreachableWarningVisible;
 
   /// The Phase U2 manual-sync guard: true only when a completed fetch
   /// probe has established [ConnectivityState.offline] for the current
@@ -220,6 +242,12 @@ class SyncProvider extends ChangeNotifier {
     // The new address has not been probed: the manual sync guard (Phase
     // U2) must not read the previous address's classification.
     _lastProbeResult = null;
+    // The red gate is save-cleared too (issue 12, invariant 57): an
+    // address that has never been probed must not show red left over from
+    // the previous host. The generation fence above already keeps a
+    // stale in-flight failure (written only after its own fence check)
+    // from re-arming anything.
+    _unreachableWarningVisible = false;
 
     notifyListeners();
   }
@@ -482,7 +510,16 @@ class SyncProvider extends ChangeNotifier {
   /// for the previous address is dropped; and only the network call feeds
   /// [classifySyncFailure] - a local cache-write failure after the server
   /// answered is logged and keeps the state the fetch earned.
-  Future<void> fetchPlaylists() async {
+  ///
+  /// [userInitiated] records the fetch's provenance for the red
+  /// presentation gate ([unreachableWarningVisible], issue 12, invariant
+  /// 57): it defaults to false - the launch `_initialize` probe classifies
+  /// only, it never presents. The three user-action call sites (banner
+  /// Retry, Sync 'Load Playlists', Sync pull-to-refresh) pass true. The
+  /// gate is re-derived from provenance by every completed fetch (an
+  /// assignment, not a sticky OR), so an unrequested failure turns it off
+  /// as surely as a success or a save does.
+  Future<void> fetchPlaylists({bool userInitiated = false}) async {
     if (!_isConfigured || _apiRepo == null || _dbRepo == null) {
       // Not configured is a state, not an error: the Library empty state is
       // the setup entry (U1 build item 3), and it must never render red.
@@ -520,6 +557,9 @@ class SyncProvider extends ChangeNotifier {
       // A probe just completed against the current address: the manual
       // sync guard (Phase U2) may now read its classification.
       _lastProbeResult = ConnectivityState.reachable;
+      // The server was reached: the red gate goes off - all four
+      // unreachable surfaces go silent (issue 12, invariant 57).
+      _unreachableWarningVisible = false;
 
       logger.i('Fetched ${_availablePlaylists.length} playlists from server');
 
@@ -552,6 +592,15 @@ class SyncProvider extends ChangeNotifier {
       _lastProbeResult = classified;
       // The displayed list is the local cache again: not fresh.
       _lastFetchSucceeded = false;
+      // The red gate is re-derived from this fetch's provenance (issue 12,
+      // invariant 57): it turns on ONLY for a user-initiated failure
+      // classified unreachable - any other completed fetch (unrequested,
+      // or failed classified otherwise, including an HTTP-status failure
+      // which the classifier reads as reachable) leaves it off. Assignment
+      // semantics, not a sticky OR: an unrequested probe never presents,
+      // even one that lands after the gate was on.
+      _unreachableWarningVisible =
+          userInitiated && classified == ConnectivityState.unreachable;
 
       logger.i('Failed to fetch playlists: $e (state: $_connectivity)');
 

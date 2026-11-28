@@ -55,8 +55,10 @@ per visible scroll state** (`FlexibleSpaceBar` layers are independent) ·
 50 **DateFormat literals are quoted**; a bare `a` is the AM/PM marker ·
 51 **the launch load is `reloadAll()`**; an empty default tab must not
 hide populated categories ·
-54 **playlist rows are lead-free**; the 32 px leading column exists only
-when supplied or current
+ 54 **playlist rows are lead-free**; the 32 px leading column exists only
+ when supplied or current ·
+ 57 **red 'unreachable' requires a user request**; unrequested probes
+ classify, never present
 
 **Environment and tooling** — 10 server address · 11 `pending_events` is not
 shell-readable · 12 scratch files location · 18 uiautomator quoting ·
@@ -1123,7 +1125,13 @@ on the near-full partition (invariant 42).
   classified fetch failure, so it is always true.
 - `unreachable`: the only home banner (persistent, human, names the host via
   `describeUnreachable` → U0's `parseServerUrlIdentity`; Retry →
-  `fetchPlaylists`; no dismiss) and the only justified red app-bar badge.
+  `fetchPlaylists(userInitiated: true)`; no dismiss) and the only justified
+  red app-bar badge — **and red requires the user-request gate**: the home
+  banner, the badge, the drawer's "Server not responding" line and the Sync
+  screen's red banner all render only when
+  `SyncProvider.unreachableWarningVisible` is on (invariant 57).
+  **Unrequested probes never present** — a launch/background
+  `fetchPlaylists()` classifies the state and renders nothing.
 - `unconfigured`: the neutral setup icon (tooltip "Set up sync"); the empty
   state is setup, not failure; there is no "Server URL not configured" error
   surface (G8).
@@ -1490,6 +1498,45 @@ artist-detail and all-tracks row — a rendered-output-only regression
 the track number as `leading` on the playlist screen re-steals the width
 by request. The `isCurrent` branch keeps its own 32 px wrapper — do not
 "flatten" it into the caller-supplied path.
+
+---
+
+### 57. Red 'server unreachable' requires a user request: unrequested probes classify, never present
+
+The four red unreachable surfaces (home banner, app-bar red badge, drawer
+"Server not responding" line, Sync screen red banner) render only when
+`SyncProvider.unreachableWarningVisible` is on **and** the state is
+`unreachable` (amended invariant 41). The gate is a derived boolean written
+at exactly three sites: `fetchPlaylists`' fenced failure path
+(`userInitiated && classified == unreachable` — an assignment, so every
+completed fetch re-derives it from its own provenance), its fenced success
+path (`false`), and `setServerUrl` (`false`). `fetchPlaylists` takes
+`userInitiated` (default `false`): the launch `_initialize` probe keeps the
+default; the three action sites — banner Retry, Sync "Load Playlists", Sync
+pull-to-refresh — pass `true`. Never persisted (no prefs key), so every
+process start begins silent. "Reached the server" includes an HTTP error
+status (the classifier reads that as `reachable`, invariant 39, and the
+failure-path assignment then also turns the gate off).
+
+**WHY:** issue #12 (maintainer Case A, device-verified 2026-11-25): away
+from the home LAN a refused or carrier-blackholed connection classifies
+`unreachable` (invariant 39's errno contract — only a no-route answer
+classifies `offline`), and a cold start nobody asked about rendered the red
+banner, badge and drawer line ("Requested by nobody"). No code path fetches
+*because* audio is playing, so playback-time red could only come from an
+earlier unrequested probe; killing that trigger subsumes the complaint. The
+presentation gate fixes every network shape — the classifier is not the
+right knob (invariants 39/40 stay as they are).
+
+**BREAKS IF UNDONE:** rendering any red surface while the gate is off
+re-arms the original complaint — the contract is *silent until asked*;
+reverting the failure path to a sticky OR (or defaulting `userInitiated` to
+true) lets an unrequested probe present again; clearing the gate on events
+the spec never names (a worker completion, a UI dismissal) or persisting it
+invents appear/disappear semantics beyond the agreed shape; and gating
+`connectivityState` itself instead of only the presentation would weaken
+the manual-sync guard — `shouldBlockManualSync` must keep reading the
+UNGATED state (invariant 43).
 
 ---
 

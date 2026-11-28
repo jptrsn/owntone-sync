@@ -79,8 +79,12 @@ class AppDrawer extends StatelessWidget {
     final syncProvider = context.watch<SyncProvider>();
     final serverUrl = syncProvider.serverUrl;
     final lastSync = syncProvider.lastSync;
+    // The fault line renders only with the red gate on (issue 12,
+    // invariant 57): an unrequested probe classifies unreachable but the
+    // drawer stays silent.
     final isUnreachable =
-        syncProvider.connectivityState == ConnectivityState.unreachable;
+        syncProvider.connectivityState == ConnectivityState.unreachable &&
+        syncProvider.unreachableWarningVisible;
 
     return Drawer(
       child: Column(

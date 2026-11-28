@@ -697,4 +697,243 @@ void main() {
       expect(triggerBackgroundSyncInvoked, isTrue);
     });
   });
+
+  group('unreachable presentation gate (#12, amended invariant 41)', () {
+    // Issue 12 (invariant 57): red requires a user request. These pin the
+    // gate matrix — on only for a user-initiated fetch that failed
+    // classified unreachable, off on every fetch that reached the server
+    // and on every save; connectivityState itself stays UNGATED (43).
+    DioException refused(RequestOptions options) =>
+        DioException.connectionError(
+          requestOptions: options,
+          reason: 'Connection failed',
+          error: SocketException(
+            'Connection failed (OS Error: Connection refused, errno = 111), '
+            'address = 192.168.1.13, port = 3689',
+            address: InternetAddress('192.168.1.13'),
+            port: 3689,
+            osError: const OSError('Connection refused', 111),
+          ),
+        );
+
+    Future<void> gateOn(SyncProvider provider) async {
+      await provider.setServerUrl('http://192.168.1.13:3689');
+      try {
+        await provider.fetchPlaylists(userInitiated: true);
+      } catch (_) {
+        // Environmental cache-load throw (see the file header).
+      }
+      expect(provider.unreachableWarningVisible, isTrue,
+          reason: 'setup: user-initiated unreachable failure arms the gate');
+    }
+
+    test('T1: unrequested fetch failure classifies unreachable and leaves '
+        'the gate off (issue 12, AC1; amended invariant 41, invariant 57)',
+        () async {
+      // The launch/background probe: the state is earned (invariant 40),
+      // presentation is not (AC1).
+      final provider = await expectFetchState(
+        refused,
+        ConnectivityState.unreachable,
+      );
+      expect(provider.unreachableWarningVisible, isFalse,
+          reason: 'an unrequested probe classifies, it never presents');
+    });
+
+    test('T2: user-initiated fetch failure turns the gate on (issue 12, '
+        'AC2/AC3; amended invariant 41)', () async {
+      final provider = providerFailing(refused);
+      addTearDown(provider.dispose);
+      await settle();
+      await gateOn(provider);
+      expect(provider.connectivityState, ConnectivityState.unreachable);
+    });
+
+    test('T3: a user-initiated fetch that reaches the server turns the gate '
+        'off (issue 12, AC3; invariants 39/40/57)', () async {
+      var mode = 'refused';
+      final dio = Dio();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            switch (mode) {
+              case 'succeed':
+                handler.resolve(
+                  Response(
+                    requestOptions: options,
+                    statusCode: 200,
+                    data: playlistsJson,
+                  ),
+                );
+              case 'badStatus':
+                handler.reject(
+                  DioException.badResponse(
+                    statusCode: 500,
+                    requestOptions: options,
+                    response: Response(
+                      requestOptions: options,
+                      statusCode: 500,
+                    ),
+                  ),
+                );
+              default:
+                handler.reject(refused(options));
+            }
+          },
+        ),
+      );
+      final provider = SyncProvider(
+        apiRepository: (baseUrl) =>
+            OwnToneApiRepository(baseUrl: baseUrl, dio: dio),
+      );
+      addTearDown(provider.dispose);
+      await settle();
+      await gateOn(provider);
+
+      // (a) a fetch that reaches the server with a 200: gate off.
+      mode = 'succeed';
+      await provider.fetchPlaylists(userInitiated: true);
+      expect(provider.connectivityState, ConnectivityState.reachable);
+      expect(provider.unreachableWarningVisible, isFalse);
+
+      // (b) an HTTP error status still counts as reached (invariant 39):
+      // re-arm, then the 500-answer must clear.
+      mode = 'refused';
+      await gateOn(provider);
+      mode = 'badStatus';
+      try {
+        await provider.fetchPlaylists(userInitiated: true);
+      } catch (_) {
+        // Environmental cache-load throw (see the file header).
+      }
+      expect(provider.connectivityState, ConnectivityState.reachable);
+      expect(provider.unreachableWarningVisible, isFalse);
+    });
+
+    test('T4: an unrequested failure after the gate is on turns it off '
+        '(derived, not sticky) (issue 12, AC1; amended invariant 41, '
+        'invariant 57)', () async {
+      final provider = providerFailing(refused);
+      addTearDown(provider.dispose);
+      await settle();
+      await gateOn(provider);
+      // The next launch probe lands while nobody is looking: silent again.
+      try {
+        await provider.fetchPlaylists();
+      } catch (_) {
+        // Environmental cache-load throw (see the file header).
+      }
+      expect(provider.connectivityState, ConnectivityState.unreachable);
+      expect(provider.unreachableWarningVisible, isFalse,
+          reason: 'the gate is re-derived from each fetch provenance');
+    });
+
+    test('T5: setServerUrl clears the gate; an in-flight failure for the '
+        'replaced address cannot re-arm it (issue 12, AC4; invariants '
+        '40/57)', () async {
+      final provider = providerDelayed(
+        const Duration(milliseconds: 300),
+        buildError: refused,
+      );
+      addTearDown(provider.dispose);
+      await settle();
+      await gateOn(provider);
+      // A user-initiated failure is in flight against the current address
+      // when the save lands: the save owns the transition (invariant 40),
+      // the fence drops the stale failure, and the gate stays off.
+      final fetch = provider.fetchPlaylists(userInitiated: true);
+      await provider.setServerUrl('http://10.0.0.5:3689');
+      await fetch;
+      expect(provider.unreachableWarningVisible, isFalse);
+      expect(provider.connectivityState, ConnectivityState.offline);
+    });
+
+    test('T6: the gate is never persisted (issue 12, AC7; invariant 57)',
+        () async {
+      final provider = providerFailing(refused);
+      await settle();
+      await gateOn(provider);
+      provider.dispose();
+      // A fresh process, same stored prefs: silent before any fetch (the
+      // next-open guarantee — combined with T7 it means a scheduled
+      // failure cannot leave red behind).
+      // A succeeding dio for the revived provider: this file runs without
+      // a platform DB (file header), and its _initialize now replays the
+      // stored server_url — a failing shape there would throw from the
+      // post-classification cache load outside any test-body catch. The
+      // gate claim under test is independent of the revived fetch's
+      // outcome (it must be off *before* any fetch anyway).
+      final revived = providerSucceeding();
+      addTearDown(revived.dispose);
+      expect(revived.unreachableWarningVisible, isFalse);
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        prefs.getKeys().where((k) => k.toLowerCase().contains('unreachable')),
+        isEmpty,
+        reason: 'the gate has no persistence key',
+      );
+      // Let the revived provider's _initialize finish before the teardown
+      // disposes it (dispose mid-init trips the use-after-dispose assert).
+      await settle();
+      expect(revived.unreachableWarningVisible, isFalse);
+    });
+
+    test('T7: a failed scheduled/worker completion touches neither state '
+        'nor gate (issue 12, AC7; invariant 40)', () async {
+      // Gate on: a failed run is non-proving (invariant 40) and the worker
+      // path never writes the gate — it neither presents nor clears.
+      final provider = providerFailing(refused);
+      addTearDown(provider.dispose);
+      await settle();
+      await gateOn(provider);
+      await emitCompletion(provider, 'failed', message: 'scheduled run died');
+      expect(provider.connectivityState, ConnectivityState.unreachable);
+      expect(provider.unreachableWarningVisible, isTrue);
+
+      // The away-from-home scheduled shape: unrequested probe + failed
+      // scheduled run ⇒ nothing red on the next open (with T6's reset).
+      // Clean prefs before this construction: the leg above stored a
+      // server_url, and this file has no platform DB (file header) for
+      // the constructor probe's post-classification cache load.
+      SharedPreferences.setMockInitialValues({});
+      final away = await expectFetchState(
+        refused,
+        ConnectivityState.unreachable,
+      );
+      await emitCompletion(away, 'failed', message: 'no route');
+      expect(away.connectivityState, ConnectivityState.unreachable);
+      expect(away.unreachableWarningVisible, isFalse);
+    });
+
+    test('T8: the manual-sync guard reads the ungated state, not the gate '
+        '(issue 12, AC5/AC6; invariants 43/41)', () async {
+      // (a) gate ON for an unreachable probe — the guard stays open
+      // (unreachable never blocks; it reads the ungated state).
+      final gateOnProvider = providerFailing(refused);
+      addTearDown(gateOnProvider.dispose);
+      await settle();
+      await gateOn(gateOnProvider);
+      expect(gateOnProvider.unreachableWarningVisible, isTrue);
+      expect(
+        gateOnProvider.manualSyncBlocked,
+        isFalse,
+        reason: 'the guard reads connectivityState, not the gate '
+            '(invariant 43)',
+      );
+
+      // (b) probed offline: the guard fires while the red gate stays off —
+      // 'Sync now' disabled + refused, no red surfaces armed (invariant 41
+      // offline silence). Clean prefs before this construction (see T7:
+      // no platform DB in this file for the constructor probe).
+      SharedPreferences.setMockInitialValues({});
+      final offline = await expectFetchState(
+        netUnreachable,
+        ConnectivityState.offline,
+      );
+      expect(offline.unreachableWarningVisible, isFalse);
+      expect(offline.manualSyncBlocked, isTrue);
+      expect(await offline.startSync(), offlineSyncRefusal);
+      expect(triggerBackgroundSyncInvoked, isFalse);
+    });
+  });
 }
