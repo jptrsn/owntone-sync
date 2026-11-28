@@ -73,6 +73,11 @@ class _SyncScreenState extends State<SyncScreen> {
           'Offline - showing cached playlists',
         );
       case ConnectivityState.unreachable:
+        // Red requires the user-request gate (issue 12, invariant 57):
+        // an unrequested probe classifies this state but renders nothing.
+        if (!provider.unreachableWarningVisible) {
+          return const SizedBox.shrink();
+        }
         return _banner(
           Colors.red,
           Colors.red.shade100,
@@ -256,7 +261,9 @@ class _SyncScreenState extends State<SyncScreen> {
               onPressed: provider.isSyncing
                   ? null
                   : () async {
-                      await provider.fetchPlaylists();
+                      // A user request: a failure against an unreachable
+                      // server may present the red banner (issue 12).
+                      await provider.fetchPlaylists(userInitiated: true);
                     },
               icon: const Icon(Icons.refresh),
               label: const Text('Load Playlists'),
@@ -404,8 +411,9 @@ class _SyncScreenState extends State<SyncScreen> {
         Expanded(
           child: RefreshIndicator(
             // The fetch outcome renders through the state banner; a raw
-            // failure string was never the right refresh feedback.
-            onRefresh: () => provider.fetchPlaylists(),
+            // failure string was never the right refresh feedback. A
+            // pull-to-refresh is a user request (issue 12).
+            onRefresh: () => provider.fetchPlaylists(userInitiated: true),
             child: Stack(
               children: [
                 ListView.builder(

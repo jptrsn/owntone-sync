@@ -262,7 +262,9 @@ class _LibraryScreenState extends State<LibraryScreen>
     );
   }
 
-  /// The one persistent home banner: the `unreachable` state only.
+  /// The one persistent home banner: the `unreachable` state only, and
+  /// only while the red gate is on (issue 12, invariant 57) - an
+  /// unrequested probe classifies the state but never presents.
   ///
   /// It is human-readable, names the host, and offers a working retry -
   /// never a raw exception (U1 build item 3). The `offline` state renders
@@ -273,7 +275,8 @@ class _LibraryScreenState extends State<LibraryScreen>
     return Consumer<SyncProvider>(
       builder: (context, syncProvider, _) {
         if (syncProvider.connectivityState !=
-            ConnectivityState.unreachable) {
+                ConnectivityState.unreachable ||
+            !syncProvider.unreachableWarningVisible) {
           return const SizedBox.shrink();
         }
         final scheme = Theme.of(context).colorScheme;
@@ -302,7 +305,10 @@ class _LibraryScreenState extends State<LibraryScreen>
                   ),
                 ),
                 TextButton(
-                  onPressed: () => syncProvider.fetchPlaylists(),
+                  // The banner's Retry is a user request: failing again
+                  // keeps the surfaces visible (issue 12).
+                  onPressed: () =>
+                      syncProvider.fetchPlaylists(userInitiated: true),
                   child: const Text('Retry'),
                 ),
               ],
@@ -342,8 +348,12 @@ class _LibraryScreenState extends State<LibraryScreen>
 
   /// The app-bar sync affordance, driven by the four-state connectivity
   /// model (U1 build item 3). `unreachable` is the only state that may
-  /// carry the red badge; `offline` and `unconfigured` are neutral;
-  /// `reachable` is the quiet confirmation.
+  /// carry the red badge - and only while the red gate is on (issue 12,
+  /// invariant 57): gate off, the unreachable state renders the same
+  /// neutral icon as `offline`, so an unrequested probe shows no red.
+  /// `offline` and `unconfigured` are neutral; `reachable` is the quiet
+  /// confirmation. The icon stays tappable either way (navigation to the
+  /// Sync screen is ungated).
   Widget _buildSyncStatusAction(BuildContext context) {
     return Consumer<SyncProvider>(
       builder: (context, provider, _) {
@@ -367,25 +377,32 @@ class _LibraryScreenState extends State<LibraryScreen>
         } else {
           switch (provider.connectivityState) {
             case ConnectivityState.unreachable:
-              tooltip = describeUnreachable(provider.serverUrl);
-              icon = Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  const Icon(Icons.cloud_off),
-                  Positioned(
-                    right: -2,
-                    top: -2,
-                    child: Container(
-                      width: 9,
-                      height: 9,
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.error,
-                        shape: BoxShape.circle,
+              if (provider.unreachableWarningVisible) {
+                tooltip = describeUnreachable(provider.serverUrl);
+                icon = Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    const Icon(Icons.cloud_off),
+                    Positioned(
+                      right: -2,
+                      top: -2,
+                      child: Container(
+                        width: 9,
+                        height: 9,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.error,
+                          shape: BoxShape.circle,
+                        ),
                       ),
                     ),
-                  ),
-                ],
-              );
+                  ],
+                );
+              } else {
+                // Unrequested unreachable: the neutral rendering of the
+                // offline case (issue 12 - no new visual language).
+                tooltip = provider.isConfigured ? 'Sync' : 'Set up sync';
+                icon = const Icon(Icons.cloud_outlined);
+              }
             case ConnectivityState.reachable:
               tooltip = 'Sync';
               icon = const Icon(Icons.cloud_done);
