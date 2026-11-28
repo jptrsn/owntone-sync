@@ -396,8 +396,16 @@ void main() {
         await pumpScreen(
           tester,
           const ServerConfigScreen(),
-          ready: find.byType(TextFormField),
+          ready: find.text('Advanced: enter address manually'),
         );
+
+        // Issue 13 (plan AC9/W2): the manual-entry path lives under the
+        // always-reachable Advanced ExpansionTile, collapsed by default —
+        // open it to reach the field the invariant-44 assertions below
+        // need. The Save action stays outside the tile.
+        await tester.tap(find.text('Advanced: enter address manually'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
 
         // Invariant 44: the example URL is a hint (hintText), never
         // pre-filled text — pre-filled text is saveable, and an unattended

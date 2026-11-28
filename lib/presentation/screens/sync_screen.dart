@@ -196,14 +196,37 @@ class _SyncScreenState extends State<SyncScreen> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
+            // Issue 13: scan is the primary action; the manual entry that
+            // the issue asks to keep lives behind the same screen's
+            // always-reachable Advanced tile, opened straight away for the
+            // user who chooses it. Both buttons only *push the screen* —
+            // discovery is never a save path (invariant 58), saving stays
+            // exclusively that screen's Save -> _handleServerChange
+            // (invariant 37), and nothing here renders red (invariant 41:
+            // the unconfigured step is neutral setup).
             ElevatedButton.icon(
               onPressed: () {
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const ServerConfigScreen()),
                 );
               },
-              icon: const Icon(Icons.settings),
-              label: const Text('Configure Server'),
+              icon: const Icon(Icons.search),
+              label: const Text('Scan for servers'),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder:
+                        (_) =>
+                            const ServerConfigScreen(
+                              startAdvancedExpanded: true,
+                            ),
+                  ),
+                );
+              },
+              child: const Text('Enter address manually (advanced)'),
             ),
           ],
         ),

@@ -113,6 +113,45 @@ void main() {
             '${violations.join('\n')}');
   });
 
+  test('SyncProvider.setServerUrl has exactly its two UI call sites and '
+      'both are inside server_config_screen.dart (issue 13, new invariant '
+      '58: discovery is never a save path; invariant 37 owns every save). '
+      'The forbidden construction this catches is a discovery code path '
+      '(scan panel, service, first-run buttons) reaching setServerUrl and '
+      'bypassing the "Different server?" + Keep/Delete Files confirmations '
+      'that guard the wipe; the only permitted occurrences are the two UI '
+      'call sites in server_config_screen.dart and the provider '
+      'definition + _initialize pref-load in sync_provider.dart.', () {
+    final hits = findToken(dartFilesInLib, 'setServerUrl(');
+    final byFile = <String, List<String>>{};
+    for (final hit in hits) {
+      final file = hit.split(':').first;
+      (byFile[file] ??= <String>[]).add(hit);
+    }
+    expect(
+      byFile.keys.toSet(),
+      {
+        'lib/presentation/screens/server_config_screen.dart',
+        'lib/presentation/providers/sync_provider.dart',
+      },
+      reason: 'setServerUrl( reappeared outside its owners:\n$hits',
+    );
+    expect(
+      byFile['lib/presentation/screens/server_config_screen.dart'],
+      hasLength(2),
+      reason: 'server_config_screen.dart must hold exactly the two UI '
+          'save call sites (_saveUrl, _wipeAndSave):\n'
+          '${byFile['lib/presentation/screens/server_config_screen.dart']}',
+    );
+    expect(
+      byFile['lib/presentation/providers/sync_provider.dart'],
+      hasLength(2),
+      reason: 'sync_provider.dart must hold exactly the definition and '
+          'the _initialize pref-load:\n'
+          '${byFile['lib/presentation/providers/sync_provider.dart']}',
+    );
+  });
+
   test('the old app name "OwnTone Sync" is gone from lib/ (U4 settled '
       'decision 4: the app is "Owntone Player"). The name is release-facing '
       '— the launcher label, store metadata and site already carry the new '
