@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import io.flutter.plugin.common.EventChannel
 import java.net.Inet4Address
@@ -81,6 +83,13 @@ class ServerDiscoveryStreamHandler(context: Context) : EventChannel.StreamHandle
     private var eventSink: EventChannel.EventSink? = null
     private val discoveryListeners = mutableListOf<NsdManager.DiscoveryListener>()
 
+    // NsdManager delivers discovery/resolve callbacks on its own
+    // HandlerThread (device-observed on the night AVD: FlutterJNI
+    // ensureRunningOnMainThread threw out of every EventSink.success,
+    // silently dropping resolved services). Sink emissions must therefore
+    // be marshalled to the main thread.
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
         // Idempotent re-listen: release any previous browse before the new
         // one, so a dangling subscription can never leave two discover
@@ -141,11 +150,13 @@ class ServerDiscoveryStreamHandler(context: Context) : EventChannel.StreamHandle
             }
 
             override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                val sink = eventSink ?: return
-                try {
-                    sink.success(buildEventMap(serviceType, serviceInfo))
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to forward ${serviceInfo.serviceName}", e)
+                mainHandler.post {
+                    val sink = eventSink ?: return@post // browse cancelled meanwhile
+                    try {
+                        sink.success(buildEventMap(serviceType, serviceInfo))
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to forward ${serviceInfo.serviceName}", e)
+                    }
                 }
             }
         }
