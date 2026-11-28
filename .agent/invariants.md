@@ -27,7 +27,10 @@ not renumber**.
 5 `playMediaItem` is a no-op · 6 tree-scoped content URIs · 7 `positionData` is
 broadcast · 19 **one index space** (`sequence` is base order) · 23 restoring a
 shuffle order · 24 A9 has two outcomes · 25 `playback_state` persistence ·
-46 **the position never resets on a sequence re-emission; a restore anchors it**
+46 **the position never resets on a sequence re-emission; a restore anchors it** ·
+56 **end-of-queue `completed` heals at the event funnel** (pause one microtask
+deferred; resume from completed needs `seek(0)`; `queueExhausted` stays
+error-only)
 
 **Sync and statistics** — 8 event upload is not gated · 9 completion is a play,
 never a skip · 13 the user-intent signal · 14 the position stream is the clock ·
@@ -404,6 +407,49 @@ position.
 **BREAKS IF UNDONE:** killing and relaunching the app loses the saved
 position (QA-11), or a sparse platform event zeroes the row mid-playback and
 the user loses their spot for the whole paused interval.
+
+---
+
+### 56. End-of-queue `completed` is healed at the event funnel; do not tidy it
+
+just_audio leaves `playing` true through completion (its `play()` contract
+leaves stopping on completion to the caller — just_audio.dart:1074-1078 —
+and the platform event carries `playing` through), and audio_service maps
+`completed` + `playing` to `STATE_PLAYING` (AudioService.java:606-607). So
+the handler's `playbackEventStream` listener — the single funnel where
+`completed` enters the app — must publish `playing: false` and pause the
+platform (issue #21: the queue tail left `dumpsys media_session` at
+PLAYING(3) with AudioTrack stopped, and a media-key PLAY toggled toward
+pause). The `_audioPlayer.pause()` there is **deferred one microtask on
+purpose**: just_audio dispatches events synchronously, so an inline pause
+re-enters the firing subject (`Bad state: Cannot fire new event`,
+witnessed by mutating T1). The `play()` override's `seek(Duration.zero)`
+when `processingState == completed` is load-bearing too: without it the
+`click()` → `play()` resume leaves the session PLAYING with a pinned
+position and nothing audible, and the next key pauses (pre-fix device
+witness in the #21 report). And `queueExhausted` stays A9-error-only
+(24's two outcomes): natural completion must not emit it.
+
+**WHY:** every one of those four details looks like something a future
+session would "tidy" — the heal as belt-and-braces over `stop()`, the
+microtask as pointless, the seek as redundant with `play()`, the
+completion/stop heals as one helper. Each removal was run and has a
+witness.
+
+**BREAKS IF UNDONE:** remove the heal → stale PLAYING projection (the
+#21 symptom) and a PLAY that pauses; inline the pause → `Bad state` throw
+at the queue tail; drop the seek → resume-from-completed silently plays
+nothing; route the completion heal through `stop()` or emit
+`queueExhausted` on completion → 24's two outcomes collapse and the
+"Queue ended" notice fires on ordinary playback.
+
+**RESOLVED CONCERN:** "isn't this a duplicate of the `stop()` heal (A9)?"
+No — the funnels are distinct (error path heals at `stop()`, completion at
+the event listener) and verified independently: D1 (completion →
+PAUSED(2), no notice) vs D4b (corrupt tail → PlayerException → NONE(0) +
+"Queue ended" notice). Tests T1–T5 (`test/end_of_queue_projection_test.dart`,
+fake platform double) guard all of it; mutation matrix in
+`reports/21-end-of-queue-stale-projection-report.md`.
 
 ---
 

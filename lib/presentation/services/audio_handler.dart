@@ -160,6 +160,22 @@ class OwnToneAudioHandler extends BaseAudioHandler
           queueIndex: event.currentIndex,
         ),
       );
+      // End of queue (A9): just_audio's play() keeps `playing` true through
+      // completion, so the normal publish above carries a stale playing=true
+      // into the completed state and the media session projects PLAYING with a
+      // frozen position. Heal it here rather than waiting for the pause echo:
+      // publish the stopped shape and pause the platform so `playing` stops
+      // lying. External PLAY then resumes through the play() override.
+      if (event.processingState == ProcessingState.completed && playing) {
+        playbackState.add(playbackState.value.copyWith(playing: false));
+        // Deferred by one microtask on purpose: this listener runs inside
+        // just_audio's synchronous event dispatch, and pause() adds to the
+        // very subject being dispatched — calling it inline throws
+        // "Bad state: Cannot fire new event" (caught by
+        // test/end_of_queue_projection_test.dart T1). The microtask still
+        // lands well before the next frame.
+        unawaited(Future<void>.microtask(_audioPlayer.pause));
+      }
     });
 
     _sequenceSubscription = _audioPlayer.sequenceStateStream.listen((state) {
@@ -390,7 +406,17 @@ class OwnToneAudioHandler extends BaseAudioHandler
   }
 
   @override
-  Future<void> play() => _audioPlayer.play();
+  Future<void> play() async {
+    // A completed ExoPlayer stays at the end of the last source: play() alone
+    // raises `playing` without moving the position, so a resumed-from-completed
+    // queue would show PLAYING while nothing plays (witnessed on device with
+    // the projection at position == duration). Rewind first; seek() also moves
+    // processingState out of completed so play() actually runs.
+    if (_audioPlayer.processingState == ProcessingState.completed) {
+      await _audioPlayer.seek(Duration.zero);
+    }
+    await _audioPlayer.play();
+  }
 
   @override
   Future<void> pause() => _audioPlayer.pause();
