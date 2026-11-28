@@ -39,6 +39,7 @@ class MainActivity: AudioServiceActivity() {
     private val PROGRESS_CHANNEL = "dev.educoder.owntone_sync/sync_progress"
     private val SYNC_CHANNEL = "dev.educoder.owntone_sync/sync"
     private val PLAYER_CHANNEL = "dev.educoder.owntone_sync/player"
+    private val DISCOVERY_CHANNEL = "dev.educoder.owntone_sync/discovery"
     private val REQUEST_CODE_MUSIC_FOLDER = 1001
 
     private var pendingMusicFolderResult: MethodChannel.Result? = null
@@ -142,6 +143,12 @@ class MainActivity: AudioServiceActivity() {
                     Log.d("MainActivity", "Progress listener detached")
                 }
             })
+
+        // Server discovery channel (issue 13): DNS-SD browse of
+        // _http._tcp + _daap._tcp; the subscription's lifecycle is the
+        // browse's (onListen = start, onCancel = stop).
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, DISCOVERY_CHANNEL)
+            .setStreamHandler(ServerDiscoveryStreamHandler(applicationContext))
 
         // Add a new channel for sync control
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYNC_CHANNEL).setMethodCallHandler { call, result ->
