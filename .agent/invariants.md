@@ -58,7 +58,8 @@ hide populated categories ·
  54 **playlist rows are lead-free**; the 32 px leading column exists only
  when supplied or current ·
  57 **red 'unreachable' requires a user request**; unrequested probes
- classify, never present
+ classify, never present ·
+ 58 **discovery is never a save path**; invariant 37 owns every save
 
 **Environment and tooling** — 10 server address · 11 `pending_events` is not
 shell-readable · 12 scratch files location · 18 uiautomator quoting ·
@@ -988,6 +989,8 @@ least as likely as a genuinely different server. "Start fresh" leads to the
 existing Keep Files / Delete Files dialog. Every save path calls
 `SyncProvider.clearError()`, and the wipe path additionally runs
 `BrowseProvider.reloadAll()` (all four categories) before closing the screen.
+The LAN scan (issue 13) adds no save path: tapping a discovered candidate
+only fills the URL field and runs the existing probe — see invariant 58.
 
 **WHY:** the pre-U0 defect (ux-refactor §3 G6): any text change — including
 re-entering the already-configured URL with a trailing slash or stray space,
@@ -1537,6 +1540,48 @@ invents appear/disappear semantics beyond the agreed shape; and gating
 `connectivityState` itself instead of only the presentation would weaken
 the manual-sync guard — `shouldBlockManualSync` must keep reading the
 UNGATED state (invariant 43).
+
+---
+
+### 58. Discovery is never a save path; invariant 37 owns every save
+
+The LAN scan (issue 13: Kotlin `dev.educoder.owntone_sync/discovery`
+EventChannel browsing `_http._tcp` + `_daap._tcp`, pure-Dart filter/dedupe/
+URL helper `lib/data/services/server_discovery_service.dart`, scan panel on
+`ServerConfigScreen`) **fills and probes, never saves**. Tapping a
+probe-verified candidate sets `_urlController.text` to
+`http://<resolved IPv4>:<port>`, resets the probe phase, expands the
+Advanced tile and runs the existing `_runProbe` — no provider write, no
+prefs write. Saving remains exclusively `Save → _handleServerChange →
+invariant 37`: `SyncProvider.setServerUrl` keeps exactly its two UI call
+sites (`server_config_screen.dart`, in `_saveUrl` and `_wipeAndSave`) plus
+the provider-internal `_initialize` pref-load, and no discovery code path
+can reach it. Candidates render as rows even when exactly one is found —
+the pick is always a deliberate tap. A candidate must carry `mtd-version=`
+in its decoded TXT **and** answer the probe under any-HTTP-answer-counts
+semantics (invariant 44) before its row becomes tappable; unverified rows
+have no `onTap`. The scan surface renders no red (invariants 41/57).
+
+**WHY:** a scan result is an unattended network event — anyone on the LAN
+can announce an mDNS service, and the TXT is attacker-chosen. If a scan
+auto-saved (even with exactly one candidate) or gained its own
+`setServerUrl` call, a hostile or merely stale announcement would route the
+user into — or away from — the destructive wipe without either explicit
+confirmation (invariant 37's "Different server?" dialog **and** the
+Keep/Delete Files dialog) that currently guards it, and around
+`_validateServerUrl`'s local-address rule. "One save path" is the contract
+the maintainer comment pinned for this feature.
+
+**BREAKS IF UNDONE:** an auto-save on scan (single candidate or otherwise)
+or any new `setServerUrl` call site outside `server_config_screen.dart`
+bypasses both wipe confirmations — the exact regression invariant 37's
+double-confirm exists to prevent; making an unverified row selectable lets
+a device that answered DNS-SD but not the probe be configured on a
+half-truth. Pinned behaviourally by `test/server_discovery_widget_test.dart`
+W4 (tap fills + probe runs + `server_url` never written) and W5 (different
+host routes into the 37 dialog; a tap alone never reaches the wipe) and
+statically by `test/static_guards_test.dart` G1 (the `setServerUrl(` token
+appears only at its two UI call sites and its provider definition/load).
 
 ---
 

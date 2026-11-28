@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../data/repositories/owntone_api_repository.dart';
+import '../../data/services/server_discovery_service.dart';
 import '../../utils/connectivity_state.dart';
 import '../../utils/server_url.dart';
 import '../providers/browse_provider.dart';
@@ -34,7 +35,30 @@ enum _ChangeKind {
 }
 
 class ServerConfigScreen extends StatefulWidget {
-  const ServerConfigScreen({super.key});
+  const ServerConfigScreen({
+    super.key,
+    this.startAdvancedExpanded = false,
+    @visibleForTesting this.discovery,
+    @visibleForTesting this.probeOverride,
+  });
+
+  /// First run's secondary "Enter address manually (advanced)" button
+  /// pushes the screen with the Advanced tile already open (issue 13):
+  /// the manual path must never dead-end behind a collapsed control.
+  final bool startAdvancedExpanded;
+
+  /// Test seam: inject a fake discovery service so widget tests drive a
+  /// scan with no platform channel (the EventChannel is only touched when
+  /// the screen owns its service). Production passes nothing.
+  @visibleForTesting
+  final ServerDiscoveryService? discovery;
+
+  /// Test seam mirroring `SyncProvider`'s `apiRepository` seam: replaces
+  /// [OwnToneApiRepository.probeConnection] for `_runProbe` so widget
+  /// tests assert the probe contract with no network. Production passes
+  /// nothing and the default below runs byte-for-byte the old call.
+  @visibleForTesting
+  final Future<void> Function(String url)? probeOverride;
 
   @override
   State<ServerConfigScreen> createState() => _ServerConfigScreenState();
@@ -47,6 +71,13 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
 
   _ProbePhase _probe = _ProbePhase.idle;
 
+  late final ServerDiscoveryService _discovery;
+  late final bool _ownsDiscovery;
+  final ExpansibleController _advancedController = ExpansibleController();
+
+  static Future<void> _defaultProbe(String url) =>
+      OwnToneApiRepository(baseUrl: url).probeConnection();
+
   @override
   void initState() {
     super.initState();
@@ -56,10 +87,19 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
     // a pre-filled example is saveable text, and an unattended Save would
     // configure a dead server (ux-refactor §3, State 4).
     _urlController = TextEditingController(text: provider.serverUrl);
+    _discovery = widget.discovery ?? ServerDiscoveryService();
+    _ownsDiscovery = widget.discovery == null;
+    _discovery.addListener(_onDiscoveryChanged);
+  }
+
+  void _onDiscoveryChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    _discovery.removeListener(_onDiscoveryChanged);
+    if (_ownsDiscovery) _discovery.dispose();
     _urlController.dispose();
     super.dispose();
   }
@@ -106,7 +146,7 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
     setState(() => _probe = _ProbePhase.testing);
     Object? error;
     try {
-      await OwnToneApiRepository(baseUrl: url).probeConnection();
+      await (widget.probeOverride ?? _defaultProbe)(url);
     } on Object catch (e) {
       error = e;
     }
@@ -417,6 +457,133 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
     }
   }
 
+  /// Tapping a probe-verified row is a fill-and-probe, never a save
+  /// (invariant 58 — discovery is never a save path; invariant 37 owns
+  /// every save): it sets the field text and runs the existing
+  /// [_runProbe]. No provider write, no prefs write. The Advanced tile is
+  /// expanded so the user sees the field and the verdict the tap produced.
+  void _useCandidate(DiscoveryCandidate candidate) {
+    _urlController.text = candidate.url;
+    setState(() => _probe = _ProbePhase.idle);
+    _advancedController.expand();
+    _runProbe();
+  }
+
+  void _startScan() {
+    _discovery.startBrowse();
+  }
+
+  Widget _buildScanSection(BuildContext context) {
+    switch (_discovery.state) {
+      case DiscoveryState.idle:
+        return _buildScanButton(label: 'Scan for servers');
+      case DiscoveryState.browsing:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('Scanning the network for OwnTone servers…'),
+                ),
+              ],
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _discovery.stopBrowse,
+                child: const Text('Stop scanning'),
+              ),
+            ),
+          ],
+        );
+      case DiscoveryState.error:
+        // Neutral wording, no error colour: a scan surface is not an
+        // `unreachable` surface (invariants 41/57 — only 'unreachable'
+        // may be red, and only when the user asked — 57).
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'The server scan failed. Try again, or open "Advanced: enter '
+              'address manually" below to type the address.',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            _buildScanButton(label: 'Scan for servers'),
+          ],
+        );
+      case DiscoveryState.empty:
+        // An explicit empty state, never a spinner or a dead end (AC5);
+        // the advanced path below stays reachable either way (AC9).
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'No OwnTone servers found',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Nothing on this network answered the scan. Open "Advanced: '
+              'enter address manually" below to type the address.',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            _buildScanButton(label: 'Scan again'),
+          ],
+        );
+      case DiscoveryState.candidates:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final candidate in _discovery.candidates)
+              _buildCandidateRow(candidate),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: _startScan,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Scan again'),
+              ),
+            ),
+          ],
+        );
+    }
+  }
+
+  Widget _buildScanButton({required String label}) {
+    return ElevatedButton.icon(
+      onPressed: _startScan,
+      icon: const Icon(Icons.search, size: 18),
+      label: Text(label),
+    );
+  }
+
+  Widget _buildCandidateRow(DiscoveryCandidate candidate) {
+    // Row grammar (maintainer): `Machine Name — host:port`, verified mark
+    // only once the probe answered. An unverified row is inert — no
+    // onTap — so a candidate whose probe never answers is never
+    // selectable (AC5).
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      onTap: candidate.verified ? () => _useCandidate(candidate) : null,
+      title: Text(
+        '${candidate.displayName} — ${candidate.displayHost}:${candidate.port}',
+      ),
+      trailing: candidate.verified
+          ? Icon(Icons.check_circle, size: 18, color: Colors.green.shade700)
+          : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // PlayerScaffold: the mini player survives navigating here (Phase U2
@@ -444,41 +611,85 @@ class _ServerConfigScreenState extends State<ServerConfigScreen> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Enter your OwnTone server URL',
+                  'Scan for your OwnTone server on the network, or enter '
+                  'the address manually.',
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 32),
-                TextFormField(
-                  controller: _urlController,
-                  // A result belongs to the URL it tested: editing the
-                  // field invalidates it, or a stale "Connected" would be
-                  // a claim about an address the user no longer has (the
-                  // same honesty rule as invariant 41's banners).
-                  onChanged: (_) {
-                    if (_probe != _ProbePhase.idle) {
-                      setState(() => _probe = _ProbePhase.idle);
-                    }
-                  },
-                  decoration: const InputDecoration(
-                    labelText: 'Server URL',
-                    hintText: 'http://192.168.1.100:3689',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.link),
-                  ),
-                  keyboardType: TextInputType.url,
-                  validator: _validateServerUrl,
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: _probe == _ProbePhase.testing ? null : _runProbe,
-                  icon: const Icon(Icons.wifi_tethering, size: 18),
-                  label: const Text('Test connection'),
-                ),
-                const SizedBox(height: 12),
-                _buildProbeResult(context, _urlController.text.trim()),
                 const SizedBox(height: 24),
+                // Scan is the screen's lead action (issue 13): rows always
+                // render and a row needs a deliberate tap — no scan
+                // result is ever saved without one (maintainer rule 3,
+                // invariant 58).
+                _buildScanSection(context),
+                const SizedBox(height: 24),
+                // The manual path lives here, always reachable: an empty
+                // scan, a scan error, an odd permission state or a
+                // captive-portal network must never dead-end (AC9, same
+                // honesty rule as the hint-text rule in invariant 44).
+                ExpansionTile(
+                  controller: _advancedController,
+                  initiallyExpanded: widget.startAdvancedExpanded,
+                  title: const Text('Advanced: enter address manually'),
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TextFormField(
+                          controller: _urlController,
+                          // A result belongs to the URL it tested: editing
+                          // the field invalidates it, or a stale
+                          // "Connected" would be a claim about an address
+                          // the user no longer has (the same honesty rule
+                          // as invariant 41's banners).
+                          onChanged: (_) {
+                            if (_probe != _ProbePhase.idle) {
+                              setState(() => _probe = _ProbePhase.idle);
+                            }
+                          },
+                          decoration: const InputDecoration(
+                            labelText: 'Server URL',
+                            hintText: 'http://192.168.1.100:3689',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.link),
+                          ),
+                          keyboardType: TextInputType.url,
+                          validator: _validateServerUrl,
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed:
+                              _probe == _ProbePhase.testing
+                                  ? null
+                                  : _runProbe,
+                          icon: const Icon(Icons.wifi_tethering, size: 18),
+                          label: const Text('Test connection'),
+                        ),
+                        const SizedBox(height: 12),
+                        _buildProbeResult(
+                          context,
+                          _urlController.text.trim(),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                // Save stays outside the tile — the single save path stays
+                // reachable from both modes, and its behaviour is
+                // unchanged: Save -> _handleServerChange -> invariant 37.
                 ElevatedButton(
                   onPressed: () async {
+                    // The field may sit inside the collapsed Advanced tile,
+                    // where it is unmounted and unregistered from the Form:
+                    // validate its text through the same validator so
+                    // collapsing cannot bypass validation, and reveal the
+                    // field (and its inline error) when the text is invalid.
+                    if (_validateServerUrl(_urlController.text.trim()) !=
+                        null) {
+                      _advancedController.expand();
+                      _formKey.currentState?.validate();
+                      return;
+                    }
                     if (_formKey.currentState!.validate()) {
                       await _handleServerChange();
                     }
